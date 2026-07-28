@@ -1,0 +1,10 @@
+import crypto from "node:crypto";
+import Redis from "ioredis";
+const agentId=process.argv[2];
+if(!agentId) throw new Error("Usage: npm run provision-agent -- room-lab-01");
+const token=crypto.randomBytes(32).toString("base64url");
+const hash=crypto.createHash("sha256").update(token).digest("hex");
+const redis=new Redis(process.env.REDIS_URL);
+await redis.set(`agent-token:${agentId}`,hash);
+console.log(JSON.stringify({agentId,token},null,2));
+await redis.quit();

@@ -1,0 +1,10 @@
+import argon2 from "argon2";
+import pg from "pg";
+const db=new pg.Pool({connectionString:process.env.DATABASE_URL});
+const email=process.env.BOOTSTRAP_ADMIN_EMAIL;
+const password=process.env.BOOTSTRAP_ADMIN_PASSWORD;
+if(!email||!password||password.length<12) throw new Error("Set BOOTSTRAP_ADMIN_EMAIL and a 12+ character BOOTSTRAP_ADMIN_PASSWORD");
+const role=(await db.query("SELECT id FROM roles WHERE name='OWNER'")).rows[0];
+await db.query("INSERT INTO users(email,password_hash,display_name,role_id) VALUES($1,$2,$3,$4) ON CONFLICT(email) DO NOTHING",[email,await argon2.hash(password),"Owner",role.id]);
+console.log("Owner account is ready. Change the bootstrap password after first login.");
+await db.end();

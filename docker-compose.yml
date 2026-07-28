@@ -1,0 +1,42 @@
+name: quest-control
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-quest_control}
+      POSTGRES_USER: ${POSTGRES_USER:-quest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes: [postgres_data:/var/lib/postgresql/data, ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"], interval: 10s, timeout: 5s, retries: 5 }
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change-me}
+    volumes: [redis_data:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-me}", "ping"], interval: 10s, timeout: 5s, retries: 5 }
+    restart: unless-stopped
+  api:
+    build: ./apps/api
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+  web:
+    build: ./apps/web
+    depends_on: [api]
+    restart: unless-stopped
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    network_mode: host
+    volumes: [./infra/go2rtc.yaml:/config/go2rtc.yaml:ro]
+    profiles: [cameras]
+    restart: unless-stopped
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["80:80", "443:443"]
+    volumes: [./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro, ./certbot:/etc/letsencrypt:ro]
+    depends_on: [api, web]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+volumes: { postgres_data: {}, redis_data: {} }

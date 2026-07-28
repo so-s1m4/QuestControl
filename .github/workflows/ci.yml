@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            apps/api/package-lock.json
+            apps/web/package-lock.json
+            agents/room-agent/package-lock.json
+
+      - name: Test API
+        working-directory: apps/api
+        run: npm ci && npm test
+
+      - name: Build web application
+        working-directory: apps/web
+        run: npm ci && npm run build
+
+      - name: Validate room agent
+        working-directory: agents/room-agent
+        run: npm ci && node --check src/index.js
+
+      - name: Validate Portainer stack
+        env:
+          REGISTRY_IMAGE_PREFIX: ghcr.io/example
+          POSTGRES_DB: quest_control
+          POSTGRES_USER: quest
+          POSTGRES_PASSWORD: ci-only
+          REDIS_PASSWORD: ci-only
+          JWT_ACCESS_SECRET: ci-only
+          JWT_REFRESH_SECRET: ci-only
+          PUBLIC_URL: https://example.com
+          CORS_ORIGIN: https://example.com
+          TUYA_CLIENT_ID: ci-only
+          TUYA_CLIENT_SECRET: ci-only
+          BOOTSTRAP_ADMIN_EMAIL: owner@example.com
+          BOOTSTRAP_ADMIN_PASSWORD: ci-only
+        run: docker compose -f docker-compose.portainer.yml config --quiet
