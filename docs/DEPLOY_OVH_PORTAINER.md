@@ -3,7 +3,7 @@
 Схема деплоя:
 
 1. GitHub Actions проверяет API, web и room-agent.
-2. После push в `main` собираются Docker-образы API и web.
+2. После push в `main` собираются Docker-образы API, web, PostgreSQL и gateway.
 3. Образы публикуются в GitHub Container Registry (GHCR).
 4. GitHub Actions подключается к OVH по SSH.
 5. Скрипт на OVH вызывает закрытый webhook Portainer.

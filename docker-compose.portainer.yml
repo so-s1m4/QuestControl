@@ -2,14 +2,13 @@ name: quest-control
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${REGISTRY_IMAGE_PREFIX}/quest-control-postgres:${IMAGE_TAG:-latest}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -64,12 +63,11 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.27-alpine
+    image: ${REGISTRY_IMAGE_PREFIX}/quest-control-gateway:${IMAGE_TAG:-latest}
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - certbot_data:/etc/letsencrypt:ro
     depends_on:
       - api
