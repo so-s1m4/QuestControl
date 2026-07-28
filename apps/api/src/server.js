@@ -115,6 +115,45 @@ app.get("/cameras", auth, permit("cameras:read"), async (_, res) => {
   res.json(rows);
 });
 
+const tuyaCameraCategories = new Set(["sp", "ipc", "camera", "wf_camera"]);
+const isTuyaCamera = (device) => {
+  const category = String(device.category || device.categoryCode || "").toLowerCase();
+  const description = `${device.name || ""} ${device.customName || ""} ${device.productName || ""}`.toLowerCase();
+  return tuyaCameraCategories.has(category) || /(camera|камера|ipc|ptz)/i.test(description);
+};
+
+app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) => {
+  if (!tuya.configured) return res.status(503).json({ error: "TUYA_NOT_CONFIGURED" });
+  try {
+    const devices = await tuya.listProjectDevices();
+    const cameras = devices.filter(isTuyaCamera);
+    let created = 0;
+    let updated = 0;
+    for (const device of cameras) {
+      const externalId = String(device.id || device.deviceId || "");
+      if (!externalId) continue;
+      const name = String(device.customName || device.name || device.productName || `Tuya ${externalId.slice(-6)}`).slice(0, 120);
+      const status = (device.isOnline ?? device.online) ? "ONLINE" : "OFFLINE";
+      const existing = await db.query("SELECT id FROM cameras WHERE provider='TUYA' AND external_id=$1 LIMIT 1", [externalId]);
+      if (existing.rowCount) {
+        await db.query("UPDATE cameras SET name=$1,status=$2 WHERE id=$3", [name, status, existing.rows[0].id]);
+        updated += 1;
+      } else {
+        await db.query(
+          "INSERT INTO cameras(name,provider,external_id,status,config) VALUES($1,'TUYA',$2,$3,$4)",
+          [name, externalId, status, { category: device.category || null, productId: device.productId || null }]
+        );
+        created += 1;
+      }
+    }
+    const result = { discovered: devices.length, cameras: cameras.length, created, updated };
+    await audit(req, "camera.sync", "integration", "tuya", null, result);
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ error: error.code || "TUYA_SYNC_FAILED", message: error.message });
+  }
+});
+
 const cameraInput = z.object({
   name: z.string().trim().min(2).max(120),
   roomId: z.string().uuid().nullable().optional(),

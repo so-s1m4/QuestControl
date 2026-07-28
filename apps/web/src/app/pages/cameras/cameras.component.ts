@@ -31,7 +31,10 @@ type Room = { id: string; name: string };
       <section>
         <header>
           <div><h2>Камеры</h2><p>Выберите камеры и следите за ними в общей сетке</p></div>
-          <button (click)="showForm.set(!showForm())">{{showForm() ? "Закрыть" : "+ Добавить камеру"}}</button>
+          <div class="header-actions">
+            <button class="secondary" (click)="syncTuya()" [disabled]="syncing()">{{syncing() ? "Синхронизация…" : "↻ Синхронизировать Tuya"}}</button>
+            <button (click)="showForm.set(!showForm())">{{showForm() ? "Закрыть" : "+ Добавить камеру"}}</button>
+          </div>
         </header>
 
         @if (showForm()) {
@@ -51,6 +54,7 @@ type Room = { id: string; name: string };
         }
 
         @if (error()) { <p class="error">{{error()}}</p> }
+        @if (notice()) { <p class="notice">{{notice()}}</p> }
         @if (loading()) { <p>Загрузка камер…</p> }
         @else if (!cameras().length) { <div class="empty"><b>Камер пока нет</b><span>Добавьте поток, уже настроенный в go2rtc.</span></div> }
         @else {
@@ -102,6 +106,7 @@ type Room = { id: string; name: string };
     .camera-option b,.camera-option small{display:block}.camera-option small{margin-top:3px;color:#788295;font-size:11px}
     .camera-grid{grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))}
     .camera-actions{display:flex;gap:8px}.secondary{padding:8px 10px;background:#eef1f6;color:#344054}
+    .header-actions{display:flex;gap:10px}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}
     @media(max-width:900px){.camera-picker{display:grid}.camera-options{justify-content:stretch}.camera-option{width:100%}}
   `]
 })
@@ -113,8 +118,10 @@ export class CamerasComponent {
   players = signal<Record<string, { mode: "hls" | "player"; endpoint: string; safeEndpoint?: SafeResourceUrl }>>({});
   loading = signal(true);
   saving = signal(false);
+  syncing = signal(false);
   showForm = signal(false);
   error = signal("");
+  notice = signal("");
   selectedIds = signal<string[]>([]);
   draft = { name: "", roomId: "", provider: "RTSP" as Camera["provider"], streamKey: "", externalId: "" };
 
@@ -159,6 +166,23 @@ export class CamerasComponent {
         this.load();
       },
       error: ({ status }) => { this.error.set(status === 403 ? "Нет права управлять камерами." : "Не удалось сохранить камеру. Проверьте поля."); this.saving.set(false); }
+    });
+  }
+
+  syncTuya() {
+    this.syncing.set(true);
+    this.error.set("");
+    this.notice.set("");
+    this.http.post<{discovered:number;cameras:number;created:number;updated:number}>("/api/cameras/sync/tuya", {}).subscribe({
+      next: result => {
+        this.syncing.set(false);
+        this.notice.set(`Tuya: найдено устройств ${result.discovered}, камер ${result.cameras}, добавлено ${result.created}, обновлено ${result.updated}.`);
+        this.load();
+      },
+      error: ({ error }) => {
+        this.syncing.set(false);
+        this.error.set(error?.message ? `Tuya: ${error.message}` : "Не удалось синхронизировать устройства Tuya.");
+      }
     });
   }
 

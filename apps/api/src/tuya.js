@@ -72,4 +72,10 @@ export class TuyaCloud {
     if (!result?.url) throw Object.assign(new Error("Tuya returned no stream URL"), { code: "TUYA_STREAM_UNAVAILABLE" });
     return result.url;
   }
+
+  async listProjectDevices() {
+    const token = await this.accessToken();
+    const result = await this.request("GET", "/v2.0/cloud/thing/device?page_size=20", undefined, token);
+    return Array.isArray(result) ? result : (result?.list || result?.devices || []);
+  }
 }
