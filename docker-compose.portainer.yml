@@ -65,8 +65,8 @@ services:
   nginx:
     image: ${REGISTRY_IMAGE_PREFIX}/quest-control-gateway:${IMAGE_TAG:-latest}
     ports:
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
     volumes:
       - certbot_data:/etc/letsencrypt:ro
     depends_on:
