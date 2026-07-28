@@ -5,9 +5,8 @@
 1. GitHub Actions проверяет API, web и room-agent.
 2. После push в `main` собираются Docker-образы API, web, PostgreSQL и gateway.
 3. Образы публикуются в GitHub Container Registry (GHCR).
-4. GitHub Actions подключается к OVH по SSH.
-5. Скрипт на OVH вызывает закрытый webhook Portainer.
-6. Portainer загружает свежие образы с тегом `latest` и пересоздаёт Stack.
+4. GitHub Actions вызывает закрытый webhook Portainer.
+5. Portainer загружает свежие образы с тегом `latest` и пересоздаёт Stack.
 
 ## 1. Создание Stack
 
@@ -49,44 +48,11 @@ BOOTSTRAP_ADMIN_PASSWORD=<одноразовый-сложный-пароль>
 Секреты должны находиться только в Portainer. Не добавляйте их в GitHub или
 репозиторий без необходимости.
 
-## 3. Webhook на OVH
-
-На сервере:
-
-```bash
-sudo install -d -m 700 /etc/quest-control
-sudo install -d -m 755 /opt/quest-control
-sudo nano /etc/quest-control/portainer-deploy.env
-```
-
-Содержимое файла:
-
-```text
-PORTAINER_WEBHOOK_URL=https://<portainer>/api/stacks/webhooks/<secret>
-```
-
-Затем:
-
-```bash
-sudo chmod 600 /etc/quest-control/portainer-deploy.env
-sudo install -m 755 infra/deploy/portainer-redeploy.sh \
-  /opt/quest-control/portainer-redeploy.sh
-```
-
-Указанный в GitHub пользователь SSH должен иметь право запускать скрипт и читать
-`/etc/quest-control/portainer-deploy.env`. Лучше создать отдельного пользователя
-`quest-deploy`, не давать ему shell-команды кроме этого скрипта и ограничить ключ
-в `authorized_keys`.
-
-## 4. GitHub Secrets
+## 3. GitHub Secret
 
 В **Repository → Settings → Secrets and variables → Actions** добавьте:
 
-- `OVH_HOST`
-- `OVH_USER`
-- `OVH_SSH_PORT` (обычно `22`)
-- `OVH_SSH_PRIVATE_KEY`
-- `OVH_KNOWN_HOSTS` — результат `ssh-keyscan` после ручной проверки fingerprint.
+- `PORTAINER_WEBHOOK_URL` — закрытый webhook конкретного Stack.
 
 Затем создайте repository variable:
 
@@ -97,7 +63,7 @@ DEPLOY_ENABLED=true
 До появления этой переменной образы будут собираться, но production deploy будет
 пропускаться.
 
-## 5. Первый запуск
+## 4. Первый запуск
 
 Сначала вручную запустите Stack в Portainer. После успешного старта выполните
 workflow **Build and deploy → Run workflow** и проверьте:

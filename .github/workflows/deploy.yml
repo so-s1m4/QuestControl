@@ -79,24 +79,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Configure SSH
-        shell: bash
+      - name: Ask Portainer to pull and redeploy
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.OVH_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.OVH_KNOWN_HOSTS }}
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Ask Portainer to redeploy
-        env:
-          OVH_HOST: ${{ secrets.OVH_HOST }}
-          OVH_USER: ${{ secrets.OVH_USER }}
-          OVH_SSH_PORT: ${{ secrets.OVH_SSH_PORT }}
-        run: |
-          ssh -p "${OVH_SSH_PORT:-22}" \
-            "$OVH_USER@$OVH_HOST" \
-            /opt/quest-control/portainer-redeploy.sh
+          test -n "$PORTAINER_WEBHOOK_URL"
+          curl --fail --silent --show-error \
+            --request POST \
+            --retry 3 \
+            --max-time 120 \
+            "$PORTAINER_WEBHOOK_URL"
