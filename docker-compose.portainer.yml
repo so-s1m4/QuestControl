@@ -74,9 +74,18 @@ services:
       - web
     extra_hosts:
       - host.docker.internal:host-gateway
+    networks:
+      default:
+      proxy:
+        aliases:
+          - quest-control
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
   certbot_data:
+
+networks:
+  proxy:
+    external: true

@@ -50,6 +50,8 @@ BOOTSTRAP_ADMIN_PASSWORD=<одноразовый-сложный-пароль>
 
 Порты `HTTP_PORT` и `HTTPS_PORT` публикуются только на `127.0.0.1`. Внешний
 доступ должен идти через основной reverse proxy сервера по `80/443`.
+Stack подключает gateway к существующей внешней Docker-сети `proxy`. В Nginx
+Proxy Manager используйте hostname `quest-control` и port `80`.
 
 ## 3. GitHub Secret
 
