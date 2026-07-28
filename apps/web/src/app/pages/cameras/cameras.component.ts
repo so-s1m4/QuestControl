@@ -26,7 +26,7 @@ type Room = { id: string; name: string };
     <main>
       <aside>
         <h1>Q <span>QUESTCONTROL</span></h1>
-        <nav><a routerLink="/">Обзор</a><a class="active" routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav>
+        <nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav>
       </aside>
       <section>
         <header>

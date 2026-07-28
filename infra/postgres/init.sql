@@ -16,7 +16,7 @@ CREATE TABLE audit_logs (id bigserial PRIMARY KEY, actor_user_id uuid REFERENCES
 CREATE INDEX audit_logs_created_at_idx ON audit_logs(created_at DESC);
 CREATE INDEX bookings_room_starts_idx ON bookings(room_id, starts_at);
 INSERT INTO roles(name, permissions) VALUES
- ('OWNER','["*"]'), ('ADMIN','["bookings:*","rooms:read","sessions:*","cameras:*"]'),
- ('OPERATOR','["rooms:read","sessions:*","devices:command","cameras:read","local_sites:open"]'),
- ('TECHNICIAN','["devices:*","integrations:*","cameras:*","audit:read"]')
+ ('OWNER','["*"]'), ('ADMIN','["bookings:*","rooms:*","locations:read","sessions:*","devices:read","cameras:*"]'),
+ ('OPERATOR','["bookings:read","rooms:read","sessions:*","devices:command","cameras:read","local_sites:open"]'),
+ ('TECHNICIAN','["rooms:read","locations:read","devices:*","integrations:*","cameras:*","audit:read"]')
 ON CONFLICT DO NOTHING;

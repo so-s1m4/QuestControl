@@ -150,11 +150,72 @@ app.patch("/users/:id/status", auth, permit("users:manage"), async (req, res) =>
 
 app.get("/dashboard", auth, async (req, res) => {
   const [rooms, bookings, devices] = await Promise.all([
-    db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY r.name"),
+    db.query(`SELECT r.*,l.name location_name,
+      COALESCE((SELECT d.status FROM devices d WHERE d.room_id=r.id ORDER BY d.last_seen DESC NULLS LAST LIMIT 1),r.status) live_status
+      FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY r.name`),
     db.query("SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date ORDER BY starts_at"),
     db.query("SELECT status,count(*)::int total FROM devices GROUP BY status")
   ]);
   res.json({ rooms: rooms.rows, bookings: bookings.rows, deviceSummary: devices.rows });
+});
+
+app.get("/bookings", auth, permit("bookings:read"), async (_, res) => {
+  const { rows } = await db.query(`
+    SELECT b.*,r.name room_name,s.id session_id,s.status session_status
+    FROM bookings b
+    JOIN rooms r ON r.id=b.room_id
+    LEFT JOIN sessions s ON s.booking_id=b.id
+    ORDER BY b.starts_at DESC LIMIT 250
+  `);
+  res.json(rows);
+});
+
+app.get("/sessions", auth, permit("sessions:read"), async (_, res) => {
+  const { rows } = await db.query(`
+    SELECT s.*,r.name room_name,b.customer_name
+    FROM sessions s JOIN rooms r ON r.id=s.room_id
+    LEFT JOIN bookings b ON b.id=s.booking_id
+    ORDER BY COALESCE(s.started_at,now()) DESC LIMIT 250
+  `);
+  res.json(rows);
+});
+
+app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
+  const input = z.object({ bookingId:z.string().uuid(), durationSeconds:z.number().int().min(300).max(14400).default(3600) }).parse(req.body);
+  const booking = (await db.query("SELECT * FROM bookings WHERE id=$1", [input.bookingId])).rows[0];
+  if (!booking) return res.status(404).json({ error:"BOOKING_NOT_FOUND" });
+  if ((await db.query("SELECT 1 FROM sessions WHERE booking_id=$1 AND status NOT IN ('FINISHED','CANCELLED')", [booking.id])).rowCount) {
+    return res.status(409).json({ error:"SESSION_EXISTS" });
+  }
+  const { rows } = await db.query(
+    "INSERT INTO sessions(booking_id,room_id,status,started_at,remaining_seconds) VALUES($1,$2,'RUNNING',now(),$3) RETURNING *",
+    [booking.id,booking.room_id,input.durationSeconds]
+  );
+  await audit(req,"session.start","session",rows[0].id,null,rows[0]);
+  res.status(201).json(rows[0]);
+});
+
+app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => {
+  const action = z.enum(["PAUSE","RESUME","FINISH"]).parse(req.body.action);
+  const before = (await db.query("SELECT * FROM sessions WHERE id=$1", [req.params.id])).rows[0];
+  if (!before) return res.status(404).json({ error:"SESSION_NOT_FOUND" });
+  const status = action === "PAUSE" ? "PAUSED" : action === "RESUME" ? "RUNNING" : "FINISHED";
+  const { rows } = await db.query(
+    "UPDATE sessions SET status=$1,ended_at=CASE WHEN $1='FINISHED' THEN now() ELSE ended_at END WHERE id=$2 RETURNING *",
+    [status,req.params.id]
+  );
+  await audit(req,`session.${action.toLowerCase()}`,"session",req.params.id,before,rows[0]);
+  res.json(rows[0]);
+});
+
+app.post("/rooms", auth, permit("rooms:manage"), async (req, res) => {
+  const input = z.object({ locationId:z.string().uuid(),name:z.string().trim().min(2).max(120),kind:z.enum(["REAL","VR"]),capacity:z.number().int().min(1).max(100) }).parse(req.body);
+  const { rows } = await db.query(
+    "INSERT INTO rooms(location_id,name,kind,capacity,status) VALUES($1,$2,$3,$4,'OFFLINE') RETURNING *",
+    [input.locationId,input.name,input.kind,input.capacity]
+  );
+  await audit(req,"room.create","room",rows[0].id,null,rows[0]);
+  res.status(201).json(rows[0]);
 });
 
 app.get("/cameras", auth, permit("cameras:read"), async (_, res) => {
@@ -261,7 +322,7 @@ app.post("/bookings", auth, permit("bookings:create"), async (req, res) => {
   const input = z.object({ roomId:z.string().uuid(), customerName:z.string().min(2), customerPhone:z.string().optional(), startsAt:z.string().datetime(), endsAt:z.string().datetime(), players:z.number().int().positive(), amountCents:z.number().int().nonnegative().default(0), notes:z.string().max(2000).optional() }).parse(req.body);
   const conflict = await db.query("SELECT 1 FROM bookings WHERE room_id=$1 AND tstzrange(starts_at,ends_at) && tstzrange($2,$3) LIMIT 1", [input.roomId,input.startsAt,input.endsAt]);
   if (conflict.rowCount) return res.status(409).json({ error: "BOOKING_CONFLICT" });
-  const { rows } = await db.query("INSERT INTO bookings(room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", Object.values(input));
+  const { rows } = await db.query("INSERT INTO bookings(room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [input.roomId,input.customerName,input.customerPhone||null,input.startsAt,input.endsAt,input.players,input.amountCents,input.notes||null]);
   await audit(req,"booking.create","booking",rows[0].id,null,rows[0]); res.status(201).json(rows[0]);
 });
 
@@ -362,8 +423,18 @@ agentNs.use(async (socket,next) => {
 agentNs.on("connection", socket => {
   socket.join(`agent:${socket.data.agentId}`);
   redis.hset("agents",socket.data.agentId,JSON.stringify({status:"ONLINE",lastSeen:new Date().toISOString()}));
-  socket.on("heartbeat", async data => { await redis.hset("agents",socket.data.agentId,JSON.stringify({status:"ONLINE",lastSeen:new Date().toISOString(),...data})); });
-  socket.on("disconnect", async () => { await redis.hset("agents",socket.data.agentId,JSON.stringify({status:"OFFLINE",lastSeen:new Date().toISOString()})); });
+  socket.on("heartbeat", async data => {
+    await Promise.all([
+      redis.hset("agents",socket.data.agentId,JSON.stringify({status:"ONLINE",lastSeen:new Date().toISOString(),...data})),
+      db.query("UPDATE devices SET status='ONLINE',last_seen=now() WHERE agent_id=$1", [socket.data.agentId]),
+    ]);
+  });
+  socket.on("disconnect", async () => {
+    await Promise.all([
+      redis.hset("agents",socket.data.agentId,JSON.stringify({status:"OFFLINE",lastSeen:new Date().toISOString()})),
+      db.query("UPDATE devices SET status='OFFLINE' WHERE agent_id=$1", [socket.data.agentId]),
+    ]);
+  });
 });
 
 io.use(async (socket,next) => {

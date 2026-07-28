@@ -23,6 +23,8 @@ type User = {
         <h1>Q <span>QUESTCONTROL</span></h1>
         <nav>
           <a routerLink="/">Обзор</a>
+          <a routerLink="/bookings">Бронирования</a>
+          <a routerLink="/rooms">Комнаты</a>
           <a routerLink="/cameras">Камеры</a>
           <a routerLink="/krampus">Krampus House</a>
           <a class="active" routerLink="/users">Пользователи</a>
