@@ -29,8 +29,8 @@
 ```text
 REGISTRY_IMAGE_PREFIX=ghcr.io/<github-owner-в-нижнем-регистре>
 IMAGE_TAG=latest
-HTTP_PORT=8080
-HTTPS_PORT=8443
+HTTP_PORT=10080
+HTTPS_PORT=10443
 POSTGRES_DB=quest_control
 POSTGRES_USER=quest
 POSTGRES_PASSWORD=<случайный-секрет>
