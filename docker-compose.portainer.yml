@@ -54,12 +54,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - quest-control-api
     restart: unless-stopped
 
   web:
     image: ${REGISTRY_IMAGE_PREFIX}/quest-control-web:${IMAGE_TAG:-latest}
     depends_on:
       - api
+    networks:
+      default:
+        aliases:
+          - quest-control-web
     restart: unless-stopped
 
   nginx:
