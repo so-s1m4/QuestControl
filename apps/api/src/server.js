@@ -95,6 +95,59 @@ app.post("/auth/refresh", async (req, res) => {
   } catch { res.status(401).json({ error: "INVALID_REFRESH_TOKEN" }); }
 });
 
+app.get("/users", auth, permit("users:manage"), async (_, res) => {
+  const { rows } = await db.query(`
+    SELECT u.id,u.email,u.display_name,u.is_active,u.created_at,r.name AS role
+    FROM users u
+    JOIN roles r ON r.id=u.role_id
+    ORDER BY u.created_at DESC
+  `);
+  res.json(rows);
+});
+
+const userInput = z.object({
+  email: z.string().trim().email().max(254),
+  displayName: z.string().trim().min(2).max(120),
+  password: z.string().min(12).max(200),
+  role: z.enum(["OWNER", "ADMIN", "OPERATOR", "TECHNICIAN"]),
+});
+
+app.post("/users", auth, permit("users:manage"), async (req, res) => {
+  const parsed = userInput.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT", details: parsed.error.flatten() });
+  const input = parsed.data;
+  if ((await db.query("SELECT 1 FROM users WHERE lower(email)=lower($1)", [input.email])).rowCount) {
+    return res.status(409).json({ error: "EMAIL_EXISTS" });
+  }
+  const role = (await db.query("SELECT id FROM roles WHERE name=$1", [input.role])).rows[0];
+  if (!role) return res.status(400).json({ error: "INVALID_ROLE" });
+  const { rows } = await db.query(
+    `INSERT INTO users(email,password_hash,display_name,role_id)
+     VALUES($1,$2,$3,$4)
+     RETURNING id,email,display_name,is_active,created_at`,
+    [input.email, await argon2.hash(input.password), input.displayName, role.id]
+  );
+  const user = { ...rows[0], role: input.role };
+  await audit(req, "user.create", "user", user.id, null, user);
+  res.status(201).json(user);
+});
+
+app.patch("/users/:id/status", auth, permit("users:manage"), async (req, res) => {
+  const parsed = z.object({ isActive: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
+  if (req.params.id === req.user.sub && !parsed.data.isActive) {
+    return res.status(409).json({ error: "CANNOT_DISABLE_SELF" });
+  }
+  const before = (await db.query("SELECT id,email,display_name,is_active FROM users WHERE id=$1", [req.params.id])).rows[0];
+  if (!before) return res.status(404).json({ error: "USER_NOT_FOUND" });
+  const { rows } = await db.query(
+    "UPDATE users SET is_active=$1,refresh_token_hash=CASE WHEN $1 THEN refresh_token_hash ELSE NULL END WHERE id=$2 RETURNING id,email,display_name,is_active",
+    [parsed.data.isActive, req.params.id]
+  );
+  await audit(req, parsed.data.isActive ? "user.enable" : "user.disable", "user", req.params.id, before, rows[0]);
+  res.json(rows[0]);
+});
+
 app.get("/dashboard", auth, async (req, res) => {
   const [rooms, bookings, devices] = await Promise.all([
     db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY r.name"),

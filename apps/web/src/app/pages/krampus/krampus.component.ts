@@ -8,7 +8,7 @@ type Room={id:string;name:string};
 @Component({
   selector:"app-krampus",standalone:true,imports:[RouterLink,SlicePipe],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/cameras">Камеры</a><a class="active" routerLink="/krampus">Krampus House</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/cameras">Камеры</a><a class="active" routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section><header><div><h2>Krampus House</h2><p>Управление комнатой через защищённый room-agent</p></div><span class="connection" [class.online]="status()?.serial?.enabled">{{status()?.serial?.enabled?"Arduino online":"Нет связи"}}</span></header>
   @if(error()){<p class="error">{{error()}}</p>}
   @if(!roomId()){<div class="empty"><b>Комната не настроена</b><span>Создайте комнату и привяжите к ней устройство с agent_id.</span></div>}
