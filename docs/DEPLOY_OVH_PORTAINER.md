@@ -48,6 +48,9 @@ BOOTSTRAP_ADMIN_PASSWORD=<одноразовый-сложный-пароль>
 Секреты должны находиться только в Portainer. Не добавляйте их в GitHub или
 репозиторий без необходимости.
 
+Порты `HTTP_PORT` и `HTTPS_PORT` публикуются только на `127.0.0.1`. Внешний
+доступ должен идти через основной reverse proxy сервера по `80/443`.
+
 ## 3. GitHub Secret
 
 В **Repository → Settings → Secrets and variables → Actions** добавьте:
