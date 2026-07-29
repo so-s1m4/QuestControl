@@ -8,7 +8,11 @@ import Hls from "hls.js";
     <video #video controls autoplay muted playsinline></video>
     @if(error()){<p class="stream-error">{{error()}}</p>}
   `,
-  styles: [`.stream-error{position:absolute;inset:auto 16px 16px;margin:0;padding:10px 12px;border-radius:7px;background:#8f1d2c;color:white}`]
+  styles: [`
+    :host{position:relative;display:block;width:100%;height:100%;min-width:0;max-width:100%;overflow:hidden}
+    video{display:block;width:100%;height:100%;min-width:0;max-width:100%;object-fit:contain;background:#101622}
+    .stream-error{position:absolute;inset:auto 16px 16px;margin:0;padding:10px 12px;border-radius:7px;background:#8f1d2c;color:white}
+  `]
 })
 export class HlsPlayerComponent implements AfterViewInit, OnDestroy {
   @Input({ required: true }) url!: string;
