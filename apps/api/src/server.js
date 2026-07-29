@@ -12,6 +12,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
 import { TuyaCloud } from "./tuya.js";
 import { TuyaMessageConsumer } from "./tuya-messages.js";
+import { TuyaWebRTCManager } from "./tuya-webrtc.js";
 
 const env = z.object({
   PORT: z.coerce.number().default(3000),
@@ -46,6 +47,7 @@ const tuyaMessages = new TuyaMessageConsumer({
   accessKey: env.TUYA_CLIENT_SECRET,
   url: env.TUYA_MESSAGE_URL,
 });
+const tuyaWebRTC = new TuyaWebRTCManager({ tuya });
 const app = express();
 const isOwner = (req) => req.user?.role === "OWNER";
 const canConfigureCameras = (req) => ["OWNER","ADMIN"].includes(req.user?.role);
@@ -1612,8 +1614,19 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
     if(!tuya.configured) return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
     if(!camera.external_id) return res.status(409).json({error:"TUYA_DEVICE_NOT_CONFIGURED"});
     try {
+      if(req.query.transport!=="hls") {
+        try {
+          const config=await tuya.webrtcConfigs(camera.external_id);
+          if(config?.supports_webrtc) {
+            await audit(req,"camera.stream.open","camera",camera.id,null,{provider:"TUYA",transport:"WEBRTC"});
+            return res.json({provider:"TUYA",mode:"webrtc",cameraId:camera.id});
+          }
+        } catch(error) {
+          console.warn(req.requestId,"Tuya WebRTC discovery failed, falling back to HLS",error.code,error.message);
+        }
+      }
       const endpoint=await tuya.allocateHls(camera.external_id);
-      await audit(req,"camera.stream.open","camera",camera.id,null,{provider:"TUYA"});
+      await audit(req,"camera.stream.open","camera",camera.id,null,{provider:"TUYA",transport:"HLS"});
       return res.json({provider:"TUYA",mode:"hls",endpoint});
     } catch(error) {
       console.error(req.requestId,"Tuya stream allocation failed",error.code,error.message);
@@ -1788,6 +1801,52 @@ voiceNs.on("connection",socket=>{
   });
   socket.on("stop",(_,ack=()=>{})=>{ stop(); ack({success:true}); });
   socket.on("disconnect",stop);
+});
+
+const cameraNs=io.of("/webrtc");
+cameraNs.use(async(socket,next)=>{
+  try {
+    const token=socket.handshake.auth?.token;
+    if(!token) throw new Error("missing token");
+    const {payload}=await jwtVerify(token,key(env.JWT_ACCESS_SECRET));
+    const permissions=payload.permissions||[];
+    if(!(permissions.includes("*")||permissions.includes("cameras:read")||permissions.includes("cameras:*"))) throw new Error("forbidden");
+    socket.data.user=payload;
+    next();
+  } catch { next(new Error("unauthorized")); }
+});
+cameraNs.on("connection",socket=>{
+  socket.on("start",async(message,ack=()=>{})=>{
+    try {
+      const input=z.object({cameraId:z.string().uuid()}).parse(message);
+      const camera=(await db.query(`
+        SELECT c.*,COALESCE(c.location_id,r.location_id) AS effective_location_id
+        FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id
+        WHERE c.id=$1
+      `,[input.cameraId])).rows[0];
+      if(!camera||camera.provider!=="TUYA"||!camera.external_id) return ack({success:false,error:"CAMERA_NOT_AVAILABLE"});
+      if(!camera.effective_location_id||!(await locationAllowed({user:socket.data.user},camera.effective_location_id))) return ack({success:false,error:"LOCATION_FORBIDDEN"});
+      const result=await tuyaWebRTC.startSession({deviceId:camera.external_id,socket});
+      ack({success:true,...result});
+    } catch(error) {
+      console.error("Tuya WebRTC session failed",error.code||"",error.message);
+      ack({success:false,error:error.code||"TUYA_WEBRTC_UNAVAILABLE"});
+    }
+  });
+  socket.on("signal",async(message,ack=()=>{})=>{
+    try {
+      const input=z.object({
+        sessionId:z.string().regex(/^[a-f0-9]{32}$/),
+        type:z.enum(["offer","candidate","disconnect"]),
+        payload:z.string().max(20_000).default(""),
+      }).parse(message);
+      await tuyaWebRTC.signal({...input,socket});
+      ack({success:true});
+    } catch(error) {
+      ack({success:false,error:error instanceof z.ZodError?"INVALID_SIGNAL":error.code||"TUYA_SIGNAL_FAILED"});
+    }
+  });
+  socket.on("disconnect",()=>void tuyaWebRTC.closeSocket(socket));
 });
 
 io.use(async (socket,next) => {

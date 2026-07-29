@@ -73,6 +73,26 @@ export class TuyaCloud {
     return result.url;
   }
 
+  async deviceInfo(deviceId) {
+    const token = await this.accessToken();
+    return this.request("GET", `/v1.0/devices/${encodeURIComponent(deviceId)}`, undefined, token);
+  }
+
+  async webrtcConfigs(deviceId) {
+    const token = await this.accessToken();
+    return this.request("GET", `/v1.0/devices/${encodeURIComponent(deviceId)}/webrtc-configs`, undefined, token);
+  }
+
+  async mqttConfig(uid) {
+    const token = await this.accessToken();
+    return this.request("POST", "/v2.0/open-iot-hub/access/config", {
+      uid,
+      unique_id: crypto.randomUUID(),
+      link_type: "mqtt",
+      topics: "ipc",
+    }, token);
+  }
+
   async listProjectDevices() {
     const token = await this.accessToken();
     const result = await this.request("GET", "/v2.0/cloud/thing/device?page_size=20", undefined, token);

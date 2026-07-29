@@ -233,7 +233,7 @@ export class KrampusComponent implements OnDestroy {
   activeDoorbellCall(){ return this.doorbellCalls().find(call=>call.status==="RINGING")||null; }
   openDoorbellVideo(call:DoorbellCall){
     this.doorbellVideoLoading.set(true); this.doorbellVideoError.set(""); this.doorbellStream.set("");
-    this.http.get<{endpoint:string}>(`/api/cameras/${call.camera_id}/stream`).subscribe({
+    this.http.get<{endpoint:string}>(`/api/cameras/${call.camera_id}/stream?transport=hls`).subscribe({
       next:result=>{ this.doorbellVideoLoading.set(false); this.doorbellStream.set(result.endpoint); },
       error:()=>{ this.doorbellVideoLoading.set(false); this.doorbellVideoError.set("Doorbell сейчас не отдаёт видео. Проверьте питание, Wi‑Fi и изображение в приложении Smart Life."); }
     });
