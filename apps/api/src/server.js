@@ -764,4 +764,16 @@ await db.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id text"
 await db.query("CREATE UNIQUE INDEX IF NOT EXISTS locations_external_id_idx ON locations(external_id) WHERE external_id IS NOT NULL");
 await db.query("CREATE TABLE IF NOT EXISTS user_locations(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,PRIMARY KEY(user_id,location_id))");
 await db.query(`UPDATE roles SET permissions='["bookings:read","rooms:read","locations:read","sessions:*","devices:read","devices:command","cameras:read","local_sites:open"]'::jsonb WHERE name='OPERATOR'`);
+await db.query(
+  `INSERT INTO locations(external_id,name,timezone,address)
+   VALUES($1,$2,'Europe/Vienna',$3)
+   ON CONFLICT(external_id) WHERE external_id IS NOT NULL
+   DO UPDATE SET name=excluded.name,timezone=excluded.timezone,address=excluded.address`,
+  ["01js4ahx79xbw5gd05jy1mmsdw","Escapers_Peolten","St. Pölten, Traisenpark EKZ Traisenpark auf der Fläche Top-Nr. EG S35B"]
+);
+await db.query(
+  `UPDATE rooms SET location_id=(SELECT id FROM locations WHERE external_id=$1)
+   WHERE lower(replace(name,' ','_')) LIKE '%krampus%'`,
+  ["01js4ahx79xbw5gd05jy1mmsdw"]
+);
 server.listen(env.PORT, "0.0.0.0", () => console.log(`QuestControl API listening on ${env.PORT}`));
