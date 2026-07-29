@@ -18,9 +18,9 @@ type VoiceHint = { id:string; name:string; file_name:string; content_type:string
 type PollResult<T> = { ok:true; value:T } | { ok:false };
 
 const ATMOSPHERE = ["LIGHT UV","LIGHT WHITE","LIGHT OK","LIGHT OFF","LIGHT RESET","MASK SOUND"] as const;
-const MECHANISMS = ["PUZZLE SOLVE","PUZZLE RESET","BEAR SOUND","BEAR OPEN","BEAR CLOSE","DOOR OPEN","DOOR CLOSE","TABLE OPEN","TABLE CLOSE"] as const;
+const MECHANISMS = ["PUZZLE SOLVE","PUZZLE RESET","BEAR SOUND","BEAR OPEN","BEAR CLOSE","DOOR OPEN","DOOR CLOSE","TABLE OPEN","TABLE CLOSE","TABLE LEG OPEN","TABLE LEG CLOSE"] as const;
 const OVEN = ["OVEN SOLVED","OVEN RESET","OVEN UV ON","OVEN UV OFF","OVEN LIGHT ON","OVEN LIGHT OFF","OVEN MOVE ON","OVEN MOVE OFF","OVEN FOG ON","OVEN FOG OFF"] as const;
-type ToggleKey="bear"|"door"|"table"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
+type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
 
 @Component({
   selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule],
@@ -51,6 +51,7 @@ type ToggleKey="bear"|"door"|"table"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
             <div class="switch-row"><span><b>Медведь</b><small>{{toggleText('bear','Закрыт','Открыт')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('bear')" [attr.aria-checked]="toggleOn('bear')" [disabled]="busy()" (click)="toggle('bear','BEAR OPEN','BEAR CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Дверь</b><small>{{toggleText('door','Закрыта','Открыта')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('door')" [attr.aria-checked]="toggleOn('door')" [disabled]="busy()" (click)="toggle('door','DOOR OPEN','DOOR CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Стол</b><small>{{toggleText('table','Закрыт','Открыт')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('table')" [attr.aria-checked]="toggleOn('table')" [disabled]="busy()" (click)="toggle('table','TABLE OPEN','TABLE CLOSE')"><i></i></button></div>
+            <div class="switch-row"><span><b>Ножка стола</b><small>{{toggleText('tableLeg','Магнит включён · светодиод выключен','Магнит выключен · светодиод включён')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('tableLeg')" [attr.aria-checked]="toggleOn('tableLeg')" [disabled]="busy()" (click)="toggle('tableLeg','TABLE LEG OPEN','TABLE LEG CLOSE')"><i></i></button></div>
           </div>
           <div class="control-section"><span class="section-label">Пятнашки</span><div class="button-grid"><button [disabled]="busy()" (click)="command('PUZZLE SOLVE')">Решить пятнашки</button><button class="secondary-danger" [disabled]="busy()" (click)="command('PUZZLE RESET',true)">Сбросить пятнашки</button></div></div>
           <div class="control-section"><span class="section-label">Звук</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR SOUND')">Звук медведя</button></div></div>
