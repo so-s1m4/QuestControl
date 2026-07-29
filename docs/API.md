@@ -9,6 +9,7 @@
 - `GET /api/statistics/players?from=YYYY-MM-DD&to=YYYY-MM-DD` — игроки, уникальные посетители, сессии и разбивка по категории, возрастной группе и игре
 - `GET /api/time-to-grow/clubs`
 - `GET /api/time-to-grow/bookings?date=YYYY-MM-DD&clubId=...` — подтверждённые бронирования Time to Grow (требует `TIME_TO_GROW_EMAIL`/`TIME_TO_GROW_PASSWORD` либо `TIME_TO_GROW_JWT`)
+- `POST /api/time-to-grow/import` — идемпотентно импортировать одну бронь или набор дат, псевдонимизировать участников и при необходимости создать завершённые исторические сессии
 - `POST /api/rooms/:id/command`
 - `POST /api/local-sites/:id/tunnel`, затем одноразовый `GET /api/tunnel/:ticket`
 - `GET /api/cameras/:id/stream`

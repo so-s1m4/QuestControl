@@ -348,6 +348,130 @@ async function timeToGrowFetch(path) {
   return response;
 }
 
+async function fetchTimeToGrowBookings(clubId,date) {
+  const query = new URLSearchParams({
+    filtering: JSON.stringify({ status:"reserved",start_date:date,view_mode:"bookings" }),
+    pagination: JSON.stringify({ page:1,size:100 }),
+    sorting: JSON.stringify([{ name:"smart",direction:"desc" }]),
+  });
+  const response = await timeToGrowFetch(`/api/admin/clubs/${encodeURIComponent(clubId)}/bookings?${query}`);
+  if (!response.ok) {
+    const error=new Error("Time to Grow booking request failed");
+    error.code="TIME_TO_GROW_REQUEST_FAILED";
+    error.upstreamStatus=response.status;
+    throw error;
+  }
+  const payload=await response.json();
+  return z.array(z.object({
+    id:z.string(),
+    start:z.object({date:z.string(),time:z.string()}),
+    end:z.object({time:z.string()}),
+    status:z.object({id:z.string(),name:z.string()}),
+    owner:z.object({email:z.string().nullable().optional()}).passthrough(),
+    product:z.object({effective_name:z.string()}),
+    size:z.number().int().nonnegative(),
+    order:z.object({total_amount:z.number().nonnegative(),payment_status:z.string()}).passthrough(),
+    players:z.array(z.object({
+      email:z.string().nullable().optional(),
+      birthday:z.string().nullable().optional(),
+    }).passthrough()).optional(),
+  }).passthrough()).parse(payload.data);
+}
+
+function ageBandAtBooking(birthday,bookingDate) {
+  if (!birthday) return "UNKNOWN";
+  const born=new Date(`${birthday}T00:00:00Z`);
+  const played=new Date(`${bookingDate}T00:00:00Z`);
+  if (Number.isNaN(born.getTime()) || Number.isNaN(played.getTime()) || born>played) return "UNKNOWN";
+  let age=played.getUTCFullYear()-born.getUTCFullYear();
+  if (played.getUTCMonth()<born.getUTCMonth() || (played.getUTCMonth()===born.getUTCMonth() && played.getUTCDate()<born.getUTCDate())) age-=1;
+  return age<13 ? "CHILD" : age<18 ? "TEEN" : "ADULT";
+}
+
+async function importTimeToGrowBooking(client,location,externalBooking,createSession) {
+  const productName=externalBooking.product.effective_name.trim();
+  let room=(await client.query(
+    "SELECT id FROM rooms WHERE location_id=$1 AND lower(name)=lower($2) ORDER BY id LIMIT 1",
+    [location.id,productName]
+  )).rows[0];
+  if (!room && /krampus/i.test(productName)) {
+    room=(await client.query(
+      "SELECT id FROM rooms WHERE location_id=$1 AND name ~* 'krampus' ORDER BY id LIMIT 1",
+      [location.id]
+    )).rows[0];
+  }
+  if (!room) {
+    room=(await client.query(
+      "INSERT INTO rooms(location_id,name,kind,capacity,status) VALUES($1,$2,$3,$4,'OFFLINE') RETURNING id",
+      [location.id,productName,/krampus/i.test(productName)?"REAL":"VR",Math.max(1,externalBooking.size)]
+    )).rows[0];
+  }
+  const booking=(await client.query(`
+    INSERT INTO bookings(
+      room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,
+      currency,payment_status,external_source,external_id,product_name
+    ) VALUES(
+      $1,'Time to Grow',NULL,
+      ($2::date+$3::time) AT TIME ZONE $4,
+      ($2::date+$5::time) AT TIME ZONE $4,
+      $6,$7,'EUR',$8,'TIME_TO_GROW',$9,$10
+    )
+    ON CONFLICT(external_source,external_id) WHERE external_source IS NOT NULL AND external_id IS NOT NULL
+    DO UPDATE SET room_id=excluded.room_id,starts_at=excluded.starts_at,ends_at=excluded.ends_at,
+      players=excluded.players,amount_cents=excluded.amount_cents,payment_status=excluded.payment_status,
+      product_name=excluded.product_name
+    RETURNING *
+  `,[room.id,externalBooking.start.date,externalBooking.start.time,location.timezone,
+      externalBooking.end.time,externalBooking.size,Math.round(externalBooking.order.total_amount*100),
+      externalBooking.order.payment_status,externalBooking.id,productName])).rows[0];
+
+  await client.query("DELETE FROM booking_participants WHERE booking_id=$1",[booking.id]);
+  const sourcePlayers=[...(externalBooking.players||[])].slice(0,externalBooking.size);
+  if (!sourcePlayers.length && externalBooking.size>0 && externalBooking.owner.email) {
+    sourcePlayers.push({email:externalBooking.owner.email,birthday:null});
+  }
+  while (sourcePlayers.length<externalBooking.size) sourcePlayers.push({email:null,birthday:null});
+  const bookingTokens=new Set();
+  for (const player of sourcePlayers) {
+    let token=player.email ? identityToken(player.email) : crypto.randomBytes(32);
+    let identityType=player.email ? "EMAIL_HMAC" : "BOOKING_RANDOM";
+    const tokenKey=token.toString("hex");
+    if (bookingTokens.has(tokenKey)) {
+      token=crypto.randomBytes(32);
+      identityType="BOOKING_RANDOM";
+    }
+    bookingTokens.add(token.toString("hex"));
+    const person=(await client.query(`
+      INSERT INTO people(identity_token,identity_type,token_version) VALUES($1,$2,1)
+      ON CONFLICT(token_version,identity_token) DO UPDATE SET last_seen_at=now()
+      RETURNING id
+    `,[token,identityType])).rows[0];
+    const ageBand=ageBandAtBooking(player.birthday,externalBooking.start.date);
+    await client.query(`
+      INSERT INTO booking_participants(booking_id,person_id,participant_role,category_at_booking,age_band_at_booking)
+      VALUES($1,$2,'PLAYER',$3,$3) ON CONFLICT(booking_id,person_id) DO UPDATE SET
+      category_at_booking=excluded.category_at_booking,age_band_at_booking=excluded.age_band_at_booking
+    `,[booking.id,person.id,ageBand]);
+  }
+  let session=null;
+  if (createSession) {
+    session=(await client.query("SELECT * FROM sessions WHERE booking_id=$1 ORDER BY started_at LIMIT 1",[booking.id])).rows[0];
+    if (!session) {
+      session=(await client.query(`
+        INSERT INTO sessions(booking_id,room_id,status,started_at,ended_at,remaining_seconds)
+        VALUES($1,$2,'FINISHED',$3,$4,0) RETURNING *
+      `,[booking.id,room.id,booking.starts_at,booking.ends_at])).rows[0];
+    }
+    await client.query(`
+      INSERT INTO session_participants(session_id,person_id,participant_role,category_at_play,age_band_at_play)
+      SELECT $1,person_id,participant_role,category_at_booking,age_band_at_booking
+      FROM booking_participants WHERE booking_id=$2
+      ON CONFLICT(session_id,person_id) DO NOTHING
+    `,[session.id,booking.id]);
+  }
+  return {booking,session};
+}
+
 app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => {
   try {
     const response = await timeToGrowFetch("/api/admin/clubs");
@@ -515,6 +639,45 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
   }
 });
 
+app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) => {
+  if (!env.PSEUDONYMIZATION_SECRET) return res.status(503).json({error:"PSEUDONYMIZATION_NOT_CONFIGURED"});
+  const input=z.object({
+    clubId:z.string().regex(/^[a-z0-9]{26}$/),
+    dates:z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1).max(366),
+    bookingId:z.string().optional(),
+    createSessions:z.boolean().default(true),
+  }).parse(req.body);
+  if (input.dates.length>1 && !["OWNER","ADMIN"].includes(req.user?.role)) {
+    return res.status(403).json({error:"BULK_IMPORT_FORBIDDEN"});
+  }
+  const location=(await db.query("SELECT id,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
+  if (!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
+  if (!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const externalBookings=[];
+  for (const date of [...new Set(input.dates)]) {
+    const rows=await fetchTimeToGrowBookings(input.clubId,date);
+    externalBookings.push(...rows.filter(row=>!input.bookingId || row.id===input.bookingId));
+  }
+  if (input.bookingId && !externalBookings.length) return res.status(404).json({error:"EXTERNAL_BOOKING_NOT_FOUND"});
+  const client=await db.connect();
+  try {
+    await client.query("BEGIN");
+    const imported=[];
+    for (const externalBooking of externalBookings) {
+      const result=await importTimeToGrowBooking(client,location,externalBooking,input.createSessions);
+      imported.push({bookingId:result.booking.id,sessionId:result.session?.id||null,externalId:externalBooking.id});
+    }
+    await client.query("COMMIT");
+    await audit(req,"time_to_grow.import","booking",null,null,{dates:input.dates,imported:imported.length,createSessions:input.createSessions});
+    res.status(201).json({imported:imported.length,items:imported});
+  } catch(error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
   if (!["OWNER","ADMIN"].includes(req.user?.role)) return res.status(403).json({ error:"SESSIONS_HISTORY_FORBIDDEN" });
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -600,17 +763,48 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
 });
 
 app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => {
-  const action = z.enum(["PAUSE","RESUME","FINISH"]).parse(req.body.action);
   const before = (await db.query("SELECT * FROM sessions WHERE id=$1", [req.params.id])).rows[0];
   if (!before) return res.status(404).json({ error:"SESSION_NOT_FOUND" });
   const sessionRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[before.room_id])).rows[0];
   if (!sessionRoom || !(await locationAllowed(req,sessionRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  const status = action === "PAUSE" ? "PAUSED" : action === "RESUME" ? "RUNNING" : "FINISHED";
-  const { rows } = await db.query(
-    "UPDATE sessions SET status=$1,ended_at=CASE WHEN $1='FINISHED' THEN now() ELSE ended_at END WHERE id=$2 RETURNING *",
-    [status,req.params.id]
-  );
-  await audit(req,`session.${action.toLowerCase()}`,"session",req.params.id,before,rows[0]);
+  const actionInput=z.object({action:z.enum(["PAUSE","RESUME","FINISH"])}).safeParse(req.body);
+  let rows;
+  let auditAction;
+  if (actionInput.success) {
+    const action=actionInput.data.action;
+    const status=action==="PAUSE"?"PAUSED":action==="RESUME"?"RUNNING":"FINISHED";
+    rows=(await db.query(
+      "UPDATE sessions SET status=$1,ended_at=CASE WHEN $1='FINISHED' THEN now() ELSE ended_at END WHERE id=$2 RETURNING *",
+      [status,req.params.id]
+    )).rows;
+    auditAction=`session.${action.toLowerCase()}`;
+  } else {
+    if (!["OWNER","ADMIN"].includes(req.user?.role)) return res.status(403).json({error:"SESSION_EDIT_FORBIDDEN"});
+    const edit=z.object({
+      startedAt:z.string().datetime({offset:true}).optional(),
+      endedAt:z.string().datetime({offset:true}).nullable().optional(),
+      roomId:z.string().uuid().optional(),
+      status:z.enum(["RUNNING","PAUSED","FINISHED","CANCELLED"]).optional(),
+    }).refine(value=>Object.keys(value).length>0).parse(req.body);
+    if (edit.startedAt && edit.endedAt && new Date(edit.endedAt)<new Date(edit.startedAt)) {
+      return res.status(400).json({error:"INVALID_SESSION_TIME"});
+    }
+    if (edit.roomId) {
+      const targetRoom=(await db.query("SELECT location_id FROM rooms WHERE id=$1",[edit.roomId])).rows[0];
+      if (!targetRoom) return res.status(404).json({error:"ROOM_NOT_FOUND"});
+      if (!(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+    }
+    rows=(await db.query(`
+      UPDATE sessions SET
+        started_at=COALESCE($1,started_at),
+        ended_at=CASE WHEN $2::boolean THEN $3::timestamptz ELSE ended_at END,
+        room_id=COALESCE($4,room_id),
+        status=COALESCE($5,status)
+      WHERE id=$6 RETURNING *
+    `,[edit.startedAt||null,Object.hasOwn(edit,"endedAt"),edit.endedAt||null,edit.roomId||null,edit.status||null,req.params.id])).rows;
+    auditAction="session.edit";
+  }
+  await audit(req,auditAction,"session",req.params.id,before,rows[0]);
   res.json(rows[0]);
 });
 
