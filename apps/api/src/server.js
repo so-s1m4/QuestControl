@@ -398,7 +398,7 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
     "kinder party",
     "sanctum survival",
   ]);
-  const gameName=vrCentralProducts.has(productName.toLowerCase()) ? "VR Central" : productName;
+  const gameName=vrCentralProducts.has(productName.toLowerCase()) ? "VR Sankt Polten" : productName;
   let room=(await client.query(
     "SELECT id FROM rooms WHERE location_id=$1 AND lower(name)=lower($2) ORDER BY id LIMIT 1",
     [location.id,gameName]

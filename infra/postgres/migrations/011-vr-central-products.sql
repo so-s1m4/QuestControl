@@ -13,13 +13,13 @@ WITH vr_locations AS (
     )
 )
 INSERT INTO rooms(location_id,name,kind,capacity,status)
-SELECT location_id,'VR Central','VR',1,'OFFLINE'
+SELECT location_id,'VR Sankt Polten','VR',1,'OFFLINE'
 FROM vr_locations
 WHERE NOT EXISTS (
   SELECT 1
   FROM rooms r
   WHERE r.location_id=vr_locations.location_id
-    AND lower(r.name)='vr central'
+    AND lower(r.name)='vr sankt polten'
 );
 
 UPDATE bookings b
@@ -27,7 +27,7 @@ SET room_id=vr.id
 FROM rooms old_room
 JOIN rooms vr
   ON vr.location_id=old_room.location_id
- AND lower(vr.name)='vr central'
+ AND lower(vr.name)='vr sankt polten'
 WHERE b.room_id=old_room.id
   AND b.external_source='TIME_TO_GROW'
   AND lower(b.product_name) IN (
@@ -47,6 +47,7 @@ WHERE s.booking_id=b.id
 
 DELETE FROM rooms r
 WHERE lower(r.name) IN (
+    'vr central',
     'friendle pass',
     'couple pass',
     'skips of world',
