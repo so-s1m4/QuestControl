@@ -228,7 +228,7 @@ app.get("/dashboard", auth, async (req, res) => {
     db.query(`SELECT r.*,l.name location_name,
       COALESCE((SELECT d.status FROM devices d WHERE d.room_id=r.id ORDER BY d.last_seen DESC NULLS LAST LIMIT 1),r.status) live_status
       FROM rooms r JOIN locations l ON l.id=r.location_id WHERE ${scope.clause} ORDER BY r.name`,scope.values),
-    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND ${scope.clause} ORDER BY starts_at`,scope.values),
+    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND b.external_source IS NULL AND ${scope.clause} ORDER BY starts_at`,scope.values),
     db.query(`SELECT d.status,count(*)::int total FROM devices d JOIN rooms r ON r.id=d.room_id WHERE ${scope.clause} GROUP BY d.status`,scope.values)
   ]);
   res.json({ rooms: rooms.rows, bookings: bookings.rows, deviceSummary: devices.rows });
@@ -241,7 +241,7 @@ app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
     FROM bookings b
     JOIN rooms r ON r.id=b.room_id
     LEFT JOIN sessions s ON s.booking_id=b.id
-    WHERE ${scoped.clause}
+    WHERE ${scoped.clause} AND b.external_source IS NULL
     ORDER BY b.starts_at DESC LIMIT 250
   `,scoped.values);
   res.json(rows);
@@ -390,11 +390,20 @@ function ageBandAtBooking(birthday,bookingDate) {
 
 async function importTimeToGrowBooking(client,location,externalBooking,createSession) {
   const productName=externalBooking.product.effective_name.trim();
+  const vrCentralProducts=new Set([
+    "friendle pass",
+    "couple pass",
+    "skips of world",
+    "general pass",
+    "kinder party",
+    "sanctum survival",
+  ]);
+  const gameName=vrCentralProducts.has(productName.toLowerCase()) ? "VR Central" : productName;
   let room=(await client.query(
     "SELECT id FROM rooms WHERE location_id=$1 AND lower(name)=lower($2) ORDER BY id LIMIT 1",
-    [location.id,productName]
+    [location.id,gameName]
   )).rows[0];
-  if (!room && /krampus/i.test(productName)) {
+  if (!room && /krampus/i.test(gameName)) {
     room=(await client.query(
       "SELECT id FROM rooms WHERE location_id=$1 AND name ~* 'krampus' ORDER BY id LIMIT 1",
       [location.id]
@@ -403,7 +412,7 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
   if (!room) {
     room=(await client.query(
       "INSERT INTO rooms(location_id,name,kind,capacity,status) VALUES($1,$2,$3,$4,'OFFLINE') RETURNING id",
-      [location.id,productName,/krampus/i.test(productName)?"REAL":"VR",Math.max(1,externalBooking.size)]
+      [location.id,gameName,/krampus/i.test(gameName)?"REAL":"VR",Math.max(1,externalBooking.size)]
     )).rows[0];
   }
   const booking=(await client.query(`
@@ -599,8 +608,24 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       };
     };
 
+    const importedRows=bookings.length ? (await db.query(`
+      SELECT b.external_id,b.id local_booking_id,s.id session_id,s.status session_status
+      FROM bookings b
+      LEFT JOIN LATERAL (
+        SELECT id,status FROM sessions
+        WHERE booking_id=b.id
+        ORDER BY started_at DESC NULLS LAST,id DESC
+        LIMIT 1
+      ) s ON TRUE
+      WHERE b.external_source='TIME_TO_GROW' AND b.external_id=ANY($1::text[])
+    `,[bookings.map(booking=>booking.id)])).rows : [];
+    const importedById=new Map(importedRows.map(row=>[row.external_id,row]));
+
     res.json({
       data: bookings.map(booking => ({
+        localBookingId: importedById.get(booking.id)?.local_booking_id || null,
+        sessionId: importedById.get(booking.id)?.session_id || null,
+        sessionStatus: importedById.get(booking.id)?.session_status || null,
         id: booking.id,
         date: booking.start.date,
         startsAt: booking.start.time,
