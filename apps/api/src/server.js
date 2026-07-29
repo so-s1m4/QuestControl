@@ -758,7 +758,7 @@ app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) 
 });
 
 app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
-  if (!["OWNER","ADMIN"].includes(req.user?.role)) return res.status(403).json({ error:"SESSIONS_HISTORY_FORBIDDEN" });
+  if (!["OWNER","ADMIN","OPERATOR"].includes(req.user?.role)) return res.status(403).json({ error:"SESSIONS_HISTORY_FORBIDDEN" });
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
   const input = z.object({
     locationId:z.string().uuid().optional(),
@@ -808,7 +808,7 @@ app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
 
 app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
   if (!Object.hasOwn(req.body || {},"bookingId")) {
-    if (!isOwner(req)) return res.status(403).json({ error:"OWNER_REQUIRED" });
+    if (!["OWNER","ADMIN","OPERATOR"].includes(req.user?.role)) return res.status(403).json({ error:"SESSION_CREATE_FORBIDDEN" });
     const input=z.object({
       roomId:z.string().uuid(),
       gameId:z.string().uuid().nullable().default(null),
@@ -823,8 +823,9 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
       message:"endedAt is required for a finished session",
       path:["endedAt"],
     }).parse(req.body);
-    const room=(await db.query("SELECT id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+    const room=(await db.query("SELECT id,location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
     if (!room) return res.status(404).json({ error:"ROOM_NOT_FOUND" });
+    if (!(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
     if (input.gameId && !(await db.query("SELECT 1 FROM games WHERE id=$1 AND room_id=$2",[input.gameId,input.roomId])).rowCount) {
       return res.status(400).json({error:"GAME_NOT_IN_ZONE"});
     }
@@ -897,7 +898,7 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
     )).rows;
     auditAction=`session.${action.toLowerCase()}`;
   } else {
-    if (!["OWNER","ADMIN"].includes(req.user?.role)) return res.status(403).json({error:"SESSION_EDIT_FORBIDDEN"});
+    if (!["OWNER","ADMIN","OPERATOR"].includes(req.user?.role)) return res.status(403).json({error:"SESSION_EDIT_FORBIDDEN"});
     const edit=z.object({
       startedAt:z.string().datetime({offset:true}).optional(),
       endedAt:z.string().datetime({offset:true}).nullable().optional(),
@@ -955,7 +956,7 @@ app.delete("/sessions/:id", auth, permit("sessions:manage"), async (req,res) => 
   }
 });
 
-app.get("/statistics/players", auth, permit("statistics:read"), async (req, res) => {
+app.get("/statistics/players", auth, permit("sessions:read"), async (req, res) => {
   const today = new Date();
   const monthAgo = new Date(today);
   monthAgo.setUTCDate(monthAgo.getUTCDate() - 30);

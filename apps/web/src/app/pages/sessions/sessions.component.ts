@@ -31,8 +31,8 @@ type Statistics={
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="active" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
-    <header><div><h2>Сессии</h2><p>История игр и статистика по всей сети</p></div><div class="header-actions">@if(isOwner()){<button (click)="newSession()">+ Добавить сессию</button>}<button class="secondary" (click)="load()" [disabled]="loading()">{{loading()?"Обновляем…":"↻ Обновить"}}</button></div></header>
-    @if(isOwner()&&showForm()){<form class="editor" (ngSubmit)="saveSession()">
+    <header><div><h2>Сессии</h2><p>История игр и статистика по всей сети</p></div><div class="header-actions">@if(canManageSessions()){<button (click)="newSession()">+ Добавить сессию</button>}<button class="secondary" (click)="load()" [disabled]="loading()">{{loading()?"Обновляем…":"↻ Обновить"}}</button></div></header>
+    @if(canManageSessions()&&showForm()){<form class="editor" (ngSubmit)="saveSession()">
       <label>Комната<select name="room" [(ngModel)]="draft.roomId" required>@for(room of rooms();track room.id){<option [value]="room.id">{{room.location_name}} · {{room.name}}</option>}</select></label>
       <label>Игра<select name="game" [(ngModel)]="draft.gameId"><option value="">Не выбрана</option>@for(game of gamesForRoom(draft.roomId);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label>
       <label>Начало<input name="startedAt" type="datetime-local" [(ngModel)]="draft.startedAt" required></label>
@@ -69,7 +69,7 @@ type Statistics={
         <div class="players"><b>{{item.player_count}}</b><span>игроков</span></div>
         <div class="duration"><b>{{duration(item.elapsed_seconds)}}</b><span>время</span></div>
         <span class="status" [class.running]="item.status==='RUNNING'" [class.finished]="item.status==='FINISHED'">{{status(item.status)}}</span>
-        @if(isOwner()){<div class="row-actions"><button class="secondary" (click)="editSession(item)">Изменить</button><button class="danger" (click)="deleteSession(item)">Удалить</button></div>}
+        @if(canManageSessions()){<div class="row-actions"><button class="secondary" (click)="editSession(item)">Изменить</button>@if(isOwner()){<button class="danger" (click)="deleteSession(item)">Удалить</button>}</div>}
       </article>}@empty{@if(!loading()){<div class="empty"><b>Сессий за этот период нет</b><span>Измените фильтр локации или даты.</span></div>}}
     </div>
   </section></main>`,
@@ -95,6 +95,7 @@ export class SessionsComponent{
   status(value:string){return({RUNNING:"Идёт",PAUSED:"Пауза",FINISHED:"Завершена",CANCELLED:"Отменена"} as Record<string,string>)[value]||value;}
   category(value:string){return value==="UNKNOWN"?"Не указана":value;}
   isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}
+  canManageSessions(){try{return["OWNER","ADMIN","OPERATOR"].includes(JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role)}catch{return false}}
   gamesForRoom(roomId:string){return this.games().filter(game=>game.room_id===roomId);}
   newSession(){this.editingId.set(null);this.draft={roomId:this.rooms()[0]?.id||"",gameId:"",startedAt:this.localDateTime(new Date()),endedAt:"",status:"RUNNING"};this.showForm.set(true);}
   editSession(item:Session){this.editingId.set(item.id);this.draft={roomId:item.room_id,gameId:item.game_id||"",startedAt:this.localDateTime(item.started_at?new Date(item.started_at):new Date()),endedAt:item.ended_at?this.localDateTime(new Date(item.ended_at)):"",status:item.status};this.showForm.set(true);window.scrollTo({top:0,behavior:"smooth"});}
