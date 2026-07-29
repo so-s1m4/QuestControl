@@ -30,7 +30,6 @@ type Location = { id:string;name:string };
           <a routerLink="/locations">Локации</a>
           <a routerLink="/rooms">Комнаты</a>
           <a routerLink="/cameras">Камеры</a>
-          <a routerLink="/krampus">Krampus House</a>
           <a class="active" routerLink="/users">Пользователи</a>
         </nav>
       </aside>

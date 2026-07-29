@@ -10,7 +10,7 @@ type Camera={id:string;name:string;provider:string;status:string;location_id:str
 @Component({
   selector:"app-camera-settings",standalone:true,imports:[FormsModule,RouterLink],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a class="camera-settings-link active" routerLink="/camera-settings"><span>⚙</span> Настройки камер</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a class="camera-settings-link active" routerLink="/camera-settings"><span>⚙</span> Настройки камер</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section><header><div><h2>Настройки камер</h2><p>Распределение всех камер аккаунта по локациям и зонам плана</p></div><div class="header-actions"><button class="tuya-sync" (click)="syncTuya()" [disabled]="syncing()">{{syncing()?"Синхронизация…":"↻ Синхронизировать с Tuya"}}</button><button class="secondary" (click)="load()">Обновить список</button></div></header>
   @if(error()){<p class="error">{{error()}}</p>}@if(notice()){<p class="notice">{{notice()}}</p>}
   <div class="camera-table"><div class="table-head"><span>Камера</span><span>Локация</span><span>Зона или комната на плане</span><span></span></div>
