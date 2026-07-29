@@ -17,3 +17,7 @@ QUESTCONTROL ROOM AGENT — KRAMPUS
    sudo -u quest-agent aplay /usr/share/sounds/alsa/Front_Center.wav
 
 Для микрофона браузерная панель QuestControl должна открываться по HTTPS.
+
+Версия 0.2.0 добавляет воспроизведение загруженных голосовых подсказок
+в форматах MP3, WAV, OGG, WebM и M4A. При обновлении существующей установки
+выберите сохранение найденной конфигурации.

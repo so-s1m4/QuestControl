@@ -28,7 +28,7 @@ function stopVoice() {
 }
 function startVoice(contentType) {
   stopVoice();
-  if(!["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/ogg"].includes(contentType)) {
+  if(!["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/ogg","audio/mpeg","audio/wav","audio/x-wav","audio/mp4","audio/x-m4a"].includes(contentType)) {
     throw new Error("VOICE_FORMAT_NOT_ALLOWED");
   }
   const args=config.AUDIO_PLAYER==="mpv"

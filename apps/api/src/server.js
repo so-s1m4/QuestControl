@@ -49,7 +49,7 @@ async function locationAllowed(req, locationId) {
 app.set("trust proxy", env.TRUST_PROXY);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "9mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyHeaders: false }));
 
 const server = http.createServer(app);
@@ -1447,6 +1447,19 @@ const krampusCommands = [
   "OVEN LIGHT OFF","OVEN MOVE ON","OVEN MOVE OFF","OVEN FOG ON","OVEN FOG OFF"
 ];
 const krampusCommand = z.object({ command:z.enum(krampusCommands.map(value=>`ADMIN ${value}`)) }).strict();
+const voiceHintTypes = ["audio/mpeg","audio/wav","audio/x-wav","audio/ogg","audio/webm","audio/mp4","audio/x-m4a"];
+const voiceHintUpload = z.object({
+  name:z.string().trim().min(1).max(120),
+  fileName:z.string().trim().min(1).max(255),
+  contentType:z.enum(voiceHintTypes),
+  data:z.string().min(1)
+}).strict();
+
+async function allowedRoom(req, roomId) {
+  const room=(await db.query("SELECT id,location_id FROM rooms WHERE id=$1",[roomId])).rows[0];
+  return room && await locationAllowed(req,room.location_id) ? room : null;
+}
+
 app.get("/rooms/:id/krampus/:resource", auth, permit("rooms:read"), async (req,res) => {
   const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
@@ -1474,6 +1487,92 @@ app.post("/rooms/:id/krampus/sound", auth, permit("devices:command"), async (req
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:"sound",...input});
   await audit(req,"krampus.sound","room",req.params.id,null,{...input,result});
   res.status(result.success ? 200 : 502).json(result.success ? result.result : {error:result.error});
+});
+
+app.get("/rooms/:id/voice-hints", auth, permit("rooms:read"), async (req,res) => {
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(
+    `SELECT id,name,file_name,content_type,size_bytes,created_at
+     FROM voice_hints WHERE room_id=$1 ORDER BY lower(name),created_at`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+app.post("/rooms/:id/voice-hints", auth, permit("devices:command"), async (req,res) => {
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const input=voiceHintUpload.parse(req.body);
+  let audio;
+  if(!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) return res.status(400).json({error:"INVALID_AUDIO_DATA"});
+  try { audio=Buffer.from(input.data,"base64"); }
+  catch { return res.status(400).json({error:"INVALID_AUDIO_DATA"}); }
+  if(!audio.length||audio.length>6_000_000) return res.status(413).json({error:"VOICE_HINT_TOO_LARGE"});
+  if(input.data.replace(/=+$/,"").length!==Math.ceil(audio.length/3)*4-(audio.length%3?3-audio.length%3:0)) {
+    return res.status(400).json({error:"INVALID_AUDIO_DATA"});
+  }
+  const {rows}=await db.query(
+    `INSERT INTO voice_hints(room_id,name,file_name,content_type,audio_data,size_bytes,created_by)
+     VALUES($1,$2,$3,$4,$5,$6,$7)
+     RETURNING id,name,file_name,content_type,size_bytes,created_at`,
+    [req.params.id,input.name,input.fileName,input.contentType,audio,audio.length,req.user.sub]
+  );
+  await audit(req,"voice_hint.create","voice_hint",rows[0].id,null,{roomId:req.params.id,name:input.name,fileName:input.fileName,sizeBytes:audio.length});
+  res.status(201).json(rows[0]);
+});
+
+app.get("/rooms/:id/voice-hints/:hintId/audio", auth, permit("rooms:read"), async (req,res) => {
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const hint=(await db.query(
+    "SELECT content_type,file_name,audio_data FROM voice_hints WHERE id=$1 AND room_id=$2",
+    [req.params.hintId,req.params.id]
+  )).rows[0];
+  if(!hint) return res.status(404).json({error:"VOICE_HINT_NOT_FOUND"});
+  res.set({"content-type":hint.content_type,"content-length":String(hint.audio_data.length),"cache-control":"private, max-age=300","content-disposition":`inline; filename*=UTF-8''${encodeURIComponent(hint.file_name)}`});
+  res.send(hint.audio_data);
+});
+
+app.post("/rooms/:id/voice-hints/:hintId/play", auth, permit("devices:command"), async (req,res) => {
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const hint=(await db.query(
+    "SELECT id,name,content_type,audio_data,size_bytes FROM voice_hints WHERE id=$1 AND room_id=$2",
+    [req.params.hintId,req.params.id]
+  )).rows[0];
+  if(!hint) return res.status(404).json({error:"VOICE_HINT_NOT_FOUND"});
+  const agent=(await db.query(
+    "SELECT agent_id FROM devices WHERE room_id=$1 AND agent_id IS NOT NULL ORDER BY last_seen DESC NULLS LAST,id LIMIT 1",
+    [req.params.id]
+  )).rows[0];
+  if(!agent) return res.status(409).json({error:"AGENT_NOT_CONFIGURED"});
+  if(activeVoiceAgents.has(agent.agent_id)) return res.status(409).json({error:"VOICE_BUSY"});
+  const playbackId=`hint:${hint.id}`;
+  activeVoiceAgents.set(agent.agent_id,playbackId);
+  const finish=()=>{ if(activeVoiceAgents.get(agent.agent_id)===playbackId) activeVoiceAgents.delete(agent.agent_id); };
+  agentNs.to(`agent:${agent.agent_id}`).timeout(5000).emit("voice",{operation:"start",contentType:hint.content_type},async(err,responses)=>{
+    const result=err?{success:false,error:"AGENT_TIMEOUT"}:responses?.[0]||{success:false,error:"EMPTY_AGENT_RESPONSE"};
+    if(!result.success) {
+      finish();
+      await audit(req,"voice_hint.play","voice_hint",hint.id,null,{roomId:req.params.id,name:hint.name,result});
+      return res.status(502).json({error:result.error});
+    }
+    for(let offset=0;offset<hint.audio_data.length;offset+=64_000) {
+      agentNs.to(`agent:${agent.agent_id}`).emit("voice",{operation:"chunk",data:hint.audio_data.subarray(offset,offset+64_000)});
+    }
+    agentNs.to(`agent:${agent.agent_id}`).emit("voice",{operation:"stop"});
+    finish();
+    await audit(req,"voice_hint.play","voice_hint",hint.id,null,{roomId:req.params.id,name:hint.name,sizeBytes:hint.size_bytes,result:{success:true}});
+    res.json({success:true});
+  });
+});
+
+app.delete("/rooms/:id/voice-hints/:hintId", auth, permit("devices:command"), async (req,res) => {
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const hint=(await db.query(
+    "DELETE FROM voice_hints WHERE id=$1 AND room_id=$2 RETURNING id,name,file_name,size_bytes",
+    [req.params.hintId,req.params.id]
+  )).rows[0];
+  if(!hint) return res.status(404).json({error:"VOICE_HINT_NOT_FOUND"});
+  await audit(req,"voice_hint.delete","voice_hint",hint.id,hint,null);
+  res.status(204).end();
 });
 
 app.post("/local-sites/:id/tunnel", auth, permit("local_sites:open"), async (req, res) => {

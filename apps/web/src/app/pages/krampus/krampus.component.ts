@@ -2,6 +2,7 @@ import { Component, inject, OnDestroy, signal } from "@angular/core";
 import { HttpClient, HttpErrorResponse } from "@angular/common/http";
 import { RouterLink } from "@angular/router";
 import { DatePipe } from "@angular/common";
+import { FormsModule } from "@angular/forms";
 import { Subscription, catchError, forkJoin, interval, of, startWith, switchMap } from "rxjs";
 import { io, Socket } from "socket.io-client";
 
@@ -13,6 +14,7 @@ type KrampusStatus = {
   [key:string]:unknown;
 };
 type LogLine = { at?:string; direction?:string; line?:string };
+type VoiceHint = { id:string; name:string; file_name:string; content_type:string; size_bytes:number; created_at:string };
 type PollResult<T> = { ok:true; value:T } | { ok:false };
 
 const ATMOSPHERE = ["LIGHT UV","LIGHT WHITE","LIGHT OK","LIGHT OFF","LIGHT RESET","MASK SOUND"] as const;
@@ -21,7 +23,7 @@ const OVEN = ["OVEN SOLVED","OVEN RESET","OVEN UV ON","OVEN UV OFF","OVEN LIGHT 
 type ToggleKey="bear"|"door"|"table"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
 
 @Component({
-  selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe],
+  selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule],
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
@@ -69,6 +71,27 @@ type ToggleKey="bear"|"door"|"table"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
               (pointerdown)="startTalking($event)" (pointerup)="stopTalking()" (pointercancel)="stopTalking()" (pointerleave)="stopTalking()"
               (keydown.space)="startTalking($event)" (keyup.space)="stopTalking()">🎙 {{recording()?"Говорите…":"Удерживайте для разговора"}}</button>
           </div>
+          <div class="voice-hints">
+            <h4>Голосовые подсказки</h4>
+            <p>Загрузите готовую запись и отправляйте её игрокам одним нажатием.</p>
+            <div class="hint-upload">
+              <label>Название<input maxlength="120" placeholder="Например: Посмотрите под столом" [ngModel]="hintName()" (ngModelChange)="hintName.set($event)"></label>
+              <label class="file-picker">🎵 {{hintFileName()||"Выбрать аудиофайл"}}<input type="file" accept=".mp3,.wav,.ogg,.webm,.m4a,audio/mpeg,audio/wav,audio/ogg,audio/webm,audio/mp4" (change)="selectHintFile($event)"></label>
+              <button [disabled]="busy()||!hintName().trim()||!hintFile()" (click)="uploadHint()">Добавить</button>
+            </div>
+            <div class="hint-list">
+              @for(hint of voiceHints();track hint.id){
+                <div class="hint-row">
+                  <span><b>{{hint.name}}</b><small>{{hint.file_name}} · {{fileSize(hint.size_bytes)}}</small></span>
+                  <div>
+                    <button class="hint-preview" title="Прослушать на этом компьютере" [disabled]="busy()" (click)="previewHint(hint)">▶</button>
+                    <button class="hint-send" [disabled]="busy()||!agentOnline()" (click)="playHint(hint)">Отправить</button>
+                    <button class="hint-delete" title="Удалить" [disabled]="busy()" (click)="deleteHint(hint)">×</button>
+                  </div>
+                </div>
+              } @empty {<div class="no-hints">Сохранённых подсказок пока нет.</div>}
+            </div>
+          </div>
         </article>
       </div>
       <h3>Датчики</h3><div class="sensor-grid">@for(item of sensorEntries();track item[0]){<article><span>{{sensorLabel(item[0])}}</span><b [class.active]="sensorActive(item[1])">{{sensorValue(item[1])}}</b></article>}@empty{<div class="empty compact">Нет данных от датчиков</div>}</div>
@@ -84,6 +107,7 @@ type ToggleKey="bear"|"door"|"table"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
   .control-section{margin-top:18px}.section-label{display:block;margin-bottom:9px;color:#6b7280;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.secondary-danger{background:#fff0f1!important;color:#a82030!important}
   .switch-list{display:grid;gap:2px}.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #eef0f4}.switch-row:last-child{border-bottom:0}.switch-row span,.switch-row b,.switch-row small{display:block}.switch-row small{margin-top:3px;color:#7a8495;font-size:11px}.switch{position:relative;flex:0 0 48px;width:48px;height:27px;padding:0;border-radius:20px;background:#cbd1dc;box-shadow:none}.switch i{position:absolute;left:3px;top:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 2px 5px #10182735;transition:left .18s}.switch.on{background:#168653}.switch.on i{left:24px}.switch:hover:not(:disabled){transform:none;box-shadow:none}
   .voice{margin-top:20px;padding-top:16px;border-top:1px solid #e1e5ed}.voice h4{margin:0}.voice p{min-height:20px;margin:7px 0;color:#6b7280;font-size:12px}.talk{width:100%;touch-action:none;user-select:none;background:#273248}.talk.recording{background:#bd3042;box-shadow:0 0 0 5px #bd30421f}
+  .voice-hints{margin-top:20px;padding-top:16px;border-top:1px solid #e1e5ed}.voice-hints h4{margin:0}.voice-hints>p{margin:7px 0 12px;color:#6b7280;font-size:12px}.hint-upload{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.hint-upload label:first-child{grid-column:1/-1}.file-picker{display:flex;align-items:center;min-height:40px;padding:9px 11px;border:1px dashed #c7ceda;border-radius:8px;color:#4c5668;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-picker input{display:none}.hint-list{display:grid;gap:7px;margin-top:12px}.hint-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #eef0f4}.hint-row>span,.hint-row b,.hint-row small{display:block;min-width:0}.hint-row>span{overflow:hidden}.hint-row b,.hint-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hint-row small{margin-top:3px;color:#7a8495;font-size:10px}.hint-row>div{display:flex;gap:5px}.hint-row button{padding:7px 9px;box-shadow:none}.hint-preview{background:#eef1f6;color:#273248}.hint-send{background:#168653}.hint-delete{background:#fff0f1;color:#a82030}.no-hints{padding:12px 0;color:#7a8495;font-size:12px}
   .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.sensor-grid article{display:flex;justify-content:space-between;background:white;padding:12px;border:1px solid #e1e5ed;border-radius:8px}.sensor-grid b{color:#b32d3e}.sensor-grid b.active{color:#168653}.empty.compact{padding:24px;margin:0}
   .terminal{height:280px;overflow:auto;background:#101622;color:#d8dfec;border-radius:10px;padding:14px}.terminal div{display:grid;grid-template-columns:70px 55px 1fr;gap:8px;padding:3px}.terminal time{color:#78859d}.terminal b{color:#7c8cff}.terminal code{white-space:pre-wrap;overflow-wrap:anywhere}
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
@@ -98,6 +122,7 @@ export class KrampusComponent implements OnDestroy {
   error=signal(""); notice=signal(""); loading=signal(true); busy=signal(false);
   agentOnline=signal(false); lastUpdated=signal<Date|null>(null);
   recording=signal(false); voiceStatus=signal("Нажмите и удерживайте кнопку, чтобы говорить в комнате.");
+  voiceHints=signal<VoiceHint[]>([]); hintName=signal(""); hintFile=signal<File|null>(null); hintFileName=signal("");
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
   private voiceSocket?:Socket;
@@ -113,7 +138,7 @@ export class KrampusComponent implements OnDestroy {
         const room=rooms.find(r=>/krampus/i.test(r.name));
         this.loading.set(false);
         if(!room){ this.roomId.set(""); return; }
-        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.startPolling();
+        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.startPolling();
       },
       error:error=>{ this.loading.set(false); this.error.set(this.message(error,"Не удалось загрузить комнаты.")); }
     });
@@ -152,6 +177,58 @@ export class KrampusComponent implements OnDestroy {
   toggleText(key:ToggleKey,off="Выключено",on="Включено"){ return this.toggleStates()[key]===undefined?"Состояние не получено":this.toggleOn(key)?on:off; }
   sound(action:"play"|"stop",sound?:"alert.mp3"|"calling.mp3"){
     this.send(`/api/rooms/${this.roomId()}/krampus/sound`,{action,sound},action==="stop"?"Звук остановлен.":"Звук запущен.");
+  }
+  loadHints(){
+    this.http.get<VoiceHint[]>(`/api/rooms/${this.roomId()}/voice-hints`).subscribe({
+      next:hints=>this.voiceHints.set(hints),
+      error:error=>this.error.set(this.message(error,"Не удалось загрузить голосовые подсказки."))
+    });
+  }
+  selectHintFile(event:Event){
+    const input=event.target as HTMLInputElement;
+    const file=input.files?.[0]||null;
+    if(file&&file.size>6_000_000){ this.error.set("Аудиофайл должен быть не больше 6 МБ."); input.value=""; this.hintFile.set(null); this.hintFileName.set(""); return; }
+    this.error.set(""); this.hintFile.set(file); this.hintFileName.set(file?.name||"");
+    if(file&&!this.hintName().trim()) this.hintName.set(file.name.replace(/\.[^.]+$/,"").replaceAll("_"," "));
+  }
+  uploadHint(){
+    const file=this.hintFile(); const name=this.hintName().trim();
+    if(!file||!name||this.busy()) return;
+    const contentType=this.audioType(file);
+    if(!contentType){ this.error.set("Поддерживаются MP3, WAV, OGG, WebM и M4A."); return; }
+    this.busy.set(true); this.error.set(""); this.notice.set("");
+    const reader=new FileReader();
+    reader.onerror=()=>{ this.busy.set(false); this.error.set("Не удалось прочитать аудиофайл."); };
+    reader.onload=()=>{
+      const data=String(reader.result).split(",",2)[1]||"";
+      this.http.post<VoiceHint>(`/api/rooms/${this.roomId()}/voice-hints`,{name,fileName:file.name,contentType,data}).subscribe({
+        next:hint=>{ this.busy.set(false); this.voiceHints.update(items=>[...items,hint].sort((a,b)=>a.name.localeCompare(b.name))); this.hintName.set(""); this.hintFile.set(null); this.hintFileName.set(""); this.notice.set(`Подсказка «${hint.name}» добавлена.`); },
+        error:error=>{ this.busy.set(false); this.error.set(this.message(error,"Не удалось добавить подсказку.")); }
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+  playHint(hint:VoiceHint){ this.send(`/api/rooms/${this.roomId()}/voice-hints/${hint.id}/play`,{},`Подсказка «${hint.name}» отправлена в комнату.`); }
+  previewHint(hint:VoiceHint){
+    if(this.busy()) return;
+    this.http.get(`/api/rooms/${this.roomId()}/voice-hints/${hint.id}/audio`,{responseType:"blob"}).subscribe({
+      next:blob=>{ const url=URL.createObjectURL(blob); const audio=new Audio(url); audio.onended=()=>URL.revokeObjectURL(url); audio.onerror=()=>{ URL.revokeObjectURL(url); this.error.set("Не удалось воспроизвести подсказку."); }; void audio.play(); },
+      error:error=>this.error.set(this.message(error,"Не удалось загрузить подсказку."))
+    });
+  }
+  deleteHint(hint:VoiceHint){
+    if(this.busy()||!confirm(`Удалить подсказку «${hint.name}»?`)) return;
+    this.busy.set(true); this.error.set(""); this.notice.set("");
+    this.http.delete(`/api/rooms/${this.roomId()}/voice-hints/${hint.id}`).subscribe({
+      next:()=>{ this.busy.set(false); this.voiceHints.update(items=>items.filter(item=>item.id!==hint.id)); this.notice.set(`Подсказка «${hint.name}» удалена.`); },
+      error:error=>{ this.busy.set(false); this.error.set(this.message(error,"Не удалось удалить подсказку.")); }
+    });
+  }
+  fileSize(bytes:number){ return bytes>=1_000_000?`${(bytes/1_000_000).toFixed(1)} МБ`:`${Math.ceil(bytes/1000)} КБ`; }
+  private audioType(file:File){
+    const byExtension:Record<string,string>={mp3:"audio/mpeg",wav:"audio/wav",ogg:"audio/ogg",webm:"audio/webm",m4a:"audio/mp4"};
+    const extension=file.name.split(".").pop()?.toLowerCase()||"";
+    return byExtension[extension]||(["audio/mpeg","audio/wav","audio/x-wav","audio/ogg","audio/webm","audio/mp4","audio/x-m4a"].includes(file.type)?file.type:"");
   }
   async startTalking(event:Event){
     event.preventDefault();
