@@ -161,6 +161,7 @@ export class KrampusComponent implements OnDestroy {
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
   private voiceSocket?:Socket;
+  private doorbellSocket?:Socket;
   private recorder?:MediaRecorder;
   private microphone?:MediaStream;
   private lastDoorbellId="";
@@ -174,9 +175,20 @@ export class KrampusComponent implements OnDestroy {
         const room=rooms.find(r=>/krampus/i.test(r.name));
         this.loading.set(false);
         if(!room){ this.roomId.set(""); return; }
-        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.loadHelpButton(); this.startPolling();
+        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.loadHelpButton(); this.connectDoorbell(); this.startPolling();
       },
       error:error=>{ this.loading.set(false); this.error.set(this.message(error,"Не удалось загрузить комнаты.")); }
+    });
+  }
+  connectDoorbell(){
+    this.doorbellSocket?.disconnect();
+    const token=sessionStorage.getItem("access_token");
+    if(!token) return;
+    this.doorbellSocket=io({path:"/socket.io",transports:["websocket"],auth:{token}});
+    this.doorbellSocket.on("doorbell-call",(call:DoorbellCall&{room_id:string})=>{
+      if(call.room_id!==this.roomId()) return;
+      this.doorbellCalls.update(items=>[call,...items.filter(item=>item.id!==call.id)].slice(0,20));
+      if(call.id!==this.lastDoorbellId){ this.lastDoorbellId=call.id; this.playDoorbellAlert(); }
     });
   }
   loadHelpButton(){
@@ -374,5 +386,5 @@ export class KrampusComponent implements OnDestroy {
   sensorValue(value:unknown){ return typeof value==="boolean"?(value?"ON":"OFF"):String(value??"—"); }
   sensorLabel(key:string){ return key.replaceAll("_"," ").replace(/\b\w/g,char=>char.toUpperCase()); }
   logTime(line:LogLine){ const date=line.at?new Date(line.at):null; return date&&!Number.isNaN(date.getTime())?date.toLocaleTimeString("ru-RU",{hour12:false}):"—"; }
-  ngOnDestroy(){ this.poll?.unsubscribe(); this.closeVoice(); }
+  ngOnDestroy(){ this.poll?.unsubscribe(); this.doorbellSocket?.disconnect(); this.closeVoice(); }
 }

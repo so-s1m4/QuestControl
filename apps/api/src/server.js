@@ -1709,6 +1709,7 @@ app.post("/rooms/:id/doorbell-calls/test", auth, async (req,res) => {
     INSERT INTO doorbell_calls(room_id,camera_id,external_message_id,raw_event)
     VALUES($1,$2,$3,$4) RETURNING *
   `,[req.params.id,camera.id,`test-${crypto.randomUUID()}`,{test:true}]);
+  io.emit("doorbell-call",{...rows[0],room_id:req.params.id,camera_name:camera.name,camera_status:"ONLINE"});
   res.status(201).json(rows[0]);
 });
 
@@ -1881,13 +1882,17 @@ const doorbellEvent = (message) => {
   const data=message?.payload?.data||{};
   const statuses=Array.isArray(data.status)?data.status:Array.isArray(data.data?.status)?data.data.status:[];
   const codes=statuses.map(item=>String(item?.code??item?.dpId??item?.dp_id??"").toLowerCase());
-  const text=JSON.stringify({bizCode:data.bizCode||data.biz_code||"",type:data.type||"",codes}).toLowerCase();
+  const bizCode=String(data.bizCode||data.biz_code||"").toLowerCase();
+  if(bizCode==="deviceeventmessage") return true;
+  const text=JSON.stringify({bizCode,type:data.type||"",codes}).toLowerCase();
   return /(doorbell|door_bell|door bell|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(text);
 };
 tuyaMessages.on("message",async message=>{
   try {
     const data=message?.payload?.data||{};
     const externalId=String(data.devId||data.deviceId||data.dev_id||message.key||"");
+    const bizCode=String(data.bizCode||data.biz_code||"unknown");
+    console.log("Tuya message received",bizCode,externalId||"no-device");
     if(!externalId||!doorbellEvent(message)) return;
     const camera=(await db.query(`
       SELECT c.id,r.id AS room_id FROM cameras c
@@ -1908,9 +1913,13 @@ tuyaMessages.on("message",async message=>{
       INSERT INTO doorbell_calls(room_id,camera_id,external_message_id,raw_event)
       VALUES($1,$2,$3,$4)
       ON CONFLICT(external_message_id) DO NOTHING
-      RETURNING id
+      RETURNING *
     `,[camera.room_id,camera.id,externalMessageId,message])).rows[0];
-    if(call) console.log("Doorbell call received",camera.id,call.id);
+    if(call){
+      console.log("Doorbell call received",camera.id,call.id);
+      const cameraInfo=(await db.query("SELECT name,status FROM cameras WHERE id=$1",[camera.id])).rows[0];
+      io.emit("doorbell-call",{...call,camera_name:cameraInfo?.name||"Doorbell",camera_status:cameraInfo?.status||"ONLINE"});
+    }
   } catch(error) {
     console.error("Doorbell event processing failed",error.message);
   }
