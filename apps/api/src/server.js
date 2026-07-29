@@ -488,6 +488,27 @@ app.post("/rooms", auth, permit("rooms:manage"), async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+app.patch("/rooms/:id", auth, permit("rooms:manage"), async (req,res) => {
+  const input = z.object({
+    locationId:z.string().uuid(),
+    name:z.string().trim().min(2).max(120),
+    kind:z.enum(["REAL","VR"]),
+    capacity:z.number().int().min(1).max(100),
+  }).parse(req.body);
+  const before = (await db.query("SELECT * FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!before) return res.status(404).json({ error:"ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req,before.location_id)) || !(await locationAllowed(req,input.locationId))) {
+    return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  }
+  const { rows } = await db.query(
+    `UPDATE rooms SET location_id=$1,name=$2,kind=$3,capacity=$4
+     WHERE id=$5 RETURNING *`,
+    [input.locationId,input.name,input.kind,input.capacity,req.params.id]
+  );
+  await audit(req,"room.update","room",req.params.id,before,rows[0]);
+  res.json(rows[0]);
+});
+
 app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
   const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
