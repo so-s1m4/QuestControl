@@ -744,16 +744,6 @@ app.get("/devices", auth, permit("devices:read"), async (req,res) => {
   res.json(rows);
 });
 
-app.post("/bookings", auth, permit("bookings:create"), async (req, res) => {
-  const input = z.object({ roomId:z.string().uuid(), customerName:z.string().min(2), customerPhone:z.string().optional(), startsAt:z.string().datetime(), endsAt:z.string().datetime(), players:z.number().int().positive(), amountCents:z.number().int().nonnegative().default(0), notes:z.string().max(2000).optional() }).parse(req.body);
-  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
-  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  const conflict = await db.query("SELECT 1 FROM bookings WHERE room_id=$1 AND tstzrange(starts_at,ends_at) && tstzrange($2,$3) LIMIT 1", [input.roomId,input.startsAt,input.endsAt]);
-  if (conflict.rowCount) return res.status(409).json({ error: "BOOKING_CONFLICT" });
-  const { rows } = await db.query("INSERT INTO bookings(room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [input.roomId,input.customerName,input.customerPhone||null,input.startsAt,input.endsAt,input.players,input.amountCents,input.notes||null]);
-  await audit(req,"booking.create","booking",rows[0].id,null,rows[0]); res.status(201).json(rows[0]);
-});
-
 app.post("/rooms/:id/command", auth, permit("devices:command"), async (req, res) => {
   const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
