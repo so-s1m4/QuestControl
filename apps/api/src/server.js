@@ -546,7 +546,7 @@ app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) 
 
 const cameraInput = z.object({
   name: z.string().trim().min(2).max(120),
-  roomId: z.string().uuid().nullable().optional(),
+  roomId: z.string().uuid(),
   provider: z.enum(["RTSP", "ONVIF", "TUYA"]),
   streamKey: z.string().trim().regex(/^[A-Za-z0-9_-]{1,80}$/).nullable().optional(),
   externalId: z.string().trim().max(160).nullable().optional(),
@@ -561,14 +561,12 @@ const cameraInput = z.object({
 
 app.post("/cameras", auth, permit("cameras:manage"), async (req, res) => {
   const input = cameraInput.parse(req.body);
-  if (input.roomId) {
-    const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
-    if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  }
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+  if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const { rows } = await db.query(
     `INSERT INTO cameras(room_id,name,provider,external_id,stream_key,status)
      VALUES($1,$2,$3,$4,$5,'OFFLINE') RETURNING *`,
-    [input.roomId || null, input.name, input.provider, input.externalId || null, input.streamKey || null]
+    [input.roomId, input.name, input.provider, input.externalId || null, input.streamKey || null]
   );
   await audit(req, "camera.create", "camera", rows[0].id, null, rows[0]);
   res.status(201).json(rows[0]);
@@ -578,16 +576,24 @@ app.patch("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
   const input = cameraInput.parse(req.body);
   const before = (await db.query("SELECT * FROM cameras WHERE id=$1", [req.params.id])).rows[0];
   if (!before) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
-  if (input.roomId) {
-    const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
-    if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  }
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+  if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const { rows } = await db.query(
     `UPDATE cameras SET room_id=$1,name=$2,provider=$3,external_id=$4,stream_key=$5
      WHERE id=$6 RETURNING *`,
-    [input.roomId || null, input.name, input.provider, input.externalId || null, input.streamKey || null, req.params.id]
+    [input.roomId, input.name, input.provider, input.externalId || null, input.streamKey || null, req.params.id]
   );
   await audit(req, "camera.update", "camera", rows[0].id, before, rows[0]);
+  res.json(rows[0]);
+});
+
+app.patch("/cameras/:id/room", auth, permit("cameras:manage"), async (req,res) => {
+  const { roomId } = z.object({ roomId:z.string().uuid() }).parse(req.body);
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[roomId])).rows[0];
+  if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  const { rows } = await db.query("UPDATE cameras SET room_id=$1 WHERE id=$2 RETURNING *",[roomId,req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error:"CAMERA_NOT_FOUND" });
+  await audit(req,"camera.room.assign","camera",req.params.id,null,{roomId});
   res.json(rows[0]);
 });
 
@@ -611,8 +617,8 @@ app.get("/locations", auth, permit("locations:read"), async (req,res) => {
 
 app.get("/rooms", auth, permit("rooms:read"), async (req,res) => {
   const { rows } = isOwner(req)
-    ? await db.query("SELECT * FROM rooms ORDER BY name")
-    : await db.query("SELECT r.* FROM rooms r JOIN user_locations ul ON ul.location_id=r.location_id WHERE ul.user_id=$1 ORDER BY r.name",[req.user.sub]);
+    ? await db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY l.name,r.name")
+    : await db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id JOIN user_locations ul ON ul.location_id=r.location_id WHERE ul.user_id=$1 ORDER BY l.name,r.name",[req.user.sub]);
   res.json(rows);
 });
 

@@ -16,7 +16,7 @@ type Camera = {
   status: string;
 };
 
-type Room = { id: string; name: string };
+type Room = { id: string; name: string; location_name:string };
 
 @Component({
   selector: "app-cameras",
@@ -40,7 +40,7 @@ type Room = { id: string; name: string };
         @if (showForm()) {
           <form (ngSubmit)="save()">
             <label>Название<input name="name" [(ngModel)]="draft.name" required minlength="2" placeholder="Камера в комнате 1"></label>
-            <label>Комната<select name="roomId" [(ngModel)]="draft.roomId"><option value="">Без комнаты</option>@for(room of rooms();track room.id){<option [value]="room.id">{{room.name}}</option>}</select></label>
+            <label>Комната<select name="roomId" [(ngModel)]="draft.roomId" required><option value="">Выберите комнату</option>@for(room of rooms();track room.id){<option [value]="room.id">{{room.location_name}} · {{room.name}}</option>}</select></label>
             <label>Источник<select name="provider" [(ngModel)]="draft.provider"><option value="RTSP">RTSP через go2rtc</option><option value="ONVIF">ONVIF через go2rtc</option><option value="TUYA">Tuya Cloud</option></select></label>
             @if (draft.provider === "TUYA") {
               <label>Tuya device ID<input name="externalId" [(ngModel)]="draft.externalId" required></label>
@@ -87,7 +87,7 @@ type Room = { id: string; name: string };
                   @else { <button class="play" (click)="open(camera)">▶ Открыть поток</button> }
                 </div>
                 <div class="camera-info">
-                  <div><strong>{{camera.name}}</strong><span>{{camera.room_name || "Без комнаты"}} · {{camera.provider}}</span></div>
+                  <div class="camera-meta"><strong>{{camera.name}}</strong><span>{{camera.room_name || "Комната не назначена"}} · {{camera.provider}}</span><select [value]="camera.room_id||''" (change)="assignRoom(camera,$event)"><option value="">Назначить комнату…</option>@for(room of rooms();track room.id){<option [value]="room.id">{{room.location_name}} · {{room.name}}</option>}</select></div>
                   <div class="camera-actions"><button class="secondary" (click)="refresh(camera)">Обновить</button><button class="danger" title="Удалить" (click)="remove(camera)">Удалить</button></div>
                 </div>
               </article>
@@ -105,7 +105,7 @@ type Room = { id: string; name: string };
     .camera-option:has(input:checked){border-color:#4058df;background:#f1f3ff}.camera-option input{width:16px;height:16px;accent-color:#4058df}
     .camera-option b,.camera-option small{display:block}.camera-option small{margin-top:3px;color:#788295;font-size:11px}
     .camera-grid{grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))}
-    .camera-actions{display:flex;gap:8px}.secondary{padding:8px 10px;background:#eef1f6;color:#344054}
+    .camera-meta select{margin-top:9px;min-width:240px;padding:7px 9px}.camera-actions{display:flex;gap:8px}.secondary{padding:8px 10px;background:#eef1f6;color:#344054}
     .header-actions{display:flex;gap:10px}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}
     @media(max-width:900px){.camera-picker{display:grid}.camera-options{justify-content:stretch}.camera-option{width:100%}}
   `]
@@ -228,6 +228,13 @@ export class CamerasComponent {
       return next;
     });
     this.open(camera);
+  }
+
+  assignRoom(camera:Camera,event:Event){
+    const roomId=(event.target as HTMLSelectElement).value;
+    if(!roomId)return;
+    this.error.set("");
+    this.http.patch(`/api/cameras/${camera.id}/room`,{roomId}).subscribe({next:()=>{this.notice.set("Камера назначена комнате.");this.load();},error:()=>this.error.set("Не удалось назначить камеру комнате.")});
   }
 
   private parseSelection(value: string) {
