@@ -311,6 +311,28 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       }).passthrough()).optional(),
     }).passthrough()).parse(payload.data);
 
+    const playerAgeAtBooking = (birthday, bookingDate) => {
+      if (!birthday) return { age: null, birthdayDaysAgo: null };
+      const born = new Date(`${birthday}T00:00:00Z`);
+      const booking = new Date(`${bookingDate}T00:00:00Z`);
+      if (Number.isNaN(born.getTime()) || Number.isNaN(booking.getTime()) || born > booking) {
+        return { age: null, birthdayDaysAgo: null };
+      }
+      const birthdayThisYear = new Date(Date.UTC(
+        booking.getUTCFullYear(),
+        born.getUTCMonth(),
+        born.getUTCDate(),
+      ));
+      const lastBirthday = birthdayThisYear > booking
+        ? new Date(Date.UTC(booking.getUTCFullYear() - 1, born.getUTCMonth(), born.getUTCDate()))
+        : birthdayThisYear;
+      const birthdayDaysAgo = Math.floor((booking.getTime() - lastBirthday.getTime()) / 86_400_000);
+      return {
+        age: lastBirthday.getUTCFullYear() - born.getUTCFullYear(),
+        birthdayDaysAgo: birthdayDaysAgo < 7 ? birthdayDaysAgo : null,
+      };
+    };
+
     res.json({
       data: bookings.map(booking => ({
         id: booking.id,
@@ -330,14 +352,18 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         paymentStatusDisplay: booking.order.payment_status_display,
         checkedIn: booking.check_in_status?.checked_in ?? 0,
         checkInTotal: booking.check_in_status?.total ?? booking.size,
-        checkedInPlayers: (booking.players || []).map(player => ({
-          id: player.id,
-          name: `${player.first_name} ${player.last_name}`.trim(),
-          email: player.email || null,
-          phone: player.phone || null,
-          birthday: player.birthday || null,
-          waiverAccepted: player.accept_waiver ?? false,
-        })),
+        checkedInPlayers: (booking.players || []).map(player => {
+          const age = playerAgeAtBooking(player.birthday, booking.start.date);
+          return {
+            id: player.id,
+            name: `${player.first_name} ${player.last_name}`.trim(),
+            email: player.email || null,
+            phone: player.phone || null,
+            age: age.age,
+            birthdayDaysAgo: age.birthdayDaysAgo,
+            waiverAccepted: player.accept_waiver ?? false,
+          };
+        }),
       })),
       pagination: payload.pagination || null,
     });
