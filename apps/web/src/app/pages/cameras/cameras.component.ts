@@ -47,7 +47,7 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
       <div #plan class="plan" [class.has-background]="!!backgroundImage()" [class.editing]="editing()" [class.drawing]="drawing()" [style.background-image]="backgroundImage()?'url('+backgroundImage()+')':null" [style.background-size]="backgroundSize()" [style.background-position]="backgroundX()+'% '+backgroundY()+'%'" (pointerdown)="planDown($event)">
         @for(zone of zones();track zone.id||$index){<div class="zone" [class.selected-zone]="selectedZone()===zone" [style.left.%]="zone.x" [style.top.%]="zone.y" [style.width.%]="zone.width" [style.height.%]="zone.height" [style.border-color]="zone.color" [style.background]="zone.color+'25'" (pointerdown)="zoneDown($event,zone,'zone')" (click)="selectZone(zone)">
           <span>{{zone.name}}<small>{{zoneTypeName(zone.type)}}</small></span>
-          @if(editing()){<button class="zone-delete" (click)="deleteZone($event,zone)">×</button><i class="resize" (pointerdown)="zoneDown($event,zone,'resize')"></i>}
+          @if(editing()){<button type="button" class="zone-delete" (pointerdown)="$event.stopPropagation()" (click)="deleteZone($event,zone)">×</button><i class="resize" (pointerdown)="zoneDown($event,zone,'resize')"></i>}
         </div>}
         @for(camera of locationCameras();track camera.id){<button class="camera-pin" [class.online]="camera.status==='ONLINE'" [class.selected]="isSelected(camera.id)" [class.unplaced]="camera.plan_x==null" [style.left.%]="cameraX(camera)" [style.top.%]="cameraY(camera)" (pointerdown)="cameraDown($event,camera)" (click)="cameraClick($event,camera)" [title]="camera.name">
           <b>●</b><span>{{camera.name}}</span>
