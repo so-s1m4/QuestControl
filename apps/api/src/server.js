@@ -618,6 +618,20 @@ app.patch("/cameras/:id/room", auth, permit("cameras:manage"), async (req,res) =
   res.json(rows[0]);
 });
 
+app.patch("/cameras/:id/name", auth, permit("cameras:manage"), async (req,res) => {
+  const { name }=z.object({name:z.string().trim().min(2).max(120)}).parse(req.body);
+  const before=(await db.query(
+    `SELECT c.*,COALESCE(c.location_id,r.location_id) AS effective_location_id
+     FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1`,
+    [req.params.id]
+  )).rows[0];
+  if(!before) return res.status(404).json({error:"CAMERA_NOT_FOUND"});
+  if(!before.effective_location_id || !(await locationAllowed(req,before.effective_location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const { rows }=await db.query("UPDATE cameras SET name=$1 WHERE id=$2 RETURNING *",[name,req.params.id]);
+  await audit(req,"camera.name.update","camera",req.params.id,{name:before.name},{name});
+  res.json(rows[0]);
+});
+
 const planZoneInput = z.object({
   id:z.string().uuid().optional(),
   name:z.string().trim().min(1).max(120),
