@@ -63,3 +63,14 @@ WHERE s.booking_id=b.id
   AND lower(l.name) ~ 'wien|vienna'
   AND lower(r.name)='vr'
   AND b.game_id IS NULL;
+
+DELETE FROM rooms r
+USING locations l
+WHERE r.location_id=l.id
+  AND lower(l.name) ~ 'wien|vienna'
+  AND lower(r.name) IN ('questboxes','danube piraten')
+  AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.room_id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.room_id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.room_id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM cameras c WHERE c.room_id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM local_sites ls WHERE ls.room_id=r.id);
