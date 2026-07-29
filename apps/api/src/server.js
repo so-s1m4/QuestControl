@@ -792,4 +792,30 @@ await db.query(
    WHERE provider='TUYA' AND room_id IS NULL AND name ~* '(LSC|PTZ)'
      AND EXISTS(SELECT 1 FROM rooms WHERE lower(replace(name,' ','_')) LIKE '%krampus%')`
 );
+await db.query(
+  `UPDATE rooms
+   SET location_id=(SELECT id FROM locations WHERE external_id=$1)
+   WHERE location_id IN (
+     SELECT id FROM locations
+     WHERE external_id IS DISTINCT FROM $1
+       AND lower(replace(name,' ','_')) LIKE '%krampus%'
+   )`,
+  ["01js4ahx79xbw5gd05jy1mmsdw"]
+);
+await db.query(
+  `UPDATE integrations
+   SET location_id=(SELECT id FROM locations WHERE external_id=$1)
+   WHERE location_id IN (
+     SELECT id FROM locations
+     WHERE external_id IS DISTINCT FROM $1
+       AND lower(replace(name,' ','_')) LIKE '%krampus%'
+   )`,
+  ["01js4ahx79xbw5gd05jy1mmsdw"]
+);
+await db.query(
+  `DELETE FROM locations
+   WHERE external_id IS DISTINCT FROM $1
+     AND lower(replace(name,' ','_')) LIKE '%krampus%'`,
+  ["01js4ahx79xbw5gd05jy1mmsdw"]
+);
 server.listen(env.PORT, "0.0.0.0", () => console.log(`QuestControl API listening on ${env.PORT}`));
