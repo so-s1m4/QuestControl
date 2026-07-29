@@ -7,8 +7,9 @@ LSC Smart Connect — OEM-экосистема на базе Tuya. Cloud-дос�
 1. Создайте Smart Home Cloud Project в [Tuya Developer Platform](https://platform.tuya.com/) в data center, соответствующем региону аккаунта.
 2. Включите `IoT Core`, `Smart Home Basic Service` и `IoT Video Live Stream`.
 3. В разделе Devices → Link Tuya App Account отсканируйте QR-код приложением Smart Life. Устройство должно появиться в All Devices.
-4. Заполните `TUYA_BASE_URL`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET`.
-5. В QuestControl выберите источник `Tuya Cloud` и сохраните Device ID из All Devices.
+4. Заполните `TUYA_BASE_URL`, `TUYA_MESSAGE_URL`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET`.
+5. На вкладке **Message Service** включите production-канал и правило `statusReport`, чтобы получать вызовы Doorbell в реальном времени.
+6. В QuestControl выберите источник `Tuya Cloud` и сохраните Device ID из All Devices.
 
 API получает Tuya access token сервер-сервер, подписывает запросы HMAC-SHA256, кэширует token в Redis и запрашивает краткоживущий HLS URL. Client Secret никогда не отдаётся frontend. Наличие камеры в LSC/Smart Life не гарантирует поддержку cloud live stream: Tuya указывает требование IPC SDK 4.7.0+ и тарифицирует HLS-трафик после пробной квоты.
 

@@ -11,6 +11,7 @@ import { Server } from "socket.io";
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
 import { TuyaCloud } from "./tuya.js";
+import { TuyaMessageConsumer } from "./tuya-messages.js";
 
 const env = z.object({
   PORT: z.coerce.number().default(3000),
@@ -24,6 +25,7 @@ const env = z.object({
   TUYA_BASE_URL: z.string().url().default("https://openapi.tuyaeu.com"),
   TUYA_CLIENT_ID: z.string().optional(),
   TUYA_CLIENT_SECRET: z.string().optional(),
+  TUYA_MESSAGE_URL: z.string().url().default("wss://mqe.tuyaeu.com:8285/"),
   TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
   TIME_TO_GROW_CLUB_ID: z.string().optional(),
   TIME_TO_GROW_JWT: z.string().optional(),
@@ -38,6 +40,11 @@ const tuya = new TuyaCloud({
   clientId: env.TUYA_CLIENT_ID,
   clientSecret: env.TUYA_CLIENT_SECRET,
   redis,
+});
+const tuyaMessages = new TuyaMessageConsumer({
+  accessId: env.TUYA_CLIENT_ID,
+  accessKey: env.TUYA_CLIENT_SECRET,
+  url: env.TUYA_MESSAGE_URL,
 });
 const app = express();
 const isOwner = (req) => req.user?.role === "OWNER";
@@ -1619,6 +1626,53 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
   res.json({provider:camera.provider,mode:"player",endpoint});
 });
 
+app.get("/rooms/:id/doorbell-calls", auth, permit("cameras:read"), async (req,res) => {
+  const room=(await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if(!room) return res.status(404).json({error:"ROOM_NOT_FOUND"});
+  if(!(await locationAllowed(req,room.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`
+    SELECT dc.id,dc.camera_id,dc.external_message_id,dc.status,dc.rang_at,dc.acknowledged_at,
+           c.name AS camera_name,c.status AS camera_status
+    FROM doorbell_calls dc
+    JOIN cameras c ON c.id=dc.camera_id
+    WHERE dc.room_id=$1 AND dc.rang_at > now()-interval '24 hours'
+    ORDER BY dc.rang_at DESC
+    LIMIT 20
+  `,[req.params.id]);
+  res.json(rows);
+});
+
+app.patch("/rooms/:roomId/doorbell-calls/:id/acknowledge", auth, permit("devices:command"), async (req,res) => {
+  const room=(await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.roomId])).rows[0];
+  if(!room) return res.status(404).json({error:"ROOM_NOT_FOUND"});
+  if(!(await locationAllowed(req,room.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`
+    UPDATE doorbell_calls
+    SET status='ACKNOWLEDGED',acknowledged_at=now(),acknowledged_by=$1
+    WHERE id=$2 AND room_id=$3
+    RETURNING *
+  `,[req.user.sub,req.params.id,req.params.roomId]);
+  if(!rows[0]) return res.status(404).json({error:"DOORBELL_CALL_NOT_FOUND"});
+  await audit(req,"doorbell.call.acknowledge","doorbell_call",req.params.id,null,rows[0]);
+  res.json(rows[0]);
+});
+
+app.post("/rooms/:id/doorbell-calls/test", auth, async (req,res) => {
+  if(!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  const camera=(await db.query(`
+    SELECT c.id,c.name FROM cameras c
+    WHERE c.room_id=$1 AND c.provider='TUYA' AND
+      (lower(c.name) LIKE '%doorbell%' OR c.config->>'category'='dghsxj')
+    ORDER BY c.id LIMIT 1
+  `,[req.params.id])).rows[0];
+  if(!camera) return res.status(404).json({error:"DOORBELL_NOT_FOUND"});
+  const {rows}=await db.query(`
+    INSERT INTO doorbell_calls(room_id,camera_id,external_message_id,raw_event)
+    VALUES($1,$2,$3,$4) RETURNING *
+  `,[req.params.id,camera.id,`test-${crypto.randomUUID()}`,{test:true}]);
+  res.status(201).json(rows[0]);
+});
+
 const agentNs = io.of("/agent");
 agentNs.use(async (socket,next) => {
   const { agentId, token } = socket.handshake.auth;
@@ -1771,4 +1825,49 @@ await db.query(
      AND lower(replace(name,' ','_')) LIKE '%krampus%'`,
   ["01js4ahx79xbw5gd05jy1mmsdw"]
 );
+await db.query(`CREATE TABLE IF NOT EXISTS doorbell_calls(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  camera_id uuid NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+  external_message_id text UNIQUE,
+  status text NOT NULL DEFAULT 'RINGING' CHECK(status IN ('RINGING','ACKNOWLEDGED','EXPIRED')),
+  raw_event jsonb NOT NULL DEFAULT '{}',
+  rang_at timestamptz NOT NULL DEFAULT now(),
+  acknowledged_at timestamptz,
+  acknowledged_by uuid REFERENCES users(id) ON DELETE SET NULL
+)`);
+await db.query("CREATE INDEX IF NOT EXISTS doorbell_calls_room_rang_idx ON doorbell_calls(room_id,rang_at DESC)");
+
+const doorbellEvent = (message) => {
+  const data=message?.payload?.data||{};
+  const statuses=Array.isArray(data.status)?data.status:Array.isArray(data.data?.status)?data.data.status:[];
+  const codes=statuses.map(item=>String(item?.code??item?.dpId??item?.dp_id??"").toLowerCase());
+  const text=JSON.stringify({bizCode:data.bizCode||data.biz_code||"",type:data.type||"",codes}).toLowerCase();
+  return /(doorbell|door_bell|door bell|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(text);
+};
+tuyaMessages.on("message",async message=>{
+  try {
+    const data=message?.payload?.data||{};
+    const externalId=String(data.devId||data.deviceId||data.dev_id||message.key||"");
+    if(!externalId||!doorbellEvent(message)) return;
+    const camera=(await db.query(`
+      SELECT c.id,c.room_id FROM cameras c
+      WHERE c.provider='TUYA' AND c.external_id=$1 AND c.room_id IS NOT NULL
+        AND (lower(c.name) LIKE '%doorbell%' OR c.config->>'category'='dghsxj')
+      LIMIT 1
+    `,[externalId])).rows[0];
+    if(!camera) return;
+    const externalMessageId=String(message.messageId||data.dataId||crypto.randomUUID());
+    const call=(await db.query(`
+      INSERT INTO doorbell_calls(room_id,camera_id,external_message_id,raw_event)
+      VALUES($1,$2,$3,$4)
+      ON CONFLICT(external_message_id) DO NOTHING
+      RETURNING id
+    `,[camera.room_id,camera.id,externalMessageId,message])).rows[0];
+    if(call) console.log("Doorbell call received",camera.id,call.id);
+  } catch(error) {
+    console.error("Doorbell event processing failed",error.message);
+  }
+});
+tuyaMessages.start();
 server.listen(env.PORT, "0.0.0.0", () => console.log(`QuestControl API listening on ${env.PORT}`));

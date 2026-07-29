@@ -64,6 +64,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN}
       TRUST_PROXY: "1"
       TUYA_BASE_URL: ${TUYA_BASE_URL:-https://openapi.tuyaeu.com}
+      TUYA_MESSAGE_URL: ${TUYA_MESSAGE_URL:-wss://mqe.tuyaeu.com:8285/}
       TUYA_CLIENT_ID: ${TUYA_CLIENT_ID}
       TUYA_CLIENT_SECRET: ${TUYA_CLIENT_SECRET}
       TIME_TO_GROW_BASE_URL: ${TIME_TO_GROW_BASE_URL:-https://api.time-to-grow.com}

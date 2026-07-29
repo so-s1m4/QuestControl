@@ -40,6 +40,7 @@ PSEUDONYMIZATION_SECRET=<отдельный-случайный-секрет>
 PUBLIC_URL=https://<домен>
 CORS_ORIGIN=https://<домен>
 TUYA_BASE_URL=https://openapi.tuyaeu.com
+TUYA_MESSAGE_URL=wss://mqe.tuyaeu.com:8285/
 TUYA_CLIENT_ID=<tuya-client-id>
 TUYA_CLIENT_SECRET=<tuya-client-secret>
 BOOTSTRAP_ADMIN_EMAIL=<email-владельца>

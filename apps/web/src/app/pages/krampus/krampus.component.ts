@@ -5,6 +5,7 @@ import { DatePipe } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import { Subscription, catchError, forkJoin, interval, of, startWith, switchMap } from "rxjs";
 import { io, Socket } from "socket.io-client";
+import { HlsPlayerComponent } from "../cameras/hls-player.component";
 
 type Room = { id:string; name:string; location_name?:string };
 type KrampusStatus = {
@@ -15,6 +16,7 @@ type KrampusStatus = {
 };
 type LogLine = { at?:string; direction?:string; line?:string };
 type VoiceHint = { id:string; name:string; file_name:string; content_type:string; size_bytes:number; created_at:string };
+type DoorbellCall = { id:string; camera_id:string; camera_name:string; camera_status:string; status:"RINGING"|"ACKNOWLEDGED"|"EXPIRED"; rang_at:string; acknowledged_at:string|null };
 type PollResult<T> = { ok:true; value:T } | { ok:false };
 
 const ATMOSPHERE = ["LIGHT UV","LIGHT WHITE","LIGHT OK","LIGHT OFF","LIGHT RESET","MASK SOUND"] as const;
@@ -23,7 +25,7 @@ const OVEN = ["OVEN SOLVED","OVEN RESET","OVEN UV ON","OVEN UV OFF","OVEN LIGHT 
 type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
 
 @Component({
-  selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule],
+  selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule,HlsPlayerComponent],
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
@@ -32,6 +34,23 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
     </header>
     @if(error()){<p class="error">{{error()}} <button class="inline" (click)="loadRoom()">Повторить</button></p>}
     @if(notice()){<p class="notice">{{notice()}}</p>}
+    @if(activeDoorbellCall();as call){
+      <article class="help-call" role="alert" aria-live="assertive">
+        <div class="help-call-copy">
+          <span class="help-pulse">!</span>
+          <div><small>ВЫЗОВ С DOORBELL</small><h3>Запрошена помощь</h3><p>{{call.camera_name}} · {{call.rang_at|date:'HH:mm:ss'}}</p></div>
+        </div>
+        <div class="help-call-actions">
+          <button class="camera-button" (click)="openDoorbellVideo(call)" [disabled]="doorbellVideoLoading()">{{doorbellVideoLoading()?"Подключение…":doorbellStream()?"Обновить видео":"Показать камеру"}}</button>
+          <button class="ack-button" (click)="acknowledgeDoorbell(call)">Вызов принят</button>
+        </div>
+        @if(doorbellStream()){
+          <div class="doorbell-video"><app-hls-player [url]="doorbellStream()"></app-hls-player></div>
+        } @else if(doorbellVideoError()){
+          <p class="doorbell-video-error">{{doorbellVideoError()}}</p>
+        }
+      </article>
+    }
     @if(loading()){<div class="empty"><b>Подключение к Krampus…</b><span>Ищем комнату и room-agent.</span></div>}
     @else if(!roomId()){<div class="empty"><b>Комната Krampus не настроена</b><span>Создайте комнату с «Krampus» в названии и привяжите устройство с agent_id.</span></div>}
     @else{
@@ -101,6 +120,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   </section></main>`,
   styles:[`
   .connections{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.connection{padding:8px 12px;border-radius:20px;background:#feecef;color:#ad2436}.connection.online{background:#e4f7ed;color:#137344}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}.inline{padding:4px 8px;margin-left:8px;background:transparent;color:inherit;border:1px solid currentColor;box-shadow:none}
+  .help-call{display:grid;grid-template-columns:1fr auto;gap:18px;margin:20px 0;padding:20px;border:2px solid #e43d50;border-radius:14px;background:linear-gradient(135deg,#fff1f2,#fff);box-shadow:0 12px 35px #b4231830}.help-call-copy{display:flex;align-items:center;gap:14px}.help-call-copy small{color:#b42318;font-size:10px;font-weight:900;letter-spacing:.12em}.help-call-copy h3{margin:3px 0;color:#8f1d2c;font-size:25px}.help-call-copy p{margin:0;color:#7a3440}.help-pulse{display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:#d92d42;color:#fff;font-size:30px;font-weight:900;animation:help-pulse 1.2s infinite}.help-call-actions{display:flex;align-items:center;gap:8px}.help-call-actions button{white-space:nowrap}.camera-button{background:#273248}.ack-button{background:#168653}.doorbell-video{grid-column:1/-1;height:min(56vw,520px);overflow:hidden;border-radius:10px;background:#101622}.doorbell-video-error{grid-column:1/-1;margin:0;padding:12px 14px;border-radius:8px;background:#fff;color:#9f2534}@keyframes help-pulse{50%{box-shadow:0 0 0 12px #d92d4218}}
   .summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:24px 0}.summary div{display:grid;gap:5px;padding:14px;background:#fff;border:1px solid #e1e5ed;border-radius:10px}.summary span{color:#6b7280;font-size:12px}.summary b{overflow:hidden;text-overflow:ellipsis}
   .krampus-actions{display:flex;gap:10px;margin:0 0 24px}.krampus-actions button{min-width:110px}.start{background:#168653}.danger-solid{background:#bd3042!important}
   .krampus-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.control-card{background:white;border:1px solid #e1e5ed;border-radius:11px;padding:18px}.control-card h3{margin-top:0}
@@ -112,6 +132,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.sensor-grid article{display:flex;justify-content:space-between;background:white;padding:12px;border:1px solid #e1e5ed;border-radius:8px}.sensor-grid b{color:#b32d3e}.sensor-grid b.active{color:#168653}.empty.compact{padding:24px;margin:0}
   .terminal{height:280px;overflow:auto;background:#101622;color:#d8dfec;border-radius:10px;padding:14px}.terminal div{display:grid;grid-template-columns:70px 55px 1fr;gap:8px;padding:3px}.terminal time{color:#78859d}.terminal b{color:#7c8cff}.terminal code{white-space:pre-wrap;overflow-wrap:anywhere}
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
+  @media(max-width:700px){.help-call{grid-template-columns:1fr}.help-call-actions{align-items:stretch;flex-direction:column}.doorbell-video{height:62vw}}
   @media(max-width:600px){.summary{grid-template-columns:1fr}.connections{justify-content:flex-start}.terminal div{grid-template-columns:60px 45px 1fr}}
   `]
 })
@@ -124,11 +145,13 @@ export class KrampusComponent implements OnDestroy {
   agentOnline=signal(false); lastUpdated=signal<Date|null>(null);
   recording=signal(false); voiceStatus=signal("Нажмите и удерживайте кнопку, чтобы говорить в комнате.");
   voiceHints=signal<VoiceHint[]>([]); hintName=signal(""); hintFile=signal<File|null>(null); hintFileName=signal("");
+  doorbellCalls=signal<DoorbellCall[]>([]); doorbellStream=signal(""); doorbellVideoError=signal(""); doorbellVideoLoading=signal(false);
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
   private voiceSocket?:Socket;
   private recorder?:MediaRecorder;
   private microphone?:MediaStream;
+  private lastDoorbellId="";
 
   constructor(){ this.loadRoom(); }
 
@@ -153,15 +176,47 @@ export class KrampusComponent implements OnDestroy {
     this.poll=interval(2000).pipe(startWith(0),switchMap(()=>forkJoin({
       status:safe<KrampusStatus>(this.http.get<KrampusStatus>(`/api/rooms/${this.roomId()}/krampus/status`)),
       sensors:safe<{values?:Record<string,unknown>}>(this.http.get<{values?:Record<string,unknown>}>(`/api/rooms/${this.roomId()}/krampus/sensors`)),
-      logs:safe<{lines?:LogLine[]}>(this.http.get<{lines?:LogLine[]}>(`/api/rooms/${this.roomId()}/krampus/logs`))
+      logs:safe<{lines?:LogLine[]}>(this.http.get<{lines?:LogLine[]}>(`/api/rooms/${this.roomId()}/krampus/logs`)),
+      doorbell:safe<DoorbellCall[]>(this.http.get<DoorbellCall[]>(`/api/rooms/${this.roomId()}/doorbell-calls`))
     }))).subscribe(result=>{
       this.agentOnline.set(result.status.ok||result.sensors.ok||result.logs.ok);
       if(result.status.ok) this.status.set(result.status.value);
       if(result.sensors.ok) this.sensors.set(result.sensors.value.values||{});
       if(result.logs.ok) this.logLines.set((result.logs.value.lines||[]).slice(-150));
+      if(result.doorbell.ok){
+        this.doorbellCalls.set(result.doorbell.value);
+        const active=result.doorbell.value.find(call=>call.status==="RINGING");
+        if(active&&active.id!==this.lastDoorbellId){ this.lastDoorbellId=active.id; this.playDoorbellAlert(); }
+      }
       if(this.agentOnline()){ this.lastUpdated.set(new Date()); if(!this.busy()) this.error.set(""); }
       else this.error.set("Room-agent или локальный сервер Krampus недоступен.");
     });
+  }
+  activeDoorbellCall(){ return this.doorbellCalls().find(call=>call.status==="RINGING")||null; }
+  openDoorbellVideo(call:DoorbellCall){
+    this.doorbellVideoLoading.set(true); this.doorbellVideoError.set(""); this.doorbellStream.set("");
+    this.http.get<{endpoint:string}>(`/api/cameras/${call.camera_id}/stream`).subscribe({
+      next:result=>{ this.doorbellVideoLoading.set(false); this.doorbellStream.set(result.endpoint); },
+      error:()=>{ this.doorbellVideoLoading.set(false); this.doorbellVideoError.set("Doorbell сейчас не отдаёт видео. Проверьте питание, Wi‑Fi и изображение в приложении Smart Life."); }
+    });
+  }
+  acknowledgeDoorbell(call:DoorbellCall){
+    this.http.patch(`/api/rooms/${this.roomId()}/doorbell-calls/${call.id}/acknowledge`,{}).subscribe({
+      next:()=>{ this.doorbellCalls.update(items=>items.map(item=>item.id===call.id?{...item,status:"ACKNOWLEDGED",acknowledged_at:new Date().toISOString()}:item)); this.doorbellStream.set(""); this.notice.set("Вызов Doorbell принят."); },
+      error:error=>this.error.set(this.message(error,"Не удалось подтвердить вызов."))
+    });
+  }
+  private playDoorbellAlert(){
+    try {
+      const AudioContextClass=window.AudioContext||(window as typeof window&{webkitAudioContext:typeof AudioContext}).webkitAudioContext;
+      const context=new AudioContextClass();
+      const oscillator=context.createOscillator(); const gain=context.createGain();
+      oscillator.type="sine"; oscillator.frequency.setValueAtTime(880,context.currentTime);
+      oscillator.frequency.setValueAtTime(660,context.currentTime+.22);
+      gain.gain.setValueAtTime(.18,context.currentTime); gain.gain.exponentialRampToValueAtTime(.001,context.currentTime+.55);
+      oscillator.connect(gain); gain.connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime+.55);
+      oscillator.onended=()=>void context.close();
+    } catch { /* Visual alert remains available when autoplay audio is blocked. */ }
   }
 
   command(value:string,confirmRequired=false){
