@@ -291,6 +291,15 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         total: z.number().int().nonnegative(),
         checked_in: z.number().int().nonnegative(),
       }).optional(),
+      players: z.array(z.object({
+        id: z.string(),
+        first_name: z.string(),
+        last_name: z.string(),
+        email: z.string().nullable().optional(),
+        phone: z.string().nullable().optional(),
+        birthday: z.string().nullable().optional(),
+        accept_waiver: z.boolean().optional(),
+      }).passthrough()).optional(),
     }).passthrough()).parse(payload.data);
 
     res.json({
@@ -312,6 +321,14 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         paymentStatusDisplay: booking.order.payment_status_display,
         checkedIn: booking.check_in_status?.checked_in ?? 0,
         checkInTotal: booking.check_in_status?.total ?? booking.size,
+        checkedInPlayers: (booking.players || []).map(player => ({
+          id: player.id,
+          name: `${player.first_name} ${player.last_name}`.trim(),
+          email: player.email || null,
+          phone: player.phone || null,
+          birthday: player.birthday || null,
+          waiverAccepted: player.accept_waiver ?? false,
+        })),
       })),
       pagination: payload.pagination || null,
     });
