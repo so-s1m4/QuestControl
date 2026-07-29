@@ -50,7 +50,8 @@ type ToggleKey="bear"|"door"|"table"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
             <div class="switch-row"><span><b>Дверь</b><small>{{toggleText('door','Закрыта','Открыта')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('door')" [attr.aria-checked]="toggleOn('door')" [disabled]="busy()" (click)="toggle('door','DOOR OPEN','DOOR CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Стол</b><small>{{toggleText('table','Закрыт','Открыт')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('table')" [attr.aria-checked]="toggleOn('table')" [disabled]="busy()" (click)="toggle('table','TABLE OPEN','TABLE CLOSE')"><i></i></button></div>
           </div>
-          <div class="control-section"><span class="section-label">Сценарий</span><div class="button-grid"><button [disabled]="busy()" (click)="command('PUZZLE SOLVE')">Завершить загадку</button><button [disabled]="busy()" (click)="command('BEAR SOUND')">Звук медведя</button><button class="secondary-danger" [disabled]="busy()" (click)="command('PUZZLE RESET',true)">Сброс загадки</button></div></div>
+          <div class="control-section"><span class="section-label">Пятнашки</span><div class="button-grid"><button [disabled]="busy()" (click)="command('PUZZLE SOLVE')">Решить пятнашки</button><button class="secondary-danger" [disabled]="busy()" (click)="command('PUZZLE RESET',true)">Сбросить пятнашки</button></div></div>
+          <div class="control-section"><span class="section-label">Звук</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR SOUND')">Звук медведя</button></div></div>
         </article>
         <article class="control-card">
           <h3>Печка</h3>
