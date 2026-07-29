@@ -4,6 +4,8 @@
 - `GET /api/dashboard`
 - `GET /api/{locations|rooms|integrations|local_sites|cameras|devices|bookings|sessions}`
 - `POST /api/bookings`
+- `GET /api/time-to-grow/clubs`
+- `GET /api/time-to-grow/bookings?date=YYYY-MM-DD&clubId=...` — подтверждённые бронирования Time to Grow (требует `TIME_TO_GROW_EMAIL`/`TIME_TO_GROW_PASSWORD` либо `TIME_TO_GROW_JWT`)
 - `POST /api/rooms/:id/command`
 - `POST /api/local-sites/:id/tunnel`, затем одноразовый `GET /api/tunnel/:ticket`
 - `GET /api/cameras/:id/stream`

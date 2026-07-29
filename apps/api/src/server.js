@@ -23,6 +23,11 @@ const env = z.object({
   TUYA_BASE_URL: z.string().url().default("https://openapi.tuyaeu.com"),
   TUYA_CLIENT_ID: z.string().optional(),
   TUYA_CLIENT_SECRET: z.string().optional(),
+  TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
+  TIME_TO_GROW_CLUB_ID: z.string().optional(),
+  TIME_TO_GROW_JWT: z.string().optional(),
+  TIME_TO_GROW_EMAIL: z.union([z.string().email(), z.literal("")]).optional(),
+  TIME_TO_GROW_PASSWORD: z.string().optional(),
 }).parse(process.env);
 
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, max: 10 });
@@ -168,6 +173,153 @@ app.get("/bookings", auth, permit("bookings:read"), async (_, res) => {
     ORDER BY b.starts_at DESC LIMIT 250
   `);
   res.json(rows);
+});
+
+let timeToGrowJwt = env.TIME_TO_GROW_JWT;
+async function timeToGrowLogin(force = false) {
+  if (timeToGrowJwt && !force) return timeToGrowJwt;
+  if (!env.TIME_TO_GROW_EMAIL || !env.TIME_TO_GROW_PASSWORD) {
+    const error = new Error("Time to Grow credentials are not configured");
+    error.code = "TIME_TO_GROW_NOT_CONFIGURED";
+    throw error;
+  }
+  const response = await fetch(`${env.TIME_TO_GROW_BASE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({ email: env.TIME_TO_GROW_EMAIL, password: env.TIME_TO_GROW_PASSWORD }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    const error = new Error("Time to Grow login failed");
+    error.code = "TIME_TO_GROW_LOGIN_FAILED";
+    error.upstreamStatus = response.status;
+    throw error;
+  }
+  const setCookie = response.headers.get("set-cookie") || "";
+  const jwt = setCookie.match(/(?:^|[,;\s])jwt=([^;,\s]+)/)?.[1];
+  if (!jwt) {
+    const error = new Error("Time to Grow login response has no JWT cookie");
+    error.code = "TIME_TO_GROW_INVALID_LOGIN_RESPONSE";
+    throw error;
+  }
+  timeToGrowJwt = jwt;
+  return jwt;
+}
+
+async function timeToGrowFetch(path) {
+  let jwt = await timeToGrowLogin();
+  let response = await fetch(`${env.TIME_TO_GROW_BASE_URL}${path}`, {
+    headers: { accept: "application/json", cookie: `jwt=${jwt}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (response.status === 401 && env.TIME_TO_GROW_EMAIL && env.TIME_TO_GROW_PASSWORD) {
+    jwt = await timeToGrowLogin(true);
+    response = await fetch(`${env.TIME_TO_GROW_BASE_URL}${path}`, {
+      headers: { accept: "application/json", cookie: `jwt=${jwt}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  }
+  return response;
+}
+
+app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => {
+  try {
+    const response = await timeToGrowFetch("/api/admin/clubs");
+    if (!response.ok) {
+      return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED", upstreamStatus: response.status });
+    }
+    const payload = await response.json();
+    const clubs = z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      timezone: z.string(),
+      address: z.string().nullable().optional(),
+    }).passthrough()).parse(payload.data);
+    res.json({
+      data: clubs.map(club => ({ id: club.id, name: club.name, timezone: club.timezone, address: club.address || null })),
+      defaultClubId: env.TIME_TO_GROW_CLUB_ID || clubs[0]?.id || null,
+    });
+  } catch (error) {
+    if (error?.code === "TIME_TO_GROW_NOT_CONFIGURED") return res.status(503).json({ error: error.code });
+    const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
+    res.status(502).json({ error: code, upstreamStatus: error?.upstreamStatus });
+  }
+});
+
+app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res) => {
+  if (!timeToGrowJwt && (!env.TIME_TO_GROW_EMAIL || !env.TIME_TO_GROW_PASSWORD)) {
+    return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
+  }
+  const parsed = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    clubId: z.string().regex(/^[a-z0-9]{26}$/).optional(),
+  }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "INVALID_DATE" });
+  const clubId = parsed.data.clubId || env.TIME_TO_GROW_CLUB_ID;
+  if (!clubId) return res.status(400).json({ error: "CLUB_REQUIRED" });
+
+  const query = new URLSearchParams({
+    filtering: JSON.stringify({ status: "reserved", start_date: parsed.data.date, view_mode: "bookings" }),
+    pagination: JSON.stringify({ page: 1, size: 100 }),
+    sorting: JSON.stringify([{ name: "smart", direction: "desc" }]),
+  });
+
+  try {
+    const response = await timeToGrowFetch(`/api/admin/clubs/${encodeURIComponent(clubId)}/bookings?${query}`);
+    if (!response.ok) {
+      return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED", upstreamStatus: response.status });
+    }
+    const payload = await response.json();
+    const bookings = z.array(z.object({
+      id: z.string(),
+      start: z.object({ date: z.string(), time: z.string() }),
+      end: z.object({ time: z.string() }),
+      status: z.object({ id: z.string(), name: z.string() }),
+      owner: z.object({
+        name: z.string(),
+        phone: z.string().nullable().optional(),
+        email: z.string().nullable().optional(),
+      }),
+      product: z.object({ effective_name: z.string() }),
+      size: z.number().int().nonnegative(),
+      order: z.object({
+        total_amount: z.number().nonnegative(),
+        payment_status: z.string(),
+        payment_status_display: z.string(),
+      }),
+      check_in_status: z.object({
+        total: z.number().int().nonnegative(),
+        checked_in: z.number().int().nonnegative(),
+      }).optional(),
+    }).passthrough()).parse(payload.data);
+
+    res.json({
+      data: bookings.map(booking => ({
+        id: booking.id,
+        date: booking.start.date,
+        startsAt: booking.start.time,
+        endsAt: booking.end.time,
+        status: booking.status.id,
+        statusDisplay: booking.status.name,
+        customerName: booking.owner.name,
+        customerPhone: booking.owner.phone || null,
+        customerEmail: booking.owner.email || null,
+        productName: booking.product.effective_name,
+        players: booking.size,
+        amountCents: Math.round(booking.order.total_amount * 100),
+        currency: "EUR",
+        paymentStatus: booking.order.payment_status,
+        paymentStatusDisplay: booking.order.payment_status_display,
+        checkedIn: booking.check_in_status?.checked_in ?? 0,
+        checkInTotal: booking.check_in_status?.total ?? booking.size,
+      })),
+      pagination: payload.pagination || null,
+    });
+  } catch (error) {
+    if (error?.code === "TIME_TO_GROW_NOT_CONFIGURED") return res.status(503).json({ error: error.code });
+    const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
+    res.status(502).json({ error: code, upstreamStatus: error?.upstreamStatus });
+  }
 });
 
 app.get("/sessions", auth, permit("sessions:read"), async (_, res) => {

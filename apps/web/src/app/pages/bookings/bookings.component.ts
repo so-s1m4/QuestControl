@@ -6,12 +6,23 @@ import { RouterLink } from "@angular/router";
 
 type Room={id:string;name:string};
 type Booking={id:string;room_id:string;room_name:string;customer_name:string;customer_phone:string|null;starts_at:string;ends_at:string;players:number;amount_cents:number;currency:string;payment_status:string;session_id:string|null;session_status:string|null};
+type ExternalBooking={id:string;date:string;startsAt:string;endsAt:string;status:string;statusDisplay:string;customerName:string;customerPhone:string|null;customerEmail:string|null;productName:string;players:number;amountCents:number;currency:string;paymentStatus:string;paymentStatusDisplay:string;checkedIn:number;checkInTotal:number};
+type ExternalClub={id:string;name:string;timezone:string;address:string|null};
 
 @Component({
   selector:"app-bookings",standalone:true,imports:[FormsModule,RouterLink,DatePipe],
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a class="active" routerLink="/bookings">Бронирования</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section><header><div><h2>Бронирования</h2><p>Расписание гостей и запуск игровых сессий</p></div><button (click)="showForm.set(!showForm())">{{showForm()?"Закрыть":"+ Новое бронирование"}}</button></header>
+  <div class="external-toolbar"><div><h3>Time to Grow</h3><span>Подтверждённые бронирования</span></div><div class="external-filters"><label>Клуб<select [(ngModel)]="externalClubId" (ngModelChange)="loadExternal()">@for(club of externalClubs();track club.id){<option [value]="club.id">{{club.name}}</option>}</select></label><label>Дата<input type="date" [(ngModel)]="externalDate" (ngModelChange)="loadExternal()"></label></div></div>
+  @if(externalLoading()){<p class="muted">Загружаем расписание…</p>}
+  @if(externalError()){<p class="error">{{externalError()}}</p>}
+  <div class="schedule external">@for(b of externalBookings();track b.id){<article>
+    <div class="date"><b>{{b.startsAt}}</b><span>{{b.endsAt}}</span></div>
+    <div class="booking-main"><strong>{{b.customerName}}</strong><span>{{b.productName}} · {{b.players}} игроков · {{b.amountCents/100}} {{b.currency}}</span><small>{{b.customerPhone || b.customerEmail || "Контакты не указаны"}}</small></div>
+    <span class="pill" [class.paid]="b.paymentStatus==='paid'">{{b.paymentStatusDisplay}}</span>
+    <span class="pill checkin">Check-in {{b.checkedIn}}/{{b.checkInTotal}}</span>
+  </article>}@empty{ @if(!externalLoading()&&!externalError()){<div class="empty"><b>На эту дату бронирований нет</b><span>Выберите другую дату.</span></div>} }</div>
   @if(showForm()){<form (ngSubmit)="create()">
     <label>Гость<input name="customer" [(ngModel)]="draft.customerName" required minlength="2"></label>
     <label>Телефон<input name="phone" [(ngModel)]="draft.customerPhone"></label>
@@ -31,13 +42,17 @@ type Booking={id:string;room_id:string;room_name:string;customer_name:string;cus
     @else{<button (click)="start(b)">▶ Начать игру</button>}
   </article>}@empty{<div class="empty"><b>Бронирований пока нет</b><span>Создайте первое бронирование кнопкой выше.</span></div>}</div>
   </section></main>`,
-  styles:[`.schedule{display:grid;gap:10px;margin-top:24px}.schedule article{display:grid;grid-template-columns:80px 1fr auto auto;gap:16px;align-items:center;padding:16px 18px;background:#fff;border:1px solid var(--line);border-radius:14px}.date b,.date span,.booking-main strong,.booking-main span{display:block}.date b{font-size:20px}.date span,.booking-main span{margin-top:4px;color:var(--muted)}.pill{padding:7px 10px;border-radius:999px;background:#f2f4f7;font-size:11px;font-weight:700}.pill.live{background:#e8f8ef;color:#087443}.session-actions{display:flex;align-items:center;gap:7px}.ghost{padding:8px;background:#eef1f6;color:#344054;box-shadow:none}@media(max-width:900px){.schedule article{grid-template-columns:64px 1fr}.schedule button,.pill,.session-actions{grid-column:2;justify-self:start}}`]
+  styles:[`.external-toolbar{display:flex;justify-content:space-between;align-items:end;margin-top:24px}.external-toolbar h3{margin:0}.external-toolbar span,.muted{color:var(--muted)}.external-filters{display:flex;gap:10px;align-items:end}.external-toolbar label{max-width:220px}.schedule{display:grid;gap:10px;margin-top:24px}.schedule.external{margin-top:12px;margin-bottom:28px}.schedule article{display:grid;grid-template-columns:80px 1fr auto auto;gap:16px;align-items:center;padding:16px 18px;background:#fff;border:1px solid var(--line);border-radius:14px}.date b,.date span,.booking-main strong,.booking-main span,.booking-main small{display:block}.date b{font-size:20px}.date span,.booking-main span,.booking-main small{margin-top:4px;color:var(--muted)}.pill{padding:7px 10px;border-radius:999px;background:#f2f4f7;font-size:11px;font-weight:700}.pill.live,.pill.paid{background:#e8f8ef;color:#087443}.pill.checkin{background:#eef4ff;color:#3448a5}.session-actions{display:flex;align-items:center;gap:7px}.ghost{padding:8px;background:#eef1f6;color:#344054;box-shadow:none}@media(max-width:900px){.external-toolbar,.external-filters{align-items:stretch;flex-direction:column;gap:12px}.schedule article{grid-template-columns:64px 1fr}.schedule button,.pill,.session-actions{grid-column:2;justify-self:start}}`]
 })
 export class BookingsComponent{
   private http=inject(HttpClient);rooms=signal<Room[]>([]);bookings=signal<Booking[]>([]);showForm=signal(false);saving=signal(false);error=signal("");
+  externalClubs=signal<ExternalClub[]>([]);externalClubId="";externalBookings=signal<ExternalBooking[]>([]);externalLoading=signal(false);externalError=signal("");externalDate=this.localDate(new Date());
   draft={customerName:"",customerPhone:"",roomId:"",startsAt:"",endsAt:"",players:2,amount:0};
-  constructor(){this.load();this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});}
+  constructor(){this.load();this.loadExternalClubs();this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});}
+  private localDate(date:Date){const offset=date.getTimezoneOffset()*60_000;return new Date(date.getTime()-offset).toISOString().slice(0,10);}
   load(){this.http.get<Booking[]>("/api/bookings").subscribe({next:b=>this.bookings.set(b),error:()=>this.error.set("Не удалось загрузить бронирования.")});}
+  loadExternalClubs(){this.externalLoading.set(true);this.http.get<{data:ExternalClub[];defaultClubId:string|null}>("/api/time-to-grow/clubs").subscribe({next:r=>{this.externalClubs.set(r.data);this.externalClubId=r.defaultClubId||"";this.loadExternal();},error:({status})=>{this.externalLoading.set(false);this.externalError.set(status===503?"Интеграция Time to Grow ещё не настроена.":"Не удалось загрузить клубы Time to Grow.");}});}
+  loadExternal(){if(!this.externalDate||!this.externalClubId)return;this.externalLoading.set(true);this.externalError.set("");this.http.get<{data:ExternalBooking[]}>(`/api/time-to-grow/bookings?date=${encodeURIComponent(this.externalDate)}&clubId=${encodeURIComponent(this.externalClubId)}`).subscribe({next:r=>{this.externalBookings.set(r.data);this.externalLoading.set(false);},error:({status})=>{this.externalBookings.set([]);this.externalLoading.set(false);this.externalError.set(status===503?"Интеграция Time to Grow ещё не настроена.":"Не удалось загрузить бронирования Time to Grow.");}});}
   create(){this.saving.set(true);this.error.set("");this.http.post("/api/bookings",{...this.draft,startsAt:new Date(this.draft.startsAt).toISOString(),endsAt:new Date(this.draft.endsAt).toISOString(),amountCents:Math.round(this.draft.amount*100),notes:""}).subscribe({next:()=>{this.saving.set(false);this.showForm.set(false);this.draft={customerName:"",customerPhone:"",roomId:"",startsAt:"",endsAt:"",players:2,amount:0};this.load();},error:({status})=>{this.saving.set(false);this.error.set(status===409?"Это время уже занято.":"Не удалось создать бронирование.");}});}
   start(b:Booking){this.http.post("/api/sessions",{bookingId:b.id,durationSeconds:3600}).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось запустить игровую сессию.")});}
   session(b:Booking,action:"PAUSE"|"RESUME"|"FINISH"){this.http.patch(`/api/sessions/${b.session_id}`,{action}).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось изменить состояние сессии.")});}
