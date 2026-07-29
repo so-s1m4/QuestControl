@@ -462,6 +462,7 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
         VALUES($1,$2,'FINISHED',$3,$4,0) RETURNING *
       `,[booking.id,room.id,booking.starts_at,booking.ends_at])).rows[0];
     }
+    await client.query("DELETE FROM session_participants WHERE session_id=$1",[session.id]);
     await client.query(`
       INSERT INTO session_participants(session_id,person_id,participant_role,category_at_play,age_band_at_play)
       SELECT $1,person_id,participant_role,category_at_booking,age_band_at_booking
