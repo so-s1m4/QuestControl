@@ -11,8 +11,8 @@ type Player={mode:"hls"|"player";endpoint:string;safeEndpoint?:SafeResourceUrl};
   template:`
     @if(selected().length){
       <section class="watch" [class.collapsed]="collapsed()">
-        @if(collapsed()){<button class="collapsed-bar" (click)="collapsed.set(false)"><span class="camera-icon">●</span><strong>Развернуть</strong><i class="expand-arrow">↑</i></button>}
-        @else{<button class="collapse-arrow" title="Свернуть" (click)="collapsed.set(true)">↓</button><div class="grid">@for(camera of selected();track camera.id){<article><div class="video">@if(players()[camera.id];as player){@if(player.mode==="hls"){<app-hls-player [url]="player.endpoint"/>}@else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen"></iframe>}}@else{<button (click)="open(camera)">▶ Открыть</button>}</div><footer><span><b>{{camera.name}}</b><small>{{camera.room_name||"Без комнаты"}}</small></span><button (click)="remove(camera.id)">×</button></footer></article>}</div>}
+        @if(collapsed()){<button class="collapsed-bar" (click)="collapsed.set(false)"><span class="camera-icon">●</span><strong>Развернуть</strong><i class="expand-arrow">⌃</i></button>}
+        @else{<button class="collapse-arrow" title="Свернуть" (click)="collapsed.set(true)">⌄</button><div class="grid">@for(camera of selected();track camera.id){<article><div class="video">@if(players()[camera.id];as player){@if(player.mode==="hls"){<app-hls-player [url]="player.endpoint"/>}@else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen"></iframe>}}@else{<button (click)="open(camera)">▶ Открыть</button>}</div><footer><span><b>{{camera.name}}</b><small>{{camera.room_name||"Без комнаты"}}</small></span><button (click)="remove(camera.id)">×</button></footer></article>}</div>}
       </section>
     }`,
   styles:[`
