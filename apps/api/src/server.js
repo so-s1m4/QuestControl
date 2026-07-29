@@ -394,7 +394,10 @@ function classifyTimeToGrowProduct(productName) {
   if (["color cube","call of cube","treasure island","star wars"].includes(normalized)) {
     return {zoneName:"QuestBoxes",gameName:productName.trim(),requiresGameSelection:false};
   }
-  if (["friend pass","friendle pass","couple pass","general pass","kinder pass","kinder party"].includes(normalized)) {
+  if (
+    /^(friend|friends|friendle|couple|family)( day)? pass$/.test(normalized) ||
+    /^(general( vr)? (ticket|pass)|kinder ?(pass|party|geburtstag))$/.test(normalized)
+  ) {
     return {zoneName:"VR",gameName:null,requiresGameSelection:true};
   }
   return {zoneName:"VR",gameName:productName.trim(),requiresGameSelection:false};
