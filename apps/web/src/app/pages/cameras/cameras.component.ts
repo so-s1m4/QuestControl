@@ -1,264 +1,106 @@
-import { Component, inject, signal } from "@angular/core";
+import { Component, ElementRef, HostListener, ViewChild, inject, signal } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
 import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 import { FormsModule } from "@angular/forms";
 import { RouterLink } from "@angular/router";
 import { HlsPlayerComponent } from "./hls-player.component";
 
-type Camera = {
-  id: string;
-  room_id: string | null;
-  room_name: string | null;
-  name: string;
-  provider: "RTSP" | "ONVIF" | "TUYA";
-  stream_key: string | null;
-  external_id: string | null;
-  status: string;
-};
-
-type Room = { id: string; name: string; location_name:string };
+type Location={id:string;name:string};
+type Room={id:string;name:string;location_id:string;location_name:string};
+type Camera={id:string;room_id:string|null;room_name:string|null;location_id:string|null;name:string;provider:"RTSP"|"ONVIF"|"TUYA";status:string;plan_x:number|null;plan_y:number|null};
+type ZoneType="GAME"|"VR"|"CORRIDOR"|"RECEPTION"|"LOCKERS"|"TECHNICAL"|"STORAGE"|"RESTROOM"|"OTHER";
+type Zone={id?:string;name:string;type:ZoneType;color:string;x:number;y:number;width:number;height:number;room_id?:string|null;roomId?:string|null};
+type Plan={backgroundImage:string|null;zones:Zone[]};
+type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:number;originX:number;originY:number;originW:number;originH:number};
 
 @Component({
-  selector: "app-cameras",
-  standalone: true,
-  imports: [FormsModule, RouterLink, HlsPlayerComponent],
-  template: `
-    <main>
-      <aside>
-        <h1>Q <span>QUESTCONTROL</span></h1>
-        <nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav>
-      </aside>
-      <section>
-        <header>
-          <div><h2>Камеры</h2><p>Выберите камеры и следите за ними в общей сетке</p></div>
-          <div class="header-actions">
-            <button class="secondary" (click)="syncTuya()" [disabled]="syncing()">{{syncing() ? "Синхронизация…" : "↻ Синхронизировать Tuya"}}</button>
-            <button (click)="showForm.set(!showForm())">{{showForm() ? "Закрыть" : "+ Добавить камеру"}}</button>
-          </div>
-        </header>
+  selector:"app-cameras",standalone:true,imports:[FormsModule,RouterLink,HlsPlayerComponent],
+  template:`
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <section>
+    <header><div><h2>Камеры на плане</h2><p>Выберите локацию и камеры прямо на схеме</p></div><div class="header-actions">@if(isOwner()){<button class="secondary" (click)="toggleEdit()">{{editing()?"Закрыть редактор":"Настроить план"}}</button>}<button class="secondary" (click)="syncTuya()" [disabled]="syncing()">{{syncing()?"Синхронизация…":"↻ Tuya"}}</button></div></header>
+    <div class="location-tabs">@for(location of locations();track location.id){<button [class.active]="location.id===locationId()" (click)="selectLocation(location.id)">{{location.name}}</button>}</div>
+    @if(error()){<p class="error">{{error()}}</p>} @if(notice()){<p class="notice">{{notice()}}</p>}
 
-        @if (showForm()) {
-          <form (ngSubmit)="save()">
-            <label>Название<input name="name" [(ngModel)]="draft.name" required minlength="2" placeholder="Камера в комнате 1"></label>
-            <label>Комната<select name="roomId" [(ngModel)]="draft.roomId" required><option value="">Выберите комнату</option>@for(room of rooms();track room.id){<option [value]="room.id">{{room.location_name}} · {{room.name}}</option>}</select></label>
-            <label>Источник<select name="provider" [(ngModel)]="draft.provider"><option value="RTSP">RTSP через go2rtc</option><option value="ONVIF">ONVIF через go2rtc</option><option value="TUYA">Tuya Cloud</option></select></label>
-            @if (draft.provider === "TUYA") {
-              <label>Tuya device ID<input name="externalId" [(ngModel)]="draft.externalId" required></label>
-              <p class="hint">Tuya live stream пока не активирован на сервере.</p>
-            } @else {
-              <label>Stream key<input name="streamKey" [(ngModel)]="draft.streamKey" required pattern="[A-Za-z0-9_-]+" placeholder="room_1_main"></label>
-              <p class="hint">Это имя потока из go2rtc.yaml, не RTSP URL и не пароль.</p>
-            }
-            <button type="submit" [disabled]="saving()">{{saving() ? "Сохраняем…" : "Сохранить"}}</button>
-          </form>
-        }
+    @if(editing()){
+      <div class="editor-bar">
+        <label class="upload">Загрузить фон<input type="file" accept="image/png,image/jpeg,image/webp" (change)="uploadBackground($event)"></label>
+        @if(backgroundImage()){<button class="ghost" (click)="backgroundImage.set(null)">Убрать фон</button>}
+        <button class="ghost" [class.active]="drawing()" (click)="drawing.set(!drawing())">▱ Нарисовать зону</button>
+        <span class="editor-help">{{drawing()?"Проведите мышью по плану":"Перетаскивайте зоны, их угол и камеры"}}</span>
+        <button (click)="savePlan()" [disabled]="saving()">{{saving()?"Сохраняем…":"Сохранить план"}}</button>
+      </div>
+      <div class="zone-editor">
+        <label>Название<input [(ngModel)]="zoneDraft.name" (ngModelChange)="applyZoneDraft()" placeholder="Коридор"></label>
+        <label>Тип<select [(ngModel)]="zoneDraft.type" (ngModelChange)="applyZoneDraft()"><option value="GAME">Игровая зона</option><option value="VR">VR</option><option value="CORRIDOR">Коридор</option><option value="RECEPTION">Ресепшен</option><option value="LOCKERS">Шкафчики</option><option value="TECHNICAL">Техническая</option><option value="STORAGE">Склад</option><option value="RESTROOM">Санузел</option><option value="OTHER">Другая</option></select></label>
+        <label>Цвет<input type="color" [(ngModel)]="zoneDraft.color" (ngModelChange)="applyZoneDraft()"></label>
+        <label>Связать с квест-комнатой<select [(ngModel)]="zoneDraft.roomId" (ngModelChange)="applyZoneDraft()"><option value="">Не связывать</option>@for(room of locationRooms();track room.id){<option [value]="room.id">{{room.name}}</option>}</select></label>
+      </div>
+    }
 
-        @if (error()) { <p class="error">{{error()}}</p> }
-        @if (notice()) { <p class="notice">{{notice()}}</p> }
-        @if (loading()) { <p>Загрузка камер…</p> }
-        @else if (!cameras().length) { <div class="empty"><b>Камер пока нет</b><span>Добавьте поток, уже настроенный в go2rtc.</span></div> }
-        @else {
-          <div class="camera-picker">
-            <div>
-              <strong>Отслеживаемые камеры</strong>
-              <span>Выбрано {{selectedCameras().length}} из {{cameras().length}}</span>
-            </div>
-            <div class="camera-options">
-              @for(camera of cameras();track camera.id) {
-                <label class="camera-option">
-                  <input type="checkbox" [checked]="isSelected(camera.id)" (change)="toggle(camera)">
-                  <span><b>{{camera.name}}</b><small>{{camera.room_name || "Без комнаты"}} · {{camera.provider}}</small></span>
-                </label>
-              }
-            </div>
-          </div>
+    @if(locationId()){
+      <div #plan class="plan" [class.editing]="editing()" [class.drawing]="drawing()" [style.background-image]="backgroundImage()?'url('+backgroundImage()+')':null" (pointerdown)="planDown($event)">
+        @for(zone of zones();track zone.id||$index){<div class="zone" [class.selected-zone]="selectedZone()===zone" [style.left.%]="zone.x" [style.top.%]="zone.y" [style.width.%]="zone.width" [style.height.%]="zone.height" [style.border-color]="zone.color" [style.background]="zone.color+'25'" (pointerdown)="zoneDown($event,zone,'zone')" (click)="selectZone(zone)">
+          <span>{{zone.name}}<small>{{zoneTypeName(zone.type)}}</small></span>
+          @if(editing()){<button class="zone-delete" (click)="deleteZone($event,zone)">×</button><i class="resize" (pointerdown)="zoneDown($event,zone,'resize')"></i>}
+        </div>}
+        @for(camera of locationCameras();track camera.id){<button class="camera-pin" [class.online]="camera.status==='ONLINE'" [class.selected]="isSelected(camera.id)" [class.unplaced]="camera.plan_x==null" [style.left.%]="cameraX(camera)" [style.top.%]="cameraY(camera)" (pointerdown)="cameraDown($event,camera)" (click)="cameraClick($event,camera)" [title]="camera.name">
+          <b>●</b><span>{{camera.name}}</span>
+        </button>}
+        @if(!backgroundImage()&&!zones().length){<div class="plan-empty"><b>План ещё не настроен</b><span>@if(isOwner()){Откройте редактор, загрузите фон или нарисуйте зоны.}@else{Владелец ещё не опубликовал план этой локации.}</span></div>}
+      </div>
+      <div class="plan-legend"><span><i class="online-dot"></i> Онлайн</span><span><i></i> Офлайн</span><b>Выбрано {{selectedCameras().length}} из {{locationCameras().length}}</b><button class="ghost" (click)="selectOnline()">Выбрать все онлайн</button><button class="ghost" (click)="clearSelection()">Снять выбор</button></div>
+    }
 
-          @if (!selectedCameras().length) {
-            <div class="empty"><b>Ничего не выбрано</b><span>Отметьте камеры выше, чтобы начать наблюдение.</span></div>
-          }
-          <div class="camera-grid">
-            @for(camera of selectedCameras();track camera.id) {
-              <article>
-                <div class="preview">
-                  @if (players()[camera.id]; as player) {
-                    @if (player.mode === "hls") { <app-hls-player [url]="player.endpoint"></app-hls-player> }
-                    @else { <iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen" referrerpolicy="same-origin"></iframe> }
-                  }
-                  @else { <button class="play" (click)="open(camera)">▶ Открыть поток</button> }
-                </div>
-                <div class="camera-info">
-                  <div class="camera-meta"><strong>{{camera.name}}</strong><span>{{camera.room_name || "Комната не назначена"}} · {{camera.provider}}</span><select [value]="camera.room_id||''" (change)="assignRoom(camera,$event)"><option value="">Назначить комнату…</option>@for(room of rooms();track room.id){<option [value]="room.id">{{room.location_name}} · {{room.name}}</option>}</select></div>
-                  <div class="camera-actions"><button class="secondary" (click)="refresh(camera)">Обновить</button><button class="danger" title="Удалить" (click)="remove(camera)">Удалить</button></div>
-                </div>
-              </article>
-            }
-          </div>
-        }
-      </section>
-    </main>
-  `,
-  styles: [`
-    .camera-picker{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-top:24px;padding:18px;background:white;border:1px solid #e1e5ed;border-radius:11px}
-    .camera-picker>div:first-child{min-width:190px}.camera-picker strong,.camera-picker span{display:block}.camera-picker>div:first-child span{margin-top:6px;color:#788295;font-size:12px}
-    .camera-options{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px}
-    .camera-option{display:flex;grid-template-columns:none;align-items:center;gap:10px;min-width:190px;padding:10px 12px;border:1px solid #dfe3eb;border-radius:8px;cursor:pointer}
-    .camera-option:has(input:checked){border-color:#4058df;background:#f1f3ff}.camera-option input{width:16px;height:16px;accent-color:#4058df}
-    .camera-option b,.camera-option small{display:block}.camera-option small{margin-top:3px;color:#788295;font-size:11px}
-    .camera-grid{grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))}
-    .camera-meta select{margin-top:9px;min-width:240px;padding:7px 9px}.camera-actions{display:flex;gap:8px}.secondary{padding:8px 10px;background:#eef1f6;color:#344054}
-    .header-actions{display:flex;gap:10px}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}
-    @media(max-width:900px){.camera-picker{display:grid}.camera-options{justify-content:stretch}.camera-option{width:100%}}
+    @if(!selectedCameras().length){<div class="empty compact"><b>Камеры не выбраны</b><span>Нажмите на маркеры камер на плане.</span></div>}
+    <div class="camera-grid">@for(camera of selectedCameras();track camera.id){<article><div class="preview">@if(players()[camera.id];as player){@if(player.mode==="hls"){<app-hls-player [url]="player.endpoint"/>}@else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen"></iframe>}}@else{<button class="play" (click)="open(camera)">▶ Открыть поток</button>}</div><div class="camera-info"><div><strong>{{camera.name}}</strong><span>{{camera.room_name||"Без игровой комнаты"}} · {{camera.provider}}</span></div><button class="secondary" (click)="refresh(camera)">Обновить</button></div></article>}</div>
+  </section></main>`,
+  styles:[`
+    .header-actions,.location-tabs,.editor-bar,.plan-legend{display:flex;gap:10px;align-items:center}.secondary,.ghost,.location-tabs button{background:#eef1f6;color:#344054;box-shadow:none}.location-tabs{margin:22px 0 14px;flex-wrap:wrap}.location-tabs button.active,.ghost.active{background:#4058df;color:white}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}
+    .editor-bar{flex-wrap:wrap;padding:12px;background:#fff;border:1px solid var(--line);border-radius:12px 12px 0 0}.editor-help{margin-right:auto;color:var(--muted);font-size:12px}.upload{display:inline-flex;align-items:center;padding:10px 14px;border-radius:8px;background:#eef1f6;font-weight:700;cursor:pointer}.upload input{display:none}
+    .zone-editor{display:grid;grid-template-columns:1fr 180px 90px 1fr;gap:10px;padding:12px;background:#f8f9fc;border:1px solid var(--line);border-top:0}.zone-editor label{font-size:11px;color:var(--muted)}.zone-editor input,.zone-editor select{margin-top:5px;padding:8px;width:100%}
+    .plan{position:relative;overflow:hidden;min-height:570px;aspect-ratio:16/9;border:1px solid #d9deea;border-radius:14px;background-color:#f7f8fb;background-size:100% 100%;background-repeat:no-repeat;background-image:linear-gradient(#dfe4ec 1px,transparent 1px),linear-gradient(90deg,#dfe4ec 1px,transparent 1px);background-size:25px 25px;touch-action:none;user-select:none}.editor-bar+.zone-editor+.plan,.zone-editor+.plan{border-radius:0 0 14px 14px}.plan.drawing{cursor:crosshair}
+    .zone{position:absolute;display:grid;place-items:center;min-width:20px;min-height:20px;border:2px solid;border-radius:5px;color:#1e293b;cursor:default}.editing .zone{cursor:move}.zone span{text-align:center;font-weight:800;pointer-events:none}.zone small{display:block;margin-top:3px;font-size:9px;font-weight:600;opacity:.65}.selected-zone{outline:3px solid #4058df55}.zone-delete{position:absolute;right:3px;top:3px;padding:2px 7px;background:#fff;color:#b42318;box-shadow:none}.resize{position:absolute;right:-3px;bottom:-3px;width:14px;height:14px;border-radius:3px;background:#4058df;cursor:nwse-resize}
+    .camera-pin{position:absolute;z-index:4;display:flex;align-items:center;gap:6px;transform:translate(-12px,-12px);max-width:160px;padding:6px 9px;border:2px solid #fff;border-radius:999px;background:#667085;color:white;box-shadow:0 3px 10px #0004}.camera-pin.online{background:#079455}.camera-pin.selected{outline:4px solid #4058df66}.camera-pin span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.editing .camera-pin{cursor:grab}.camera-pin.unplaced{opacity:.75}
+    .plan-empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--muted);pointer-events:none}.plan-empty b{color:var(--ink);font-size:18px}.plan-empty span{margin-top:8px}.plan-legend{justify-content:flex-end;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:12px}.plan-legend b{margin-left:auto;color:var(--ink)}.plan-legend i{display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:50%;background:#667085}.plan-legend .online-dot{background:#079455}
+    .empty.compact{padding:30px}.camera-grid{grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))}.camera-info{display:flex;align-items:center;justify-content:space-between;padding:14px}.camera-info span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
+    @media(max-width:900px){.zone-editor{grid-template-columns:1fr 1fr}.plan{min-height:420px}.plan-legend b{width:100%;margin:0}}
   `]
 })
-export class CamerasComponent {
-  private http = inject(HttpClient);
-  private sanitizer = inject(DomSanitizer);
-  cameras = signal<Camera[]>([]);
-  rooms = signal<Room[]>([]);
-  players = signal<Record<string, { mode: "hls" | "player"; endpoint: string; safeEndpoint?: SafeResourceUrl }>>({});
-  loading = signal(true);
-  saving = signal(false);
-  syncing = signal(false);
-  showForm = signal(false);
-  error = signal("");
-  notice = signal("");
-  selectedIds = signal<string[]>([]);
-  draft = { name: "", roomId: "", provider: "RTSP" as Camera["provider"], streamKey: "", externalId: "" };
-
-  constructor() {
-    this.load();
-    this.http.get<Room[]>("/api/rooms").subscribe({ next: rooms => this.rooms.set(rooms) });
-  }
-
-  load() {
-    this.loading.set(true);
-    this.http.get<Camera[]>("/api/cameras").subscribe({
-      next: cameras => {
-        this.cameras.set(cameras);
-        const stored = localStorage.getItem("questcontrol.selectedCameras");
-        const requested = stored === null ? cameras.map(camera => camera.id) : this.parseSelection(stored);
-        const available = new Set(cameras.map(camera => camera.id));
-        const selected = requested.filter(id => available.has(id));
-        this.selectedIds.set(selected);
-        this.persistSelection();
-        for (const camera of cameras) if (selected.includes(camera.id)) this.open(camera);
-        this.loading.set(false);
-      },
-      error: () => { this.error.set("Не удалось загрузить камеры."); this.loading.set(false); }
-    });
-  }
-
-  save() {
-    this.saving.set(true);
-    this.error.set("");
-    const body = {
-      name: this.draft.name,
-      roomId: this.draft.roomId || null,
-      provider: this.draft.provider,
-      streamKey: this.draft.provider === "TUYA" ? null : this.draft.streamKey,
-      externalId: this.draft.provider === "TUYA" ? this.draft.externalId : null
-    };
-    this.http.post<Camera>("/api/cameras", body).subscribe({
-      next: () => {
-        this.draft = { name: "", roomId: "", provider: "RTSP", streamKey: "", externalId: "" };
-        this.saving.set(false);
-        this.showForm.set(false);
-        this.load();
-      },
-      error: ({ status }) => { this.error.set(status === 403 ? "Нет права управлять камерами." : "Не удалось сохранить камеру. Проверьте поля."); this.saving.set(false); }
-    });
-  }
-
-  syncTuya() {
-    this.syncing.set(true);
-    this.error.set("");
-    this.notice.set("");
-    this.http.post<{discovered:number;cameras:number;created:number;updated:number}>("/api/cameras/sync/tuya", {}).subscribe({
-      next: result => {
-        this.syncing.set(false);
-        this.notice.set(`Tuya: найдено устройств ${result.discovered}, камер ${result.cameras}, добавлено ${result.created}, обновлено ${result.updated}.`);
-        this.load();
-      },
-      error: ({ error }) => {
-        this.syncing.set(false);
-        this.error.set(error?.message ? `Tuya: ${error.message}` : "Не удалось синхронизировать устройства Tuya.");
-      }
-    });
-  }
-
-  open(camera: Camera) {
-    this.error.set("");
-    this.http.get<{ endpoint: string; mode: "hls" | "player" }>(`/api/cameras/${camera.id}/stream`).subscribe({
-      next: ({ endpoint, mode }) => this.players.update(value => ({
-        ...value,
-        [camera.id]: { mode, endpoint, safeEndpoint: mode === "player" ? this.sanitizer.bypassSecurityTrustResourceUrl(endpoint) : undefined }
-      })),
-      error: ({ status }) => this.error.set(status === 503 ? "Укажите Tuya Client ID и Client Secret на сервере." : "Поток LSC/Tuya недоступен. Проверьте привязку устройства и услугу Live Stream.")
-    });
-  }
-
-  selectedCameras() {
-    const selected = new Set(this.selectedIds());
-    return this.cameras().filter(camera => selected.has(camera.id));
-  }
-
-  isSelected(id: string) {
-    return this.selectedIds().includes(id);
-  }
-
-  toggle(camera: Camera) {
-    if (this.isSelected(camera.id)) {
-      this.selectedIds.update(ids => ids.filter(id => id !== camera.id));
-      this.players.update(players => {
-        const next = { ...players };
-        delete next[camera.id];
-        return next;
-      });
-    } else {
-      this.selectedIds.update(ids => [...ids, camera.id]);
-      this.open(camera);
-    }
-    this.persistSelection();
-  }
-
-  refresh(camera: Camera) {
-    this.players.update(players => {
-      const next = { ...players };
-      delete next[camera.id];
-      return next;
-    });
-    this.open(camera);
-  }
-
-  assignRoom(camera:Camera,event:Event){
-    const roomId=(event.target as HTMLSelectElement).value;
-    if(!roomId)return;
-    this.error.set("");
-    this.http.patch(`/api/cameras/${camera.id}/room`,{roomId}).subscribe({next:()=>{this.notice.set("Камера назначена комнате.");this.load();},error:()=>this.error.set("Не удалось назначить камеру комнате.")});
-  }
-
-  private parseSelection(value: string) {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private persistSelection() {
-    localStorage.setItem("questcontrol.selectedCameras", JSON.stringify(this.selectedIds()));
-  }
-
-  remove(camera: Camera) {
-    if (!confirm(`Удалить камеру «${camera.name}»?`)) return;
-    this.http.delete(`/api/cameras/${camera.id}`).subscribe({
-      next: () => {
-        this.selectedIds.update(ids => ids.filter(id => id !== camera.id));
-        this.persistSelection();
-        this.load();
-      },
-      error: ({ status }) => this.error.set(status === 403 ? "Нет права удалять камеры." : "Не удалось удалить камеру.")
-    });
-  }
+export class CamerasComponent{
+  private http=inject(HttpClient);private sanitizer=inject(DomSanitizer);
+  @ViewChild("plan") planRef?:ElementRef<HTMLElement>;
+  locations=signal<Location[]>([]);rooms=signal<Room[]>([]);cameras=signal<Camera[]>([]);locationId=signal("");zones=signal<Zone[]>([]);backgroundImage=signal<string|null>(null);
+  editing=signal(false);drawing=signal(false);saving=signal(false);syncing=signal(false);error=signal("");notice=signal("");selectedIds=signal<string[]>([]);
+  selectedZone=signal<Zone|null>(null);players=signal<Record<string,{mode:"hls"|"player";endpoint:string;safeEndpoint?:SafeResourceUrl}>>({});
+  zoneDraft:{name:string;type:ZoneType;color:string;roomId:string}={name:"Новая зона",type:"OTHER",color:"#64748b",roomId:""};private drag:Drag|null=null;private suppressClick=false;
+  isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}
+  constructor(){this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(l[0])this.selectLocation(l[0].id)}});this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});this.loadCameras();}
+  loadCameras(){this.http.get<Camera[]>("/api/cameras").subscribe({next:c=>this.cameras.set(c),error:()=>this.error.set("Не удалось загрузить камеры.")})}
+  selectLocation(id:string){this.locationId.set(id);this.editing.set(false);this.http.get<Plan>(`/api/locations/${id}/plan`).subscribe({next:p=>{this.backgroundImage.set(p.backgroundImage);this.zones.set(p.zones.map(z=>({...z,x:+z.x,y:+z.y,width:+z.width,height:+z.height,roomId:z.room_id||""})));},error:()=>this.error.set("Не удалось загрузить план локации.")})}
+  locationCameras(){return this.cameras().filter(c=>c.location_id===this.locationId())}
+  locationRooms(){return this.rooms().filter(r=>r.location_id===this.locationId())}
+  cameraX(c:Camera){return c.plan_x==null?4+(this.locationCameras().indexOf(c)%4)*22:+c.plan_x}
+  cameraY(c:Camera){return c.plan_y==null?92-Math.floor(this.locationCameras().indexOf(c)/4)*7:+c.plan_y}
+  toggleEdit(){this.editing.set(!this.editing());this.drawing.set(false)}
+  uploadBackground(event:Event){const file=(event.target as HTMLInputElement).files?.[0];if(!file)return;if(file.size>2_000_000){this.error.set("Файл фона должен быть меньше 2 МБ.");return}const reader=new FileReader();reader.onload=()=>this.backgroundImage.set(String(reader.result));reader.readAsDataURL(file)}
+  point(event:PointerEvent){const rect=this.planRef!.nativeElement.getBoundingClientRect();return{x:Math.max(0,Math.min(100,(event.clientX-rect.left)/rect.width*100)),y:Math.max(0,Math.min(100,(event.clientY-rect.top)/rect.height*100))}}
+  planDown(e:PointerEvent){if(!this.editing()||!this.drawing()||e.target!==this.planRef?.nativeElement)return;const p=this.point(e);const zone:Zone={name:this.zoneDraft.name||"Новая зона",type:this.zoneDraft.type,color:this.zoneDraft.color,x:p.x,y:p.y,width:2,height:2,roomId:this.zoneDraft.roomId||null};this.zones.update(z=>[...z,zone]);this.selectedZone.set(zone);this.drag={kind:"draw",id:"",startX:p.x,startY:p.y,originX:p.x,originY:p.y,originW:2,originH:2};this.capture(e)}
+  zoneDown(e:PointerEvent,z:Zone,kind:"zone"|"resize"){if(!this.editing())return;e.stopPropagation();const p=this.point(e);this.selectedZone.set(z);this.drag={kind,id:"",startX:p.x,startY:p.y,originX:z.x,originY:z.y,originW:z.width,originH:z.height};this.capture(e)}
+  cameraDown(e:PointerEvent,c:Camera){if(!this.editing())return;e.stopPropagation();const p=this.point(e);this.drag={kind:"camera",id:c.id,startX:p.x,startY:p.y,originX:this.cameraX(c),originY:this.cameraY(c),originW:0,originH:0};this.capture(e)}
+  capture(e:PointerEvent){this.suppressClick=false;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)}
+  @HostListener("document:pointermove",["$event"]) move(e:PointerEvent){if(!this.drag)return;const p=this.point(e),dx=p.x-this.drag.startX,dy=p.y-this.drag.startY;if(Math.abs(dx)+Math.abs(dy)>.3)this.suppressClick=true;if(this.drag.kind==="camera"){this.cameras.update(cs=>cs.map(c=>c.id===this.drag!.id?{...c,plan_x:Math.max(0,Math.min(100,this.drag!.originX+dx)),plan_y:Math.max(0,Math.min(100,this.drag!.originY+dy)),location_id:this.locationId()}:c));return}const z=this.selectedZone();if(!z)return;if(this.drag.kind==="zone"){z.x=Math.max(0,Math.min(100-z.width,this.drag.originX+dx));z.y=Math.max(0,Math.min(100-z.height,this.drag.originY+dy))}else if(this.drag.kind==="resize"){z.width=Math.max(2,Math.min(100-z.x,this.drag.originW+dx));z.height=Math.max(2,Math.min(100-z.y,this.drag.originH+dy))}else{z.x=Math.min(this.drag.startX,p.x);z.y=Math.min(this.drag.startY,p.y);z.width=Math.max(2,Math.abs(p.x-this.drag.startX));z.height=Math.max(2,Math.abs(p.y-this.drag.startY))}this.zones.update(v=>[...v])}
+  @HostListener("document:pointerup") up(){if(this.drag?.kind==="draw")this.drawing.set(false);this.drag=null}
+  selectZone(z:Zone){if(this.editing()){this.selectedZone.set(z);this.zoneDraft={name:z.name,type:z.type,color:z.color,roomId:z.roomId||""}}}
+  applyZoneDraft(){const z=this.selectedZone();if(!z)return;z.name=this.zoneDraft.name||"Без названия";z.type=this.zoneDraft.type;z.color=this.zoneDraft.color;z.roomId=this.zoneDraft.roomId||null;this.zones.update(v=>[...v])}
+  deleteZone(e:Event,z:Zone){e.stopPropagation();this.zones.update(v=>v.filter(x=>x!==z));if(this.selectedZone()===z)this.selectedZone.set(null)}
+  savePlan(){this.saving.set(true);this.error.set("");const payload={backgroundImage:this.backgroundImage(),zones:this.zones().map(z=>({id:z.id,name:z.name,type:z.type,color:z.color,x:z.x,y:z.y,width:z.width,height:z.height,roomId:z.roomId||null})),cameras:this.locationCameras().map(c=>({id:c.id,x:this.cameraX(c),y:this.cameraY(c)}))};this.http.put(`/api/locations/${this.locationId()}/plan`,payload).subscribe({next:()=>{this.saving.set(false);this.editing.set(false);this.notice.set("План локации сохранён.");this.loadCameras();this.selectLocation(this.locationId())},error:()=>{this.saving.set(false);this.error.set("Не удалось сохранить план.")}})}
+  zoneTypeName(t:ZoneType){return({GAME:"Игровая",VR:"VR",CORRIDOR:"Коридор",RECEPTION:"Ресепшен",LOCKERS:"Шкафчики",TECHNICAL:"Техническая",STORAGE:"Склад",RESTROOM:"Санузел",OTHER:"Другая"})[t]}
+  cameraClick(e:Event,c:Camera){e.stopPropagation();if(this.editing()||this.suppressClick){this.suppressClick=false;return}this.toggle(c)}
+  isSelected(id:string){return this.selectedIds().includes(id)} selectedCameras(){const ids=new Set(this.selectedIds());return this.locationCameras().filter(c=>ids.has(c.id))}
+  toggle(c:Camera){if(this.isSelected(c.id)){this.selectedIds.update(v=>v.filter(id=>id!==c.id));this.players.update(v=>{const n={...v};delete n[c.id];return n})}else{this.selectedIds.update(v=>[...v,c.id]);this.open(c)}}
+  selectOnline(){for(const c of this.locationCameras().filter(c=>c.status==="ONLINE"&&!this.isSelected(c.id))){this.selectedIds.update(v=>[...v,c.id]);this.open(c)}}clearSelection(){this.selectedIds.set([]);this.players.set({})}
+  open(c:Camera){this.http.get<{endpoint:string;mode:"hls"|"player"}>(`/api/cameras/${c.id}/stream`).subscribe({next:p=>this.players.update(v=>({...v,[c.id]:{...p,safeEndpoint:p.mode==="player"?this.sanitizer.bypassSecurityTrustResourceUrl(p.endpoint):undefined}})),error:()=>this.error.set("Поток камеры недоступен.")})}
+  refresh(c:Camera){this.players.update(v=>{const n={...v};delete n[c.id];return n});this.open(c)}
+  syncTuya(){this.syncing.set(true);this.http.post<any>("/api/cameras/sync/tuya",{}).subscribe({next:r=>{this.syncing.set(false);this.notice.set(`Tuya: камер ${r.cameras}, добавлено ${r.created}.`);this.loadCameras()},error:()=>{this.syncing.set(false);this.error.set("Не удалось синхронизировать Tuya.")}})}
 }

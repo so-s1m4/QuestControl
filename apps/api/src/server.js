@@ -47,7 +47,7 @@ async function locationAllowed(req, locationId) {
 app.set("trust proxy", env.TRUST_PROXY);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "3mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyHeaders: false }));
 
 const server = http.createServer(app);
@@ -510,10 +510,10 @@ app.patch("/rooms/:id", auth, permit("rooms:manage"), async (req,res) => {
 });
 
 app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
-  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
+  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
     SELECT c.id,c.room_id,c.integration_id,c.name,c.provider,c.external_id,c.stream_key,c.status,
-           r.name AS room_name
+           c.plan_x,c.plan_y,COALESCE(c.location_id,r.location_id) AS location_id,r.name AS room_name
     FROM cameras c
     LEFT JOIN rooms r ON r.id=c.room_id
     WHERE ${scoped.clause}
@@ -585,9 +585,9 @@ app.post("/cameras", auth, permit("cameras:manage"), async (req, res) => {
   const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
   if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const { rows } = await db.query(
-    `INSERT INTO cameras(room_id,name,provider,external_id,stream_key,status)
-     VALUES($1,$2,$3,$4,$5,'OFFLINE') RETURNING *`,
-    [input.roomId, input.name, input.provider, input.externalId || null, input.streamKey || null]
+    `INSERT INTO cameras(room_id,location_id,name,provider,external_id,stream_key,status)
+     VALUES($1,$2,$3,$4,$5,$6,'OFFLINE') RETURNING *`,
+    [input.roomId, room.location_id, input.name, input.provider, input.externalId || null, input.streamKey || null]
   );
   await audit(req, "camera.create", "camera", rows[0].id, null, rows[0]);
   res.status(201).json(rows[0]);
@@ -600,9 +600,9 @@ app.patch("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
   const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
   if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const { rows } = await db.query(
-    `UPDATE cameras SET room_id=$1,name=$2,provider=$3,external_id=$4,stream_key=$5
-     WHERE id=$6 RETURNING *`,
-    [input.roomId, input.name, input.provider, input.externalId || null, input.streamKey || null, req.params.id]
+    `UPDATE cameras SET room_id=$1,location_id=$2,name=$3,provider=$4,external_id=$5,stream_key=$6
+     WHERE id=$7 RETURNING *`,
+    [input.roomId, room.location_id, input.name, input.provider, input.externalId || null, input.streamKey || null, req.params.id]
   );
   await audit(req, "camera.update", "camera", rows[0].id, before, rows[0]);
   res.json(rows[0]);
@@ -612,10 +612,76 @@ app.patch("/cameras/:id/room", auth, permit("cameras:manage"), async (req,res) =
   const { roomId } = z.object({ roomId:z.string().uuid() }).parse(req.body);
   const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[roomId])).rows[0];
   if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  const { rows } = await db.query("UPDATE cameras SET room_id=$1 WHERE id=$2 RETURNING *",[roomId,req.params.id]);
+  const { rows } = await db.query("UPDATE cameras SET room_id=$1,location_id=$2 WHERE id=$3 RETURNING *",[roomId,room.location_id,req.params.id]);
   if (!rows[0]) return res.status(404).json({ error:"CAMERA_NOT_FOUND" });
   await audit(req,"camera.room.assign","camera",req.params.id,null,{roomId});
   res.json(rows[0]);
+});
+
+const planZoneInput = z.object({
+  id:z.string().uuid().optional(),
+  name:z.string().trim().min(1).max(120),
+  type:z.enum(["GAME","VR","CORRIDOR","RECEPTION","LOCKERS","TECHNICAL","STORAGE","RESTROOM","OTHER"]),
+  color:z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  x:z.number().min(0).max(100),y:z.number().min(0).max(100),
+  width:z.number().min(2).max(100),height:z.number().min(2).max(100),
+  roomId:z.string().uuid().nullable().optional(),
+});
+const locationPlanInput = z.object({
+  backgroundImage:z.string().max(2_500_000).nullable().optional(),
+  zones:z.array(planZoneInput).max(150),
+  cameras:z.array(z.object({
+    id:z.string().uuid(),x:z.number().min(0).max(100),y:z.number().min(0).max(100),
+  })).max(250),
+});
+
+app.get("/locations/:id/plan", auth, permit("cameras:read"), async (req,res) => {
+  if (!(await locationAllowed(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const plan=(await db.query("SELECT background_image FROM location_plans WHERE location_id=$1",[req.params.id])).rows[0];
+  const zones=(await db.query("SELECT id,name,type,color,x,y,width,height,room_id FROM plan_zones WHERE location_id=$1 ORDER BY created_at,id",[req.params.id])).rows;
+  res.json({backgroundImage:plan?.background_image||null,zones});
+});
+
+app.put("/locations/:id/plan", auth, async (req,res) => {
+  if (!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  if (!(await db.query("SELECT 1 FROM locations WHERE id=$1",[req.params.id])).rowCount) return res.status(404).json({error:"LOCATION_NOT_FOUND"});
+  const input=locationPlanInput.parse(req.body);
+  const client=await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO location_plans(location_id,background_image,updated_by,updated_at) VALUES($1,$2,$3,now())
+       ON CONFLICT(location_id) DO UPDATE SET background_image=excluded.background_image,updated_by=excluded.updated_by,updated_at=now()`,
+      [req.params.id,input.backgroundImage||null,req.user.sub]
+    );
+    await client.query("DELETE FROM plan_zones WHERE location_id=$1",[req.params.id]);
+    for(const zone of input.zones){
+      if(zone.roomId){
+        const room=(await client.query("SELECT 1 FROM rooms WHERE id=$1 AND location_id=$2",[zone.roomId,req.params.id])).rows[0];
+        if(!room) throw new Error("ZONE_ROOM_LOCATION_MISMATCH");
+      }
+      await client.query(
+        "INSERT INTO plan_zones(id,location_id,room_id,name,type,color,x,y,width,height) VALUES(COALESCE($1,gen_random_uuid()),$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        [zone.id||null,req.params.id,zone.roomId||null,zone.name,zone.type,zone.color,zone.x,zone.y,Math.min(zone.width,100-zone.x),Math.min(zone.height,100-zone.y)]
+      );
+    }
+    for(const camera of input.cameras){
+      const updated=await client.query(
+        `UPDATE cameras SET location_id=$1,plan_x=$2,plan_y=$3
+         WHERE id=$4 AND (location_id=$1 OR room_id IN (SELECT id FROM rooms WHERE location_id=$1) OR location_id IS NULL)
+         RETURNING id`,
+        [req.params.id,camera.x,camera.y,camera.id]
+      );
+      if(!updated.rowCount) throw new Error("CAMERA_LOCATION_MISMATCH");
+    }
+    await client.query("COMMIT");
+    await audit(req,"location.plan.update","location",req.params.id,null,{zones:input.zones.length,cameras:input.cameras.length});
+    res.json({saved:true});
+  } catch(error) {
+    await client.query("ROLLBACK");
+    if(["ZONE_ROOM_LOCATION_MISMATCH","CAMERA_LOCATION_MISMATCH"].includes(error.message)) return res.status(400).json({error:error.message});
+    throw error;
+  } finally { client.release(); }
 });
 
 app.delete("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
@@ -794,6 +860,17 @@ app.use((err, req, res, _next) => {
 await db.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id text");
 await db.query("CREATE UNIQUE INDEX IF NOT EXISTS locations_external_id_idx ON locations(external_id) WHERE external_id IS NOT NULL");
 await db.query("CREATE TABLE IF NOT EXISTS user_locations(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,PRIMARY KEY(user_id,location_id))");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS location_id uuid REFERENCES locations(id) ON DELETE SET NULL");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_x numeric(6,3)");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_y numeric(6,3)");
+await db.query("UPDATE cameras c SET location_id=r.location_id FROM rooms r WHERE c.room_id=r.id AND c.location_id IS NULL");
+await db.query("CREATE TABLE IF NOT EXISTS location_plans(location_id uuid PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,background_image text,updated_by uuid REFERENCES users(id) ON DELETE SET NULL,updated_at timestamptz NOT NULL DEFAULT now())");
+await db.query(`CREATE TABLE IF NOT EXISTS plan_zones(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  room_id uuid REFERENCES rooms(id) ON DELETE SET NULL,name text NOT NULL,type text NOT NULL,color text NOT NULL DEFAULT '#64748b',
+  x numeric(6,3) NOT NULL,y numeric(6,3) NOT NULL,width numeric(6,3) NOT NULL,height numeric(6,3) NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+)`);
 await db.query(`UPDATE roles SET permissions='["bookings:read","rooms:read","locations:read","sessions:*","devices:read","devices:command","cameras:read","local_sites:open"]'::jsonb WHERE name='OPERATOR'`);
 await db.query(
   `INSERT INTO locations(external_id,name,timezone,address)
