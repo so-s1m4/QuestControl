@@ -388,22 +388,26 @@ function ageBandAtBooking(birthday,bookingDate) {
   return age<13 ? "CHILD" : age<18 ? "TEEN" : "ADULT";
 }
 
+function classifyTimeToGrowProduct(productName) {
+  const normalized=productName.trim().toLowerCase();
+  if (/krampus/.test(normalized)) return {zoneName:"Krampus House",gameName:"Krampus House",requiresGameSelection:false};
+  if (["color cube","call of cube","treasure island","star wars"].includes(normalized)) {
+    return {zoneName:"QuestBoxes",gameName:productName.trim(),requiresGameSelection:false};
+  }
+  if (["friend pass","friendle pass","couple pass","general pass","kinder pass","kinder party"].includes(normalized)) {
+    return {zoneName:"VR",gameName:null,requiresGameSelection:true};
+  }
+  return {zoneName:"VR",gameName:productName.trim(),requiresGameSelection:false};
+}
+
 async function importTimeToGrowBooking(client,location,externalBooking,createSession) {
   const productName=externalBooking.product.effective_name.trim();
-  const vrCentralProducts=new Set([
-    "friendle pass",
-    "couple pass",
-    "skips of world",
-    "general pass",
-    "kinder party",
-    "sanctum survival",
-  ]);
-  const gameName=vrCentralProducts.has(productName.toLowerCase()) ? "VR Sankt Polten" : productName;
+  const classification=classifyTimeToGrowProduct(productName);
   let room=(await client.query(
     "SELECT id FROM rooms WHERE location_id=$1 AND lower(name)=lower($2) ORDER BY id LIMIT 1",
-    [location.id,gameName]
+    [location.id,classification.zoneName]
   )).rows[0];
-  if (!room && /krampus/i.test(gameName)) {
+  if (!room && /krampus/i.test(classification.zoneName)) {
     room=(await client.query(
       "SELECT id FROM rooms WHERE location_id=$1 AND name ~* 'krampus' ORDER BY id LIMIT 1",
       [location.id]
@@ -412,27 +416,32 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
   if (!room) {
     room=(await client.query(
       "INSERT INTO rooms(location_id,name,kind,capacity,status) VALUES($1,$2,$3,$4,'OFFLINE') RETURNING id",
-      [location.id,gameName,/krampus/i.test(gameName)?"REAL":"VR",Math.max(1,externalBooking.size)]
+      [location.id,classification.zoneName,classification.zoneName==="VR"?"VR":"REAL",Math.max(1,externalBooking.size)]
     )).rows[0];
   }
+  const game=classification.gameName ? (await client.query(`
+    INSERT INTO games(room_id,name) VALUES($1,$2)
+    ON CONFLICT(room_id,lower(name)) DO UPDATE SET is_active=true
+    RETURNING id,name
+  `,[room.id,classification.gameName])).rows[0] : null;
   const booking=(await client.query(`
     INSERT INTO bookings(
       room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,
-      currency,payment_status,external_source,external_id,product_name
+      currency,payment_status,external_source,external_id,product_name,game_id
     ) VALUES(
       $1,'Time to Grow',NULL,
       ($2::date+$3::time) AT TIME ZONE $4,
       ($2::date+$5::time) AT TIME ZONE $4,
-      $6,$7,'EUR',$8,'TIME_TO_GROW',$9,$10
+      $6,$7,'EUR',$8,'TIME_TO_GROW',$9,$10,$11
     )
     ON CONFLICT(external_source,external_id) WHERE external_source IS NOT NULL AND external_id IS NOT NULL
     DO UPDATE SET room_id=excluded.room_id,starts_at=excluded.starts_at,ends_at=excluded.ends_at,
       players=excluded.players,amount_cents=excluded.amount_cents,payment_status=excluded.payment_status,
-      product_name=excluded.product_name
+      product_name=excluded.product_name,game_id=excluded.game_id
     RETURNING *
   `,[room.id,externalBooking.start.date,externalBooking.start.time,location.timezone,
       externalBooking.end.time,externalBooking.size,Math.round(externalBooking.order.total_amount*100),
-      externalBooking.order.payment_status,externalBooking.id,productName])).rows[0];
+      externalBooking.order.payment_status,externalBooking.id,productName,game?.id||null])).rows[0];
 
   await client.query("DELETE FROM booking_participants WHERE booking_id=$1",[booking.id]);
   const sourcePlayers=[...(externalBooking.players||[])].slice(0,externalBooking.size);
@@ -467,9 +476,9 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
     session=(await client.query("SELECT * FROM sessions WHERE booking_id=$1 ORDER BY started_at LIMIT 1",[booking.id])).rows[0];
     if (!session) {
       session=(await client.query(`
-        INSERT INTO sessions(booking_id,room_id,status,started_at,ended_at,remaining_seconds)
-        VALUES($1,$2,'FINISHED',$3,$4,0) RETURNING *
-      `,[booking.id,room.id,booking.starts_at,booking.ends_at])).rows[0];
+        INSERT INTO sessions(booking_id,room_id,game_id,status,started_at,ended_at,remaining_seconds)
+        VALUES($1,$2,$3,'FINISHED',$4,$5,0) RETURNING *
+      `,[booking.id,room.id,booking.game_id,booking.starts_at,booking.ends_at])).rows[0];
     }
     await client.query("DELETE FROM session_participants WHERE session_id=$1",[session.id]);
     await client.query(`
@@ -479,7 +488,7 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
       ON CONFLICT(session_id,person_id) DO NOTHING
     `,[session.id,booking.id]);
   }
-  return {booking,session};
+  return {booking,session,game,classification};
 }
 
 app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => {
@@ -609,8 +618,10 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
     };
 
     const importedRows=bookings.length ? (await db.query(`
-      SELECT b.external_id,b.id local_booking_id,s.id session_id,s.status session_status
+      SELECT b.external_id,b.id local_booking_id,b.game_id,
+             g.name selected_game_name,s.id session_id,s.status session_status
       FROM bookings b
+      LEFT JOIN games g ON g.id=b.game_id
       LEFT JOIN LATERAL (
         SELECT id,status FROM sessions
         WHERE booking_id=b.id
@@ -623,6 +634,11 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
 
     res.json({
       data: bookings.map(booking => ({
+        zoneName: classifyTimeToGrowProduct(booking.product.effective_name).zoneName,
+        suggestedGameName: classifyTimeToGrowProduct(booking.product.effective_name).gameName,
+        requiresGameSelection: classifyTimeToGrowProduct(booking.product.effective_name).requiresGameSelection,
+        gameId: importedById.get(booking.id)?.game_id || null,
+        selectedGameName: importedById.get(booking.id)?.selected_game_name || null,
         localBookingId: importedById.get(booking.id)?.local_booking_id || null,
         sessionId: importedById.get(booking.id)?.session_id || null,
         sessionStatus: importedById.get(booking.id)?.session_status || null,
@@ -691,7 +707,13 @@ app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) 
     const imported=[];
     for (const externalBooking of externalBookings) {
       const result=await importTimeToGrowBooking(client,location,externalBooking,input.createSessions);
-      imported.push({bookingId:result.booking.id,sessionId:result.session?.id||null,externalId:externalBooking.id});
+      imported.push({
+        bookingId:result.booking.id,
+        sessionId:result.session?.id||null,
+        gameId:result.booking.game_id||null,
+        zoneName:result.classification.zoneName,
+        externalId:externalBooking.id,
+      });
     }
     await client.query("COMMIT");
     await audit(req,"time_to_grow.import","booking",null,null,{dates:input.dates,imported:imported.length,createSessions:input.createSessions});
@@ -733,7 +755,7 @@ app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
     dateClause += ` AND s.started_at < ($${values.length}::date + interval '1 day')`;
   }
   const { rows } = await db.query(`
-    SELECT s.*,r.name room_name,r.location_id,l.name location_name,
+    SELECT s.*,r.name room_name,r.location_id,l.name location_name,g.name game_name,
            count(sp.person_id)::int player_count,
            count(sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_player_count,
            count(sp.person_id) FILTER (WHERE p.identity_type='BOOKING_RANDOM')::int anonymous_player_count,
@@ -743,10 +765,11 @@ app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
     FROM sessions s
     JOIN rooms r ON r.id=s.room_id
     JOIN locations l ON l.id=r.location_id
+    LEFT JOIN games g ON g.id=s.game_id
     LEFT JOIN session_participants sp ON sp.session_id=s.id
     LEFT JOIN people p ON p.id=sp.person_id
     WHERE ${scopeClause} AND ${locationClause} AND ${dateClause}
-    GROUP BY s.id,r.id,r.name,r.location_id,l.name
+    GROUP BY s.id,r.id,r.name,r.location_id,l.name,g.name
     ORDER BY COALESCE(s.started_at,now()) DESC LIMIT 250
   `,values);
   res.json(rows);
@@ -757,6 +780,7 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
     if (!isOwner(req)) return res.status(403).json({ error:"OWNER_REQUIRED" });
     const input=z.object({
       roomId:z.string().uuid(),
+      gameId:z.string().uuid().nullable().default(null),
       status:z.enum(["RUNNING","PAUSED","FINISHED","CANCELLED"]),
       startedAt:z.string().datetime({offset:true}),
       endedAt:z.string().datetime({offset:true}).nullable().default(null),
@@ -770,18 +794,31 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
     }).parse(req.body);
     const room=(await db.query("SELECT id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
     if (!room) return res.status(404).json({ error:"ROOM_NOT_FOUND" });
+    if (input.gameId && !(await db.query("SELECT 1 FROM games WHERE id=$1 AND room_id=$2",[input.gameId,input.roomId])).rowCount) {
+      return res.status(400).json({error:"GAME_NOT_IN_ZONE"});
+    }
     const { rows }=await db.query(`
-      INSERT INTO sessions(room_id,status,started_at,ended_at,remaining_seconds)
-      VALUES($1,$2,$3,$4,$5) RETURNING *
-    `,[input.roomId,input.status,input.startedAt,input.endedAt,input.remainingSeconds]);
+      INSERT INTO sessions(room_id,game_id,status,started_at,ended_at,remaining_seconds)
+      VALUES($1,$2,$3,$4,$5,$6) RETURNING *
+    `,[input.roomId,input.gameId,input.status,input.startedAt,input.endedAt,input.remainingSeconds]);
     await audit(req,"session.create","session",rows[0].id,null,rows[0]);
     return res.status(201).json(rows[0]);
   }
-  const input = z.object({ bookingId:z.string().uuid(), durationSeconds:z.number().int().min(300).max(14400).default(3600) }).parse(req.body);
+  const input = z.object({
+    bookingId:z.string().uuid(),
+    gameId:z.string().uuid().nullable().optional(),
+    durationSeconds:z.number().int().min(300).max(14400).default(3600),
+  }).parse(req.body);
   const booking = (await db.query("SELECT * FROM bookings WHERE id=$1", [input.bookingId])).rows[0];
   if (!booking) return res.status(404).json({ error:"BOOKING_NOT_FOUND" });
   const bookingRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[booking.room_id])).rows[0];
   if (!bookingRoom || !(await locationAllowed(req,bookingRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  const gameId=Object.hasOwn(input,"gameId") ? input.gameId : booking.game_id;
+  if (gameId && !(await db.query("SELECT 1 FROM games WHERE id=$1 AND room_id=$2 AND is_active=true",[gameId,booking.room_id])).rowCount) {
+    return res.status(400).json({ error:"GAME_NOT_IN_ZONE" });
+  }
+  const roomName=(await db.query("SELECT name FROM rooms WHERE id=$1",[booking.room_id])).rows[0]?.name;
+  if (roomName?.toLowerCase()==="vr" && !gameId) return res.status(400).json({ error:"GAME_REQUIRED" });
   if ((await db.query("SELECT 1 FROM sessions WHERE booking_id=$1 AND status NOT IN ('FINISHED','CANCELLED')", [booking.id])).rowCount) {
     return res.status(409).json({ error:"SESSION_EXISTS" });
   }
@@ -789,8 +826,8 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      "INSERT INTO sessions(booking_id,room_id,status,started_at,remaining_seconds) VALUES($1,$2,'RUNNING',now(),$3) RETURNING *",
-      [booking.id,booking.room_id,input.durationSeconds]
+      "INSERT INTO sessions(booking_id,room_id,game_id,status,started_at,remaining_seconds) VALUES($1,$2,$3,'RUNNING',now(),$4) RETURNING *",
+      [booking.id,booking.room_id,gameId,input.durationSeconds]
     );
     await client.query(`
       INSERT INTO session_participants(
@@ -834,6 +871,7 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
       startedAt:z.string().datetime({offset:true}).optional(),
       endedAt:z.string().datetime({offset:true}).nullable().optional(),
       roomId:z.string().uuid().optional(),
+      gameId:z.string().uuid().nullable().optional(),
       status:z.enum(["RUNNING","PAUSED","FINISHED","CANCELLED"]).optional(),
     }).refine(value=>Object.keys(value).length>0).parse(req.body);
     if (edit.startedAt && edit.endedAt && new Date(edit.endedAt)<new Date(edit.startedAt)) {
@@ -844,14 +882,20 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
       if (!targetRoom) return res.status(404).json({error:"ROOM_NOT_FOUND"});
       if (!(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
     }
+    const resultingRoomId=edit.roomId||before.room_id;
+    if (edit.gameId && !(await db.query("SELECT 1 FROM games WHERE id=$1 AND room_id=$2 AND is_active=true",[edit.gameId,resultingRoomId])).rowCount) {
+      return res.status(400).json({error:"GAME_NOT_IN_ZONE"});
+    }
     rows=(await db.query(`
       UPDATE sessions SET
         started_at=COALESCE($1,started_at),
         ended_at=CASE WHEN $2::boolean THEN $3::timestamptz ELSE ended_at END,
         room_id=COALESCE($4,room_id),
-        status=COALESCE($5,status)
-      WHERE id=$6 RETURNING *
-    `,[edit.startedAt||null,Object.hasOwn(edit,"endedAt"),edit.endedAt||null,edit.roomId||null,edit.status||null,req.params.id])).rows;
+        status=COALESCE($5,status),
+        game_id=CASE WHEN $6::boolean THEN $7::uuid ELSE game_id END
+      WHERE id=$8 RETURNING *
+    `,[edit.startedAt||null,Object.hasOwn(edit,"endedAt"),edit.endedAt||null,edit.roomId||null,edit.status||null,
+      Object.hasOwn(edit,"gameId"),edit.gameId||null,req.params.id])).rows;
     auditAction="session.edit";
   }
   await audit(req,auditAction,"session",req.params.id,before,rows[0]);
@@ -908,16 +952,20 @@ app.get("/statistics/players", auth, permit("statistics:read"), async (req, res)
     JOIN sessions s ON s.id=sp.session_id
     JOIN rooms r ON r.id=s.room_id
     JOIN locations l ON l.id=r.location_id
+    LEFT JOIN games g ON g.id=s.game_id
+    LEFT JOIN bookings b ON b.id=s.booking_id
     WHERE s.started_at >= $1::date
       AND s.started_at < ($2::date + interval '1 day')
       AND ${scoped.clause}
   `;
-  const [summary,crossLocation,categories,ageBands,games,locations] = await Promise.all([
+  const [summary,crossLocation,categories,ageBands,zones,games,products,locations] = await Promise.all([
     db.query(`SELECT count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(*) FILTER (WHERE p.identity_type='BOOKING_RANDOM')::int anonymous_player_plays,count(DISTINCT s.id)::int sessions ${base}`,scoped.values),
     db.query(`SELECT count(*)::int cross_location_players FROM (SELECT sp.person_id ${base} AND p.identity_type='EMAIL_HMAC' GROUP BY sp.person_id HAVING count(DISTINCT r.location_id)>1) visitors`,scoped.values),
     db.query(`SELECT COALESCE(sp.category_at_play,'UNKNOWN') category,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players ${base} GROUP BY 1 ORDER BY player_plays DESC`,scoped.values),
     db.query(`SELECT COALESCE(sp.age_band_at_play,'UNKNOWN') age_band,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players ${base} GROUP BY 1 ORDER BY player_plays DESC`,scoped.values),
-    db.query(`SELECT r.id room_id,r.name game,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY r.id,r.name ORDER BY player_plays DESC`,scoped.values),
+    db.query(`SELECT r.id room_id,r.name zone,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY r.id,r.name ORDER BY player_plays DESC`,scoped.values),
+    db.query(`SELECT g.id game_id,COALESCE(g.name,'Не выбрана') game,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY g.id,g.name ORDER BY player_plays DESC`,scoped.values),
+    db.query(`SELECT COALESCE(b.product_name,'Без продукта') product,count(*)::int player_plays,count(DISTINCT s.id)::int sessions ${base} GROUP BY b.product_name ORDER BY player_plays DESC`,scoped.values),
     db.query(`SELECT l.id location_id,l.name location,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY l.id,l.name ORDER BY player_plays DESC`,scoped.values),
   ]);
   res.json({
@@ -925,7 +973,9 @@ app.get("/statistics/players", auth, permit("statistics:read"), async (req, res)
     summary: { ...summary.rows[0], ...crossLocation.rows[0] },
     byCategory: categories.rows,
     byAgeBand: ageBands.rows,
+    byZone: zones.rows,
     byGame: games.rows,
+    byProduct: products.rows,
     byLocation: locations.rows,
   });
 });
@@ -1266,6 +1316,59 @@ app.get("/rooms", auth, permit("rooms:read"), async (req,res) => {
     ? await db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY l.name,r.name")
     : await db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id JOIN user_locations ul ON ul.location_id=r.location_id WHERE ul.user_id=$1 ORDER BY l.name,r.name",[req.user.sub]);
   res.json(rows);
+});
+
+app.get("/games", auth, permit("rooms:read"), async (req,res) => {
+  const input=z.object({roomId:z.string().uuid().optional()}).parse(req.query);
+  const values=isOwner(req) ? [] : [req.user.sub];
+  let clause=isOwner(req)
+    ? "TRUE"
+    : "r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)";
+  if (input.roomId) {
+    values.push(input.roomId);
+    clause+=` AND g.room_id=$${values.length}`;
+  }
+  const { rows }=await db.query(`
+    SELECT g.*,r.name room_name,r.location_id,l.name location_name
+    FROM games g
+    JOIN rooms r ON r.id=g.room_id
+    JOIN locations l ON l.id=r.location_id
+    WHERE ${clause} AND g.is_active=true
+    ORDER BY l.name,r.name,g.name
+  `,values);
+  res.json(rows);
+});
+
+app.post("/games", auth, permit("rooms:manage"), async (req,res) => {
+  if (!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  const input=z.object({roomId:z.string().uuid(),name:z.string().trim().min(2).max(120)}).parse(req.body);
+  if (!(await db.query("SELECT 1 FROM rooms WHERE id=$1",[input.roomId])).rowCount) return res.status(404).json({error:"ROOM_NOT_FOUND"});
+  const { rows }=await db.query(`
+    INSERT INTO games(room_id,name) VALUES($1,$2)
+    ON CONFLICT(room_id,lower(name)) DO UPDATE SET is_active=true,name=excluded.name
+    RETURNING *
+  `,[input.roomId,input.name]);
+  await audit(req,"game.create","game",rows[0].id,null,rows[0]);
+  res.status(201).json(rows[0]);
+});
+
+app.patch("/games/:id", auth, permit("rooms:manage"), async (req,res) => {
+  if (!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  const input=z.object({name:z.string().trim().min(2).max(120)}).parse(req.body);
+  const before=(await db.query("SELECT * FROM games WHERE id=$1",[req.params.id])).rows[0];
+  if (!before) return res.status(404).json({error:"GAME_NOT_FOUND"});
+  const { rows }=await db.query("UPDATE games SET name=$1 WHERE id=$2 RETURNING *",[input.name,req.params.id]);
+  await audit(req,"game.update","game",req.params.id,before,rows[0]);
+  res.json(rows[0]);
+});
+
+app.delete("/games/:id", auth, permit("rooms:manage"), async (req,res) => {
+  if (!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  const before=(await db.query("SELECT * FROM games WHERE id=$1",[req.params.id])).rows[0];
+  if (!before) return res.status(404).json({error:"GAME_NOT_FOUND"});
+  await db.query("UPDATE games SET is_active=false WHERE id=$1",[req.params.id]);
+  await audit(req,"game.archive","game",req.params.id,before,{...before,is_active:false});
+  res.status(204).end();
 });
 
 app.get("/devices", auth, permit("devices:read"), async (req,res) => {

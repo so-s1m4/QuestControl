@@ -7,9 +7,10 @@ import { forkJoin } from "rxjs";
 
 type Location={id:string;name:string};
 type Room={id:string;name:string;location_id:string;location_name:string};
+type Game={id:string;name:string;room_id:string;room_name:string};
 type Session={
   id:string;status:string;started_at:string|null;ended_at:string|null;
-  room_id:string;room_name:string;location_name:string;player_count:number;
+  room_id:string;room_name:string;game_id:string|null;game_name:string|null;location_name:string;player_count:number;
   identified_player_count:number;anonymous_player_count:number;elapsed_seconds:number|null;
 };
 type Breakdown={player_plays:number;identified_unique_players:number;sessions?:number};
@@ -17,7 +18,9 @@ type Statistics={
   summary:{player_plays:number;identified_unique_players:number;anonymous_player_plays:number;cross_location_players:number;sessions:number};
   byCategory:(Breakdown&{category:string})[];
   byAgeBand:(Breakdown&{age_band:string})[];
-  byGame:(Breakdown&{room_id:string;game:string})[];
+  byZone:(Breakdown&{room_id:string;zone:string})[];
+  byGame:(Breakdown&{game_id:string|null;game:string})[];
+  byProduct:(Breakdown&{product:string})[];
   byLocation:(Breakdown&{location_id:string;location:string})[];
 };
 
@@ -31,6 +34,7 @@ type Statistics={
     <header><div><h2>Сессии</h2><p>История игр и статистика по всей сети</p></div><div class="header-actions">@if(isOwner()){<button (click)="newSession()">+ Добавить сессию</button>}<button class="secondary" (click)="load()" [disabled]="loading()">{{loading()?"Обновляем…":"↻ Обновить"}}</button></div></header>
     @if(isOwner()&&showForm()){<form class="editor" (ngSubmit)="saveSession()">
       <label>Комната<select name="room" [(ngModel)]="draft.roomId" required>@for(room of rooms();track room.id){<option [value]="room.id">{{room.location_name}} · {{room.name}}</option>}</select></label>
+      <label>Игра<select name="game" [(ngModel)]="draft.gameId"><option value="">Не выбрана</option>@for(game of gamesForRoom(draft.roomId);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label>
       <label>Начало<input name="startedAt" type="datetime-local" [(ngModel)]="draft.startedAt" required></label>
       <label>Окончание<input name="endedAt" type="datetime-local" [(ngModel)]="draft.endedAt"></label>
       <label>Статус<select name="status" [(ngModel)]="draft.status"><option value="RUNNING">Идёт</option><option value="PAUSED">Пауза</option><option value="FINISHED">Завершена</option><option value="CANCELLED">Отменена</option></select></label>
@@ -52,15 +56,16 @@ type Statistics={
       </div>
       <div class="breakdowns">
         <article><h3>По локациям</h3>@for(row of data.byLocation;track row.location_id){<div class="bar-row"><span>{{row.location}}</span><b>{{row.player_plays}}</b><small>{{row.sessions}} сесс.</small></div>}@empty{<p>Нет данных</p>}</article>
-        <article><h3>По играм</h3>@for(row of data.byGame;track row.room_id){<div class="bar-row"><span>{{row.game}}</span><b>{{row.player_plays}}</b><small>{{row.identified_unique_players}} уник.</small></div>}@empty{<p>Нет данных</p>}</article>
-        <article><h3>По категориям</h3>@for(row of data.byCategory;track row.category){<div class="bar-row"><span>{{category(row.category)}}</span><b>{{row.player_plays}}</b><small>{{row.identified_unique_players}} уник.</small></div>}@empty{<p>Нет данных</p>}</article>
+        <article><h3>По зонам</h3>@for(row of data.byZone;track row.room_id){<div class="bar-row"><span>{{row.zone}}</span><b>{{row.player_plays}}</b><small>{{row.sessions}} сесс.</small></div>}@empty{<p>Нет данных</p>}</article>
+        <article><h3>По играм</h3>@for(row of data.byGame;track row.game_id){<div class="bar-row"><span>{{row.game}}</span><b>{{row.player_plays}}</b><small>{{row.sessions}} сесс.</small></div>}@empty{<p>Нет данных</p>}</article>
+        <article><h3>По билетам</h3>@for(row of data.byProduct;track row.product){<div class="bar-row"><span>{{row.product}}</span><b>{{row.player_plays}}</b><small>{{row.sessions}} сесс.</small></div>}@empty{<p>Нет данных</p>}</article>
       </div>
     }
     <div class="list-head"><h3>История сессий</h3><span>Последние 250 запусков</span></div>
     <div class="session-list">
       @for(item of sessions();track item.id){<article>
         <div class="when"><b>{{item.started_at?(item.started_at|date:'dd.MM.yyyy'):"—"}}</b><span>{{item.started_at?(item.started_at|date:'HH:mm'):"—"}}</span></div>
-        <div class="place"><strong>{{item.room_name}}</strong><span>{{item.location_name}}</span></div>
+        <div class="place"><strong>{{item.game_name||"Игра не выбрана"}}</strong><span>{{item.location_name}} · {{item.room_name}}</span></div>
         <div class="players"><b>{{item.player_count}}</b><span>игроков</span></div>
         <div class="duration"><b>{{duration(item.elapsed_seconds)}}</b><span>время</span></div>
         <span class="status" [class.running]="item.status==='RUNNING'" [class.finished]="item.status==='FINISHED'">{{status(item.status)}}</span>
@@ -79,21 +84,22 @@ type Statistics={
 })
 export class SessionsComponent{
   private http=inject(HttpClient);
-  locations=signal<Location[]>([]);rooms=signal<Room[]>([]);sessions=signal<Session[]>([]);stats=signal<Statistics|null>(null);
+  locations=signal<Location[]>([]);rooms=signal<Room[]>([]);games=signal<Game[]>([]);sessions=signal<Session[]>([]);stats=signal<Statistics|null>(null);
   loading=signal(false);error=signal("");locationId="";
   showForm=signal(false);editingId=signal<string|null>(null);
-  draft={roomId:"",startedAt:this.localDateTime(new Date()),endedAt:"",status:"RUNNING"};
+  draft={roomId:"",gameId:"",startedAt:this.localDateTime(new Date()),endedAt:"",status:"RUNNING"};
   from=this.iso(new Date(Date.now()-30*86_400_000));to=this.iso(new Date());
-  constructor(){forkJoin({locations:this.http.get<Location[]>("/api/locations"),rooms:this.http.get<Room[]>("/api/rooms")}).subscribe({next:result=>{this.locations.set(result.locations);this.rooms.set(result.rooms);this.draft.roomId=result.rooms[0]?.id||"";this.load();},error:()=>this.error.set("Не удалось загрузить доступные локации.")});}
+  constructor(){forkJoin({locations:this.http.get<Location[]>("/api/locations"),rooms:this.http.get<Room[]>("/api/rooms"),games:this.http.get<Game[]>("/api/games")}).subscribe({next:result=>{this.locations.set(result.locations);this.rooms.set(result.rooms);this.games.set(result.games);this.draft.roomId=result.rooms[0]?.id||"";this.load();},error:()=>this.error.set("Не удалось загрузить доступные локации.")});}
   load(){this.loading.set(true);this.error.set("");const query=new URLSearchParams({from:this.from,to:this.to});if(this.locationId)query.set("locationId",this.locationId);forkJoin({sessions:this.http.get<Session[]>(`/api/sessions?${query}`),stats:this.http.get<Statistics>(`/api/statistics/players?${query}`)}).subscribe({next:result=>{this.sessions.set(result.sessions);this.stats.set(result.stats);this.loading.set(false);},error:()=>{this.loading.set(false);this.error.set("Не удалось загрузить историю сессий.");}});}
   duration(seconds:number|null){if(seconds===null)return"—";const hours=Math.floor(seconds/3600);const minutes=Math.floor(seconds%3600/60);return hours?`${hours} ч ${minutes} мин`:`${minutes} мин`;}
   status(value:string){return({RUNNING:"Идёт",PAUSED:"Пауза",FINISHED:"Завершена",CANCELLED:"Отменена"} as Record<string,string>)[value]||value;}
   category(value:string){return value==="UNKNOWN"?"Не указана":value;}
   isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}
-  newSession(){this.editingId.set(null);this.draft={roomId:this.rooms()[0]?.id||"",startedAt:this.localDateTime(new Date()),endedAt:"",status:"RUNNING"};this.showForm.set(true);}
-  editSession(item:Session){this.editingId.set(item.id);this.draft={roomId:item.room_id,startedAt:this.localDateTime(item.started_at?new Date(item.started_at):new Date()),endedAt:item.ended_at?this.localDateTime(new Date(item.ended_at)):"",status:item.status};this.showForm.set(true);window.scrollTo({top:0,behavior:"smooth"});}
+  gamesForRoom(roomId:string){return this.games().filter(game=>game.room_id===roomId);}
+  newSession(){this.editingId.set(null);this.draft={roomId:this.rooms()[0]?.id||"",gameId:"",startedAt:this.localDateTime(new Date()),endedAt:"",status:"RUNNING"};this.showForm.set(true);}
+  editSession(item:Session){this.editingId.set(item.id);this.draft={roomId:item.room_id,gameId:item.game_id||"",startedAt:this.localDateTime(item.started_at?new Date(item.started_at):new Date()),endedAt:item.ended_at?this.localDateTime(new Date(item.ended_at)):"",status:item.status};this.showForm.set(true);window.scrollTo({top:0,behavior:"smooth"});}
   closeForm(){this.showForm.set(false);this.editingId.set(null);}
-  saveSession(){if(this.draft.status==="FINISHED"&&!this.draft.endedAt){this.error.set("Для завершённой сессии укажите время окончания.");return}const body={roomId:this.draft.roomId,startedAt:new Date(this.draft.startedAt).toISOString(),endedAt:this.draft.endedAt?new Date(this.draft.endedAt).toISOString():null,status:this.draft.status};const request=this.editingId()?this.http.patch(`/api/sessions/${this.editingId()}`,body):this.http.post("/api/sessions",body);request.subscribe({next:()=>{this.closeForm();this.load();},error:()=>this.error.set("Не удалось сохранить сессию.")});}
+  saveSession(){if(this.draft.status==="FINISHED"&&!this.draft.endedAt){this.error.set("Для завершённой сессии укажите время окончания.");return}const body={roomId:this.draft.roomId,gameId:this.draft.gameId||null,startedAt:new Date(this.draft.startedAt).toISOString(),endedAt:this.draft.endedAt?new Date(this.draft.endedAt).toISOString():null,status:this.draft.status};const request=this.editingId()?this.http.patch(`/api/sessions/${this.editingId()}`,body):this.http.post("/api/sessions",body);request.subscribe({next:()=>{this.closeForm();this.load();},error:()=>this.error.set("Не удалось сохранить сессию.")});}
   deleteSession(item:Session){if(!confirm(`Удалить сессию ${item.room_name}? Это действие нельзя отменить.`))return;this.http.delete(`/api/sessions/${item.id}`).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось удалить сессию.")});}
   private iso(date:Date){return date.toISOString().slice(0,10);}
   private localDateTime(date:Date){const shifted=new Date(date.getTime()-date.getTimezoneOffset()*60_000);return shifted.toISOString().slice(0,16);}
