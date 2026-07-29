@@ -1937,14 +1937,28 @@ await db.query(`CREATE TABLE IF NOT EXISTS doorbell_calls(
 )`);
 await db.query("CREATE INDEX IF NOT EXISTS doorbell_calls_room_rang_idx ON doorbell_calls(room_id,rang_at DESC)");
 
+const tuyaEventSignals = (value, signals=[], depth=0) => {
+  if(depth>5||signals.length>=40||value==null) return signals;
+  if(Array.isArray(value)) {
+    for(const item of value) tuyaEventSignals(item,signals,depth+1);
+    return signals;
+  }
+  if(typeof value!=="object") return signals;
+  const code=value.code??value.dpCode??value.dp_code??value.dpId??value.dp_id;
+  if(code!==undefined) signals.push({code:String(code).toLowerCase(),value:value.value??value.val??value.dpValue??value.dp_value});
+  for(const nested of Object.values(value)) tuyaEventSignals(nested,signals,depth+1);
+  return signals;
+};
 const doorbellEvent = (message) => {
   const data=message?.payload?.data||{};
-  const statuses=Array.isArray(data.status)?data.status:Array.isArray(data.data?.status)?data.data.status:[];
-  const codes=statuses.map(item=>String(item?.code??item?.dpId??item?.dp_id??"").toLowerCase());
+  const signals=tuyaEventSignals(data);
+  const codes=signals.map(item=>item.code);
   const bizCode=String(data.bizCode||data.biz_code||"").toLowerCase();
   if(bizCode==="deviceeventmessage") return true;
-  const text=JSON.stringify({bizCode,type:data.type||"",codes}).toLowerCase();
-  return /(doorbell|door_bell|door bell|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(text);
+  return signals.some(item=>
+    /(doorbell|door_bell|door bell|bell|help|call|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(item.code)
+    && ![false,0,"0","false",null,undefined].includes(item.value)
+  )||/(doorbell|door_bell|door bell|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(JSON.stringify({bizCode,type:data.type||"",codes}).toLowerCase());
 };
 tuyaMessages.on("message",async message=>{
   try {
@@ -1952,7 +1966,7 @@ tuyaMessages.on("message",async message=>{
     const externalId=String(data.devId||data.deviceId||data.dev_id||message.key||"");
     const bizCode=String(data.bizCode||data.biz_code||"unknown");
     console.log("Tuya message received",bizCode,externalId||"no-device");
-    if(!externalId||!doorbellEvent(message)) return;
+    if(!externalId) return;
     const camera=(await db.query(`
       SELECT c.id,r.id AS room_id FROM cameras c
       JOIN rooms r ON
@@ -1967,6 +1981,9 @@ tuyaMessages.on("message",async message=>{
       LIMIT 1
     `,[externalId])).rows[0];
     if(!camera) return;
+    const signals=tuyaEventSignals(data);
+    console.log("Tuya help device event",bizCode,externalId,JSON.stringify(signals.slice(0,20)));
+    if(!doorbellEvent(message)) return;
     const externalMessageId=String(message.messageId||data.dataId||crypto.randomUUID());
     const call=(await db.query(`
       INSERT INTO doorbell_calls(room_id,camera_id,external_message_id,raw_event)
