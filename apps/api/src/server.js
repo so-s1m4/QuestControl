@@ -701,28 +701,54 @@ app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) 
   if (!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
   if (!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   const externalBookings=[];
+  const failedDates=[];
   for (const date of [...new Set(input.dates)]) {
-    const rows=await fetchTimeToGrowBookings(input.clubId,date);
-    externalBookings.push(...rows.filter(row=>!input.bookingId || row.id===input.bookingId));
+    try {
+      const rows=await fetchTimeToGrowBookings(input.clubId,date);
+      externalBookings.push(...rows.filter(row=>!input.bookingId || row.id===input.bookingId));
+    } catch (error) {
+      failedDates.push({date,error:error.code||"TIME_TO_GROW_REQUEST_FAILED"});
+    }
   }
-  if (input.bookingId && !externalBookings.length) return res.status(404).json({error:"EXTERNAL_BOOKING_NOT_FOUND"});
+  if (input.bookingId && !externalBookings.length) {
+    return res.status(failedDates.length ? 502 : 404).json({
+      error:failedDates.length ? "TIME_TO_GROW_REQUEST_FAILED" : "EXTERNAL_BOOKING_NOT_FOUND",
+      failedDates,
+    });
+  }
   const client=await db.connect();
   try {
     await client.query("BEGIN");
     const imported=[];
+    const failedBookings=[];
     for (const externalBooking of externalBookings) {
-      const result=await importTimeToGrowBooking(client,location,externalBooking,input.createSessions);
-      imported.push({
-        bookingId:result.booking.id,
-        sessionId:result.session?.id||null,
-        gameId:result.booking.game_id||null,
-        zoneName:result.classification.zoneName,
-        externalId:externalBooking.id,
-      });
+      await client.query("SAVEPOINT import_booking");
+      try {
+        const result=await importTimeToGrowBooking(client,location,externalBooking,input.createSessions);
+        imported.push({
+          bookingId:result.booking.id,
+          sessionId:result.session?.id||null,
+          gameId:result.booking.game_id||null,
+          zoneName:result.classification.zoneName,
+          externalId:externalBooking.id,
+        });
+        await client.query("RELEASE SAVEPOINT import_booking");
+      } catch (error) {
+        await client.query("ROLLBACK TO SAVEPOINT import_booking");
+        failedBookings.push({externalId:externalBooking.id,error:error.code||"IMPORT_FAILED"});
+      }
     }
     await client.query("COMMIT");
-    await audit(req,"time_to_grow.import","booking",null,null,{dates:input.dates,imported:imported.length,createSessions:input.createSessions});
-    res.status(201).json({imported:imported.length,items:imported});
+    await audit(req,"time_to_grow.import","booking",null,null,{
+      dates:input.dates,imported:imported.length,failedDates:failedDates.length,
+      failedBookings:failedBookings.length,createSessions:input.createSessions
+    });
+    res.status(201).json({
+      imported:imported.length,
+      items:imported,
+      failedDates,
+      failedBookings,
+    });
   } catch(error) {
     await client.query("ROLLBACK");
     throw error;
