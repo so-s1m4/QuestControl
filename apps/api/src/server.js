@@ -629,6 +629,10 @@ const planZoneInput = z.object({
 });
 const locationPlanInput = z.object({
   backgroundImage:z.string().max(2_500_000).nullable().optional(),
+  backgroundMode:z.enum(["CONTAIN","COVER","CUSTOM"]).default("CONTAIN"),
+  backgroundScale:z.number().min(10).max(400).default(100),
+  backgroundX:z.number().min(0).max(100).default(50),
+  backgroundY:z.number().min(0).max(100).default(50),
   zones:z.array(planZoneInput).max(150),
   cameras:z.array(z.object({
     id:z.string().uuid(),x:z.number().min(0).max(100),y:z.number().min(0).max(100),
@@ -637,9 +641,16 @@ const locationPlanInput = z.object({
 
 app.get("/locations/:id/plan", auth, permit("cameras:read"), async (req,res) => {
   if (!(await locationAllowed(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
-  const plan=(await db.query("SELECT background_image FROM location_plans WHERE location_id=$1",[req.params.id])).rows[0];
+  const plan=(await db.query("SELECT background_image,background_mode,background_scale,background_x,background_y FROM location_plans WHERE location_id=$1",[req.params.id])).rows[0];
   const zones=(await db.query("SELECT id,name,type,color,x,y,width,height,room_id FROM plan_zones WHERE location_id=$1 ORDER BY created_at,id",[req.params.id])).rows;
-  res.json({backgroundImage:plan?.background_image||null,zones});
+  res.json({
+    backgroundImage:plan?.background_image||null,
+    backgroundMode:plan?.background_mode||"CONTAIN",
+    backgroundScale:Number(plan?.background_scale||100),
+    backgroundX:Number(plan?.background_x||50),
+    backgroundY:Number(plan?.background_y||50),
+    zones
+  });
 });
 
 app.put("/locations/:id/plan", auth, async (req,res) => {
@@ -650,9 +661,12 @@ app.put("/locations/:id/plan", auth, async (req,res) => {
   try {
     await client.query("BEGIN");
     await client.query(
-      `INSERT INTO location_plans(location_id,background_image,updated_by,updated_at) VALUES($1,$2,$3,now())
-       ON CONFLICT(location_id) DO UPDATE SET background_image=excluded.background_image,updated_by=excluded.updated_by,updated_at=now()`,
-      [req.params.id,input.backgroundImage||null,req.user.sub]
+      `INSERT INTO location_plans(location_id,background_image,background_mode,background_scale,background_x,background_y,updated_by,updated_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,now())
+       ON CONFLICT(location_id) DO UPDATE SET background_image=excluded.background_image,background_mode=excluded.background_mode,
+       background_scale=excluded.background_scale,background_x=excluded.background_x,background_y=excluded.background_y,
+       updated_by=excluded.updated_by,updated_at=now()`,
+      [req.params.id,input.backgroundImage||null,input.backgroundMode,input.backgroundScale,input.backgroundX,input.backgroundY,req.user.sub]
     );
     await client.query("DELETE FROM plan_zones WHERE location_id=$1",[req.params.id]);
     for(const zone of input.zones){
@@ -865,6 +879,10 @@ await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_x numeric(6,3)
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_y numeric(6,3)");
 await db.query("UPDATE cameras c SET location_id=r.location_id FROM rooms r WHERE c.room_id=r.id AND c.location_id IS NULL");
 await db.query("CREATE TABLE IF NOT EXISTS location_plans(location_id uuid PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,background_image text,updated_by uuid REFERENCES users(id) ON DELETE SET NULL,updated_at timestamptz NOT NULL DEFAULT now())");
+await db.query("ALTER TABLE location_plans ADD COLUMN IF NOT EXISTS background_mode text NOT NULL DEFAULT 'CONTAIN'");
+await db.query("ALTER TABLE location_plans ADD COLUMN IF NOT EXISTS background_scale numeric(6,2) NOT NULL DEFAULT 100");
+await db.query("ALTER TABLE location_plans ADD COLUMN IF NOT EXISTS background_x numeric(6,2) NOT NULL DEFAULT 50");
+await db.query("ALTER TABLE location_plans ADD COLUMN IF NOT EXISTS background_y numeric(6,2) NOT NULL DEFAULT 50");
 await db.query(`CREATE TABLE IF NOT EXISTS plan_zones(
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   room_id uuid REFERENCES rooms(id) ON DELETE SET NULL,name text NOT NULL,type text NOT NULL,color text NOT NULL DEFAULT '#64748b',
