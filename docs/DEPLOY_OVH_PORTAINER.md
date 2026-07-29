@@ -36,6 +36,7 @@ POSTGRES_PASSWORD=<случайный-секрет>
 REDIS_PASSWORD=<другой-случайный-секрет>
 JWT_ACCESS_SECRET=<минимум-64-случайных-символа>
 JWT_REFRESH_SECRET=<другие-64-случайных-символа>
+PSEUDONYMIZATION_SECRET=<отдельный-случайный-секрет>
 PUBLIC_URL=https://<домен>
 CORS_ORIGIN=https://<домен>
 TUYA_BASE_URL=https://openapi.tuyaeu.com

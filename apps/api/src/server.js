@@ -18,6 +18,7 @@ const env = z.object({
   REDIS_URL: z.string(),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
+  PSEUDONYMIZATION_SECRET: z.string().min(32).optional(),
   CORS_ORIGIN: z.string(),
   TRUST_PROXY: z.coerce.number().default(1),
   TUYA_BASE_URL: z.string().url().default("https://openapi.tuyaeu.com"),
@@ -54,6 +55,11 @@ app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyH
 const server = http.createServer(app);
 const io = new Server(server, { path: "/socket.io", cors: { origin: env.CORS_ORIGIN.split(","), credentials: true }, maxHttpBufferSize: 1e6 });
 const key = (v) => new TextEncoder().encode(v);
+const normalizeEmail = (email) => email.trim().normalize("NFKC").toLowerCase();
+const identityToken = (email) => crypto
+  .createHmac("sha256", env.PSEUDONYMIZATION_SECRET)
+  .update(normalizeEmail(email), "utf8")
+  .digest();
 const requestId = (req, res, next) => { req.requestId = req.get("x-request-id") || crypto.randomUUID(); res.set("x-request-id", req.requestId); next(); };
 app.use(requestId);
 
@@ -239,6 +245,60 @@ app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
     ORDER BY b.starts_at DESC LIMIT 250
   `,scoped.values);
   res.json(rows);
+});
+
+app.post("/bookings/:id/participants", auth, permit("bookings:manage"), async (req, res) => {
+  if (!env.PSEUDONYMIZATION_SECRET) return res.status(503).json({ error:"PSEUDONYMIZATION_NOT_CONFIGURED" });
+  const input = z.object({
+    participants: z.array(z.object({
+      email: z.string().email().max(320).nullable().default(null),
+      role: z.enum(["OWNER","PLAYER"]).default("PLAYER"),
+      category: z.string().trim().min(1).max(64).nullable().default(null),
+      ageBand: z.enum(["CHILD","TEEN","ADULT","UNKNOWN"]).default("UNKNOWN"),
+    })).min(1).max(100),
+  }).parse(req.body);
+  const booking = (await db.query(`
+    SELECT b.id,r.location_id
+    FROM bookings b JOIN rooms r ON r.id=b.room_id
+    WHERE b.id=$1
+  `,[req.params.id])).rows[0];
+  if (!booking) return res.status(404).json({ error:"BOOKING_NOT_FOUND" });
+  if (!(await locationAllowed(req,booking.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    let linked = 0;
+    for (const participant of input.participants) {
+      const token = participant.email ? identityToken(participant.email) : crypto.randomBytes(32);
+      const identityType = participant.email ? "EMAIL_HMAC" : "BOOKING_RANDOM";
+      const person = (await client.query(`
+        INSERT INTO people(identity_token,identity_type,token_version)
+        VALUES($1,$2,1)
+        ON CONFLICT(token_version,identity_token)
+        DO UPDATE SET last_seen_at=now()
+        RETURNING id
+      `,[token,identityType])).rows[0];
+      await client.query(`
+        INSERT INTO booking_participants(
+          booking_id,person_id,participant_role,category_at_booking,age_band_at_booking
+        ) VALUES($1,$2,$3,$4,$5)
+        ON CONFLICT(booking_id,person_id) DO UPDATE SET
+          participant_role=excluded.participant_role,
+          category_at_booking=excluded.category_at_booking,
+          age_band_at_booking=excluded.age_band_at_booking
+      `,[booking.id,person.id,participant.role,participant.category,participant.ageBand]);
+      linked += 1;
+    }
+    await client.query("COMMIT");
+    await audit(req,"booking.participants.link","booking",booking.id,null,{ linked });
+    res.status(201).json({ linked });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 let timeToGrowJwt = env.TIME_TO_GROW_JWT;
@@ -476,12 +536,31 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
   if ((await db.query("SELECT 1 FROM sessions WHERE booking_id=$1 AND status NOT IN ('FINISHED','CANCELLED')", [booking.id])).rowCount) {
     return res.status(409).json({ error:"SESSION_EXISTS" });
   }
-  const { rows } = await db.query(
-    "INSERT INTO sessions(booking_id,room_id,status,started_at,remaining_seconds) VALUES($1,$2,'RUNNING',now(),$3) RETURNING *",
-    [booking.id,booking.room_id,input.durationSeconds]
-  );
-  await audit(req,"session.start","session",rows[0].id,null,rows[0]);
-  res.status(201).json(rows[0]);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      "INSERT INTO sessions(booking_id,room_id,status,started_at,remaining_seconds) VALUES($1,$2,'RUNNING',now(),$3) RETURNING *",
+      [booking.id,booking.room_id,input.durationSeconds]
+    );
+    await client.query(`
+      INSERT INTO session_participants(
+        session_id,person_id,participant_role,category_at_play,age_band_at_play
+      )
+      SELECT $1,person_id,participant_role,category_at_booking,age_band_at_booking
+      FROM booking_participants
+      WHERE booking_id=$2
+      ON CONFLICT(session_id,person_id) DO NOTHING
+    `,[rows[0].id,booking.id]);
+    await client.query("COMMIT");
+    await audit(req,"session.start","session",rows[0].id,null,rows[0]);
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => {
@@ -497,6 +576,43 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
   );
   await audit(req,`session.${action.toLowerCase()}`,"session",req.params.id,before,rows[0]);
   res.json(rows[0]);
+});
+
+app.get("/statistics/players", auth, permit("statistics:read"), async (req, res) => {
+  const today = new Date();
+  const monthAgo = new Date(today);
+  monthAgo.setUTCDate(monthAgo.getUTCDate() - 30);
+  const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+  const input = z.object({
+    from: date.default(monthAgo.toISOString().slice(0,10)),
+    to: date.default(today.toISOString().slice(0,10)),
+  }).parse(req.query);
+  if (input.from > input.to) return res.status(400).json({ error:"INVALID_DATE_RANGE" });
+  const scoped = isOwner(req)
+    ? { clause:"TRUE", values:[input.from,input.to] }
+    : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$3)", values:[input.from,input.to,req.user.sub] };
+  const base = `
+    FROM session_participants sp
+    JOIN people p ON p.id=sp.person_id
+    JOIN sessions s ON s.id=sp.session_id
+    JOIN rooms r ON r.id=s.room_id
+    WHERE s.started_at >= $1::date
+      AND s.started_at < ($2::date + interval '1 day')
+      AND ${scoped.clause}
+  `;
+  const [summary,categories,ageBands,games] = await Promise.all([
+    db.query(`SELECT count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(*) FILTER (WHERE p.identity_type='BOOKING_RANDOM')::int anonymous_player_plays,count(DISTINCT s.id)::int sessions ${base}`,scoped.values),
+    db.query(`SELECT COALESCE(sp.category_at_play,'UNKNOWN') category,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players ${base} GROUP BY 1 ORDER BY player_plays DESC`,scoped.values),
+    db.query(`SELECT COALESCE(sp.age_band_at_play,'UNKNOWN') age_band,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players ${base} GROUP BY 1 ORDER BY player_plays DESC`,scoped.values),
+    db.query(`SELECT r.id room_id,r.name game,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY r.id,r.name ORDER BY player_plays DESC`,scoped.values),
+  ]);
+  res.json({
+    period: input,
+    summary: summary.rows[0],
+    byCategory: categories.rows,
+    byAgeBand: ageBands.rows,
+    byGame: games.rows,
+  });
 });
 
 app.post("/rooms", auth, permit("rooms:manage"), async (req, res) => {

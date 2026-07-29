@@ -16,6 +16,24 @@ services:
       retries: 5
     restart: unless-stopped
 
+  migrate:
+    image: ${REGISTRY_IMAGE_PREFIX}/quest-control-postgres:${IMAGE_TAG:-latest}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        for migration in /migrations/*.sql; do
+          echo "Applying $${migration}"
+          psql --set ON_ERROR_STOP=1 --host postgres --username "$${POSTGRES_USER}" --dbname "$${POSTGRES_DB}" --file "$${migration}"
+        done
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
@@ -39,6 +57,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      PSEUDONYMIZATION_SECRET: ${PSEUDONYMIZATION_SECRET}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
       PUBLIC_URL: ${PUBLIC_URL}
@@ -55,8 +74,8 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
