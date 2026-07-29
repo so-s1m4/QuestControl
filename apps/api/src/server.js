@@ -391,6 +391,8 @@ function ageBandAtBooking(birthday,bookingDate) {
 function classifyTimeToGrowProduct(productName) {
   const normalized=productName.trim().toLowerCase();
   if (/krampus/.test(normalized)) return {zoneName:"Krampus House",gameName:"Krampus House",requiresGameSelection:false};
+  if (/gambling jack/.test(normalized)) return {zoneName:"Gambling Jack",gameName:"Gambling Jack",requiresGameSelection:false};
+  if (/donau piraten|danube pirates/.test(normalized)) return {zoneName:"Donau Piraten",gameName:productName.trim(),requiresGameSelection:false};
   if (["color cube","call of cube","treasure island","star wars"].includes(normalized)) {
     return {zoneName:"QuestBoxes",gameName:productName.trim(),requiresGameSelection:false};
   }
