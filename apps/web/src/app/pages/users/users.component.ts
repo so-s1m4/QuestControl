@@ -74,6 +74,7 @@ type Location = { id:string;name:string };
                 <div class="assigned">@for(location of locationsFor(user);track location.id){<span>{{location.name}}</span>}@empty{<span>Нет локаций</span>}</div>
                 <span class="status" [class.online]="user.is_active">{{user.is_active ? "Активен" : "Отключён"}}</span>
                 <button class="secondary" (click)="editLocations(user)">Локации</button>
+                @if(canReset(user)){<button class="secondary" (click)="resetPassword(user)">Пароль</button>}
                 <button class="secondary" (click)="toggle(user)">{{user.is_active ? "Отключить" : "Включить"}}</button>
               </article>
             } @empty {
@@ -85,7 +86,7 @@ type Location = { id:string;name:string };
     </main>
   `,
   styles: [`
-    form fieldset{grid-column:1/-1;display:flex;gap:14px;border:1px solid var(--line);border-radius:9px;padding:10px 12px}fieldset .check{display:flex;grid-template-columns:auto 1fr;align-items:center}fieldset input{width:auto}.user-list{display:grid;gap:10px;margin-top:24px}.user-list article{display:grid;grid-template-columns:44px minmax(180px,1fr) 110px minmax(140px,1fr) 90px auto auto;gap:12px;align-items:center;padding:16px 18px;background:white;border:1px solid #e1e5ed;border-radius:10px}.user-list article.disabled{opacity:.62}.avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#eef0ff;color:#4058df;font-weight:700}.identity strong,.identity span{display:block}.identity span{margin-top:5px;color:#788295}.role{font-weight:600}.assigned{display:flex;flex-wrap:wrap;gap:5px}.assigned span{padding:5px 7px;border-radius:999px;background:#eef4ff;color:#3448a5;font-size:10px}.status{color:#b42318}.status.online{color:#067647}.secondary{background:#eef1f6;color:#344054}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}@media(max-width:900px){.user-list article{grid-template-columns:44px 1fr}.role,.assigned,.status,.user-list button{grid-column:2}}
+    form fieldset{grid-column:1/-1;display:flex;gap:14px;border:1px solid var(--line);border-radius:9px;padding:10px 12px}fieldset .check{display:flex;grid-template-columns:auto 1fr;align-items:center}fieldset input{width:auto}.user-list{display:grid;gap:10px;margin-top:24px}.user-list article{display:grid;grid-template-columns:44px minmax(180px,1fr) 110px minmax(140px,1fr) 90px repeat(3,auto);gap:12px;align-items:center;padding:16px 18px;background:white;border:1px solid #e1e5ed;border-radius:10px}.user-list article.disabled{opacity:.62}.avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#eef0ff;color:#4058df;font-weight:700}.identity strong,.identity span{display:block}.identity span{margin-top:5px;color:#788295}.role{font-weight:600}.assigned{display:flex;flex-wrap:wrap;gap:5px}.assigned span{padding:5px 7px;border-radius:999px;background:#eef4ff;color:#3448a5;font-size:10px}.status{color:#b42318}.status.online{color:#067647}.secondary{background:#eef1f6;color:#344054}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}@media(max-width:900px){.user-list article{grid-template-columns:44px 1fr}.role,.assigned,.status,.user-list button{grid-column:2}}
   `]
 })
 export class UsersComponent {
@@ -147,6 +148,9 @@ export class UsersComponent {
     const locationIds=value.split(",").map(item=>Number(item.trim())-1).filter(index=>index>=0&&index<this.locations().length).map(index=>this.locations()[index].id);
     this.http.put(`/api/users/${user.id}/locations`,{locationIds:[...new Set(locationIds)]}).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось обновить локации пользователя.")});
   }
+  private token(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1]))}catch{return {}}}
+  canReset(user:User){const me=this.token();const rank:Record<string,number>={TECHNICIAN:1,OPERATOR:1,ADMIN:2,OWNER:3};return user.id!==me.sub&&(rank[me.role]||0)>(rank[user.role]||0)}
+  resetPassword(user:User){const password=prompt(`Новый пароль для ${user.display_name} (минимум 12 символов):`);if(password===null)return;if(password.length<12){this.error.set("Пароль должен содержать минимум 12 символов.");return}const confirmation=prompt("Повторите новый пароль:");if(confirmation!==password){this.error.set("Пароли не совпадают.");return}this.http.patch(`/api/users/${user.id}/password`,{newPassword:password}).subscribe({next:()=>this.notice.set(`Пароль пользователя ${user.display_name} изменён.`),error:()=>this.error.set("Не удалось изменить пароль пользователя.")})}
 
   initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join(""); }
   roleName(role: Role) { return ({ OWNER: "Владелец", ADMIN: "Администратор", OPERATOR: "Оператор", TECHNICIAN: "Техник" })[role]; }

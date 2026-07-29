@@ -105,6 +105,15 @@ app.post("/auth/refresh", async (req, res) => {
   } catch { res.status(401).json({ error: "INVALID_REFRESH_TOKEN" }); }
 });
 
+app.patch("/auth/password", auth, async (req,res) => {
+  const input=z.object({currentPassword:z.string().min(1).max(200),newPassword:z.string().min(12).max(200)}).parse(req.body);
+  const user=(await db.query("SELECT id,password_hash FROM users WHERE id=$1 AND is_active=true",[req.user.sub])).rows[0];
+  if(!user || !(await argon2.verify(user.password_hash,input.currentPassword))) return res.status(400).json({error:"CURRENT_PASSWORD_INVALID"});
+  await db.query("UPDATE users SET password_hash=$1,refresh_token_hash=NULL WHERE id=$2",[await argon2.hash(input.newPassword),req.user.sub]);
+  await audit(req,"user.password.change","user",req.user.sub,null,{changed:true});
+  res.status(204).end();
+});
+
 app.get("/users", auth, permit("users:manage"), async (_, res) => {
   const { rows } = await db.query(`
     SELECT u.id,u.email,u.display_name,u.is_active,u.created_at,r.name AS role,
@@ -192,6 +201,18 @@ app.patch("/users/:id/status", auth, permit("users:manage"), async (req, res) =>
   );
   await audit(req, parsed.data.isActive ? "user.enable" : "user.disable", "user", req.params.id, before, rows[0]);
   res.json(rows[0]);
+});
+
+app.patch("/users/:id/password", auth, permit("users:manage"), async (req,res) => {
+  const { newPassword }=z.object({newPassword:z.string().min(12).max(200)}).parse(req.body);
+  if(req.params.id===req.user.sub) return res.status(409).json({error:"USE_SELF_PASSWORD_CHANGE"});
+  const target=(await db.query("SELECT u.id,u.email,r.name AS role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1",[req.params.id])).rows[0];
+  if(!target) return res.status(404).json({error:"USER_NOT_FOUND"});
+  const rank={TECHNICIAN:1,OPERATOR:1,ADMIN:2,OWNER:3};
+  if((rank[req.user.role]||0)<=(rank[target.role]||0)) return res.status(403).json({error:"NOT_SUBORDINATE"});
+  await db.query("UPDATE users SET password_hash=$1,refresh_token_hash=NULL WHERE id=$2",[await argon2.hash(newPassword),target.id]);
+  await audit(req,"user.password.reset","user",target.id,null,{resetBy:req.user.sub});
+  res.status(204).end();
 });
 
 app.get("/dashboard", auth, async (req, res) => {
