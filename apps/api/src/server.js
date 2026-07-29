@@ -398,7 +398,7 @@ function classifyTimeToGrowProduct(productName) {
   }
   if (
     /^(friend|friends|friendle|couple|family)( day)? pass$/.test(normalized) ||
-    /^(general( vr)? (ticket|pass)|kinder ?(pass|party|geburtstag))$/.test(normalized)
+    /^(general( vr)?( day)? (ticket|pass)|kinder ?(pass|party|geburtstag)|any vr game)$/.test(normalized)
   ) {
     return {zoneName:"VR",gameName:null,requiresGameSelection:true};
   }
