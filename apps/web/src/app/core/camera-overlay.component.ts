@@ -24,7 +24,7 @@ export class CameraOverlayComponent{
   private http=inject(HttpClient);private sanitizer=inject(DomSanitizer);
   cameras=signal<Camera[]>([]);selectedIds=signal<string[]>([]);players=signal<Record<string,Player>>({});collapsed=signal(false);
   constructor(){this.reload()}
-  @HostListener("window:questcontrol-camera-selection") selectionChanged(){this.readSelection()}
+  @HostListener("window:questcontrol-camera-selection") selectionChanged(){this.reload()}
   reload(){if(!sessionStorage.getItem("access_token"))return;this.http.get<Camera[]>("/api/cameras").subscribe({next:c=>{this.cameras.set(c);this.readSelection()}})}
   readSelection(){try{const ids=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");this.selectedIds.set(Array.isArray(ids)?ids:[]);for(const camera of this.selected())if(!this.players()[camera.id])this.open(camera)}catch{this.selectedIds.set([])}}
   selected(){const ids=new Set(this.selectedIds());return this.cameras().filter(c=>ids.has(c.id))}
