@@ -1,9 +1,7 @@
 import { Component, ElementRef, HostListener, ViewChild, inject, signal } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
-import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 import { FormsModule } from "@angular/forms";
 import { RouterLink } from "@angular/router";
-import { HlsPlayerComponent } from "./hls-player.component";
 
 type Location={id:string;name:string};
 type Room={id:string;name:string;location_id:string;location_name:string};
@@ -15,7 +13,7 @@ type Plan={backgroundImage:string|null;backgroundMode:BackgroundMode;backgroundS
 type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:number;originX:number;originY:number;originW:number;originH:number};
 
 @Component({
-  selector:"app-cameras",standalone:true,imports:[FormsModule,RouterLink,HlsPlayerComponent],
+  selector:"app-cameras",standalone:true,imports:[FormsModule,RouterLink],
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
@@ -63,8 +61,7 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
       <div class="plan-legend"><span><i class="online-dot"></i> Онлайн</span><span><i></i> Офлайн</span><b>Выбрано {{selectedCameras().length}} из {{locationCameras().length}}</b><button class="ghost" (click)="selectOnline()">Выбрать все онлайн</button><button class="ghost" (click)="clearSelection()">Снять выбор</button></div>
     }
 
-    @if(!selectedCameras().length){<div class="empty compact"><b>Камеры не выбраны</b><span>Нажмите на маркеры камер на плане.</span></div>}
-    <div class="camera-grid">@for(camera of selectedCameras();track camera.id){<article><div class="preview">@if(players()[camera.id];as player){@if(player.mode==="hls"){<app-hls-player [url]="player.endpoint"/>}@else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen"></iframe>}}@else{<button class="play" (click)="open(camera)">▶ Открыть поток</button>}</div><div class="camera-info"><div><strong>{{camera.name}}</strong><span>{{camera.room_name||"Без игровой комнаты"}} · {{camera.provider}}</span></div><button class="secondary" (click)="refresh(camera)">Обновить</button></div></article>}</div>
+    @if(!selectedCameras().length){<div class="empty compact"><b>Камеры не выбраны</b><span>Нажмите на маркеры камер на плане — они появятся в плавающем окне.</span></div>}
   </section></main>`,
   styles:[`
     .header-actions,.location-tabs,.editor-bar,.plan-legend{display:flex;gap:10px;align-items:center}.secondary,.ghost,.location-tabs button{background:#eef1f6;color:#344054;box-shadow:none}.location-tabs{margin:22px 0 14px;flex-wrap:wrap}.location-tabs button.active,.ghost.active{background:#4058df;color:white}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}
@@ -80,16 +77,16 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
   `]
 })
 export class CamerasComponent{
-  private http=inject(HttpClient);private sanitizer=inject(DomSanitizer);
+  private http=inject(HttpClient);
   @ViewChild("plan") planRef?:ElementRef<HTMLElement>;
   locations=signal<Location[]>([]);rooms=signal<Room[]>([]);cameras=signal<Camera[]>([]);locationId=signal("");zones=signal<Zone[]>([]);backgroundImage=signal<string|null>(null);backgroundMode=signal<BackgroundMode>("CONTAIN");backgroundScale=signal(100);backgroundX=signal(50);backgroundY=signal(50);
   editing=signal(false);drawing=signal(false);saving=signal(false);syncing=signal(false);error=signal("");notice=signal("");selectedIds=signal<string[]>([]);
   renamingId=signal<string|null>(null);
-  selectedZone=signal<Zone|null>(null);players=signal<Record<string,{mode:"hls"|"player";endpoint:string;safeEndpoint?:SafeResourceUrl}>>({});
+  selectedZone=signal<Zone|null>(null);
   zoneDraft:{name:string;type:ZoneType;color:string;roomId:string}={name:"Новая зона",type:"OTHER",color:"#64748b",roomId:""};private drag:Drag|null=null;private suppressClick=false;
   isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}
   canManageCameras(){try{const p=JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).permissions||[];return p.includes("*")||p.includes("cameras:*")||p.includes("cameras:manage")}catch{return false}}
-  constructor(){this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(l[0])this.selectLocation(l[0].id)}});this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});this.loadCameras();}
+  constructor(){try{const stored=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");this.selectedIds.set(Array.isArray(stored)?stored:[])}catch{}this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(l[0])this.selectLocation(l[0].id)}});this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});this.loadCameras();}
   loadCameras(){this.http.get<Camera[]>("/api/cameras").subscribe({next:c=>this.cameras.set(c),error:()=>this.error.set("Не удалось загрузить камеры.")})}
   selectLocation(id:string){this.locationId.set(id);this.editing.set(false);this.http.get<Plan>(`/api/locations/${id}/plan`).subscribe({next:p=>{this.backgroundImage.set(p.backgroundImage);this.backgroundMode.set(p.backgroundMode||"CONTAIN");this.backgroundScale.set(+(p.backgroundScale||100));this.backgroundX.set(+(p.backgroundX??50));this.backgroundY.set(+(p.backgroundY??50));this.zones.set(p.zones.map(z=>({...z,x:+z.x,y:+z.y,width:+z.width,height:+z.height,roomId:z.room_id||""})));},error:()=>this.error.set("Не удалось загрузить план локации.")})}
   backgroundSize(){return this.backgroundMode()==="CONTAIN"?"contain":this.backgroundMode()==="COVER"?"cover":`${this.backgroundScale()}% auto`}
@@ -115,9 +112,8 @@ export class CamerasComponent{
   listCameraClick(c:Camera){if(this.renamingId()!==c.id)this.toggle(c)}
   rename(c:Camera,name:string){const value=name.trim();if(value.length<2){this.error.set("Название камеры должно содержать минимум 2 символа.");return}this.http.patch<Camera>(`/api/cameras/${c.id}/name`,{name:value}).subscribe({next:updated=>{this.cameras.update(items=>items.map(item=>item.id===c.id?{...item,name:updated.name}:item));this.renamingId.set(null);this.notice.set("Название камеры сохранено.")},error:()=>this.error.set("Не удалось переименовать камеру.")})}
   isSelected(id:string){return this.selectedIds().includes(id)} selectedCameras(){const ids=new Set(this.selectedIds());return this.locationCameras().filter(c=>ids.has(c.id))}
-  toggle(c:Camera){if(this.isSelected(c.id)){this.selectedIds.update(v=>v.filter(id=>id!==c.id));this.players.update(v=>{const n={...v};delete n[c.id];return n})}else{this.selectedIds.update(v=>[...v,c.id]);this.open(c)}}
-  selectOnline(){for(const c of this.locationCameras().filter(c=>c.status==="ONLINE"&&!this.isSelected(c.id))){this.selectedIds.update(v=>[...v,c.id]);this.open(c)}}clearSelection(){this.selectedIds.set([]);this.players.set({})}
-  open(c:Camera){this.http.get<{endpoint:string;mode:"hls"|"player"}>(`/api/cameras/${c.id}/stream`).subscribe({next:p=>this.players.update(v=>({...v,[c.id]:{...p,safeEndpoint:p.mode==="player"?this.sanitizer.bypassSecurityTrustResourceUrl(p.endpoint):undefined}})),error:()=>this.error.set("Поток камеры недоступен.")})}
-  refresh(c:Camera){this.players.update(v=>{const n={...v};delete n[c.id];return n});this.open(c)}
+  toggle(c:Camera){if(this.isSelected(c.id))this.selectedIds.update(v=>v.filter(id=>id!==c.id));else this.selectedIds.update(v=>[...v,c.id]);this.persistSelection()}
+  selectOnline(){for(const c of this.locationCameras().filter(c=>c.status==="ONLINE"&&!this.isSelected(c.id)))this.selectedIds.update(v=>[...v,c.id]);this.persistSelection()}clearSelection(){this.selectedIds.set([]);this.persistSelection()}
+  private persistSelection(){localStorage.setItem("questcontrol.selectedCameras",JSON.stringify(this.selectedIds()));window.dispatchEvent(new Event("questcontrol-camera-selection"))}
   syncTuya(){this.syncing.set(true);this.http.post<any>("/api/cameras/sync/tuya",{}).subscribe({next:r=>{this.syncing.set(false);this.notice.set(`Tuya: камер ${r.cameras}, добавлено ${r.created}.`);this.loadCameras()},error:()=>{this.syncing.set(false);this.error.set("Не удалось синхронизировать Tuya.")}})}
 }
