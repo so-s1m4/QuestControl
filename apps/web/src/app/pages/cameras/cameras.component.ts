@@ -15,7 +15,7 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
 @Component({
   selector:"app-cameras",standalone:true,imports:[FormsModule,RouterLink],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a>@if(isOwner()){<a routerLink="/camera-settings">Настройки камер</a>}<a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
     <header><div><h2>Камеры на плане</h2><p>Выберите локацию и камеры прямо на схеме</p></div><div class="header-actions">@if(isOwner()){<button class="secondary" (click)="toggleEdit()">{{editing()?"Закрыть редактор":"Настроить план"}}</button>}<button class="secondary" (click)="syncTuya()" [disabled]="syncing()">{{syncing()?"Синхронизация…":"↻ Tuya"}}</button></div></header>
     <div class="location-tabs">@for(location of locations();track location.id){<button [class.active]="location.id===locationId()" (click)="selectLocation(location.id)">{{location.name}}</button>}</div>

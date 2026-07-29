@@ -8,10 +8,12 @@ import { UsersComponent } from "./pages/users/users.component";
 import { BookingsComponent } from "./pages/bookings/bookings.component";
 import { RoomsComponent } from "./pages/rooms/rooms.component";
 import { LocationsComponent } from "./pages/locations/locations.component";
+import { CameraSettingsComponent } from "./pages/camera-settings/camera-settings.component";
 export const routes:Routes=[
   {path:"login",component:LoginComponent},
   {path:"",component:OverviewComponent,canActivate:[authGuard]},
   {path:"cameras",component:CamerasComponent,canActivate:[authGuard]},
+  {path:"camera-settings",component:CameraSettingsComponent,canActivate:[authGuard]},
   {path:"krampus",component:KrampusComponent,canActivate:[authGuard]},
   {path:"users",component:UsersComponent,canActivate:[authGuard]},
   {path:"bookings",component:BookingsComponent,canActivate:[authGuard]},

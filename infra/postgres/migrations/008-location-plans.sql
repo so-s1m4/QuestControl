@@ -31,3 +31,4 @@ CREATE TABLE IF NOT EXISTS plan_zones (
   height numeric(6,3) NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_zone_id uuid REFERENCES plan_zones(id) ON DELETE SET NULL;
