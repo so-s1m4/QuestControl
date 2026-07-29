@@ -1642,6 +1642,40 @@ app.get("/rooms/:id/doorbell-calls", auth, permit("cameras:read"), async (req,re
   res.json(rows);
 });
 
+app.get("/rooms/:id/help-button", auth, permit("cameras:read"), async (req,res) => {
+  const room=(await db.query("SELECT location_id,metadata FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if(!room) return res.status(404).json({error:"ROOM_NOT_FOUND"});
+  if(!(await locationAllowed(req,room.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`
+    SELECT c.id,c.name,c.provider,c.status,c.external_id,c.config
+    FROM cameras c
+    LEFT JOIN rooms r ON r.id=c.room_id
+    WHERE c.provider='TUYA' AND COALESCE(c.location_id,r.location_id)=$1
+    ORDER BY
+      CASE WHEN lower(c.name) LIKE '%doorbell%' OR c.config->>'category'='dghsxj' THEN 0 ELSE 1 END,
+      c.name
+  `,[room.location_id]);
+  const configured=room.metadata?.help_button_camera_id;
+  const fallback=rows.find(camera=>/doorbell/i.test(camera.name)||camera.config?.category==="dghsxj")?.id||null;
+  res.json({cameraId:configured||fallback,cameras:rows});
+});
+
+app.patch("/rooms/:id/help-button", auth, permit("cameras:manage"), async (req,res) => {
+  const {cameraId}=z.object({cameraId:z.string().uuid()}).parse(req.body);
+  const room=(await db.query("SELECT location_id,metadata FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if(!room) return res.status(404).json({error:"ROOM_NOT_FOUND"});
+  if(!(await locationAllowed(req,room.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const camera=(await db.query(`
+    SELECT c.id,c.name FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id
+    WHERE c.id=$1 AND c.provider='TUYA' AND COALESCE(c.location_id,r.location_id)=$2
+  `,[cameraId,room.location_id])).rows[0];
+  if(!camera) return res.status(400).json({error:"HELP_BUTTON_CAMERA_INVALID"});
+  const metadata={...(room.metadata||{}),help_button_camera_id:cameraId};
+  await db.query("UPDATE rooms SET metadata=$1 WHERE id=$2",[metadata,req.params.id]);
+  await audit(req,"room.help_button.update","room",req.params.id,room.metadata,metadata);
+  res.json({cameraId,cameraName:camera.name});
+});
+
 app.patch("/rooms/:roomId/doorbell-calls/:id/acknowledge", auth, permit("devices:command"), async (req,res) => {
   const room=(await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.roomId])).rows[0];
   if(!room) return res.status(404).json({error:"ROOM_NOT_FOUND"});
@@ -1660,10 +1694,15 @@ app.patch("/rooms/:roomId/doorbell-calls/:id/acknowledge", auth, permit("devices
 app.post("/rooms/:id/doorbell-calls/test", auth, async (req,res) => {
   if(!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
   const camera=(await db.query(`
-    SELECT c.id,c.name FROM cameras c
-    WHERE c.room_id=$1 AND c.provider='TUYA' AND
-      (lower(c.name) LIKE '%doorbell%' OR c.config->>'category'='dghsxj')
-    ORDER BY c.id LIMIT 1
+    SELECT c.id,c.name FROM rooms room
+    JOIN cameras c ON c.id=COALESCE(
+      NULLIF(room.metadata->>'help_button_camera_id','')::uuid,
+      (SELECT fallback.id FROM cameras fallback
+       WHERE fallback.room_id=room.id AND fallback.provider='TUYA'
+         AND (lower(fallback.name) LIKE '%doorbell%' OR fallback.config->>'category'='dghsxj')
+       ORDER BY fallback.id LIMIT 1)
+    )
+    WHERE room.id=$1
   `,[req.params.id])).rows[0];
   if(!camera) return res.status(404).json({error:"DOORBELL_NOT_FOUND"});
   const {rows}=await db.query(`
@@ -1851,9 +1890,16 @@ tuyaMessages.on("message",async message=>{
     const externalId=String(data.devId||data.deviceId||data.dev_id||message.key||"");
     if(!externalId||!doorbellEvent(message)) return;
     const camera=(await db.query(`
-      SELECT c.id,c.room_id FROM cameras c
-      WHERE c.provider='TUYA' AND c.external_id=$1 AND c.room_id IS NOT NULL
-        AND (lower(c.name) LIKE '%doorbell%' OR c.config->>'category'='dghsxj')
+      SELECT c.id,r.id AS room_id FROM cameras c
+      JOIN rooms r ON
+        r.metadata->>'help_button_camera_id'=c.id::text OR
+        (r.metadata->>'help_button_camera_id' IS NULL AND c.room_id=r.id)
+      WHERE c.provider='TUYA' AND c.external_id=$1
+        AND (
+          r.metadata->>'help_button_camera_id'=c.id::text OR
+          (r.metadata->>'help_button_camera_id' IS NULL AND
+           (lower(c.name) LIKE '%doorbell%' OR c.config->>'category'='dghsxj'))
+        )
       LIMIT 1
     `,[externalId])).rows[0];
     if(!camera) return;

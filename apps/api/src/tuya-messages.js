@@ -4,7 +4,7 @@ import WebSocket from "ws";
 
 const md5 = (value) => crypto.createHash("md5").update(value).digest("hex");
 
-function decryptPayload(encrypted, accessKey) {
+function decryptEcb(encrypted, accessKey) {
   const decipher = crypto.createDecipheriv(
     "aes-128-ecb",
     Buffer.from(accessKey.slice(8, 24), "utf8"),
@@ -16,6 +16,29 @@ function decryptPayload(encrypted, accessKey) {
     decipher.final(),
   ]).toString("utf8");
   return JSON.parse(plaintext);
+}
+
+function decryptGcm(encrypted, accessKey) {
+  const message = Buffer.from(encrypted, "base64");
+  if (message.length < 29) throw new Error("Invalid AES-GCM payload");
+  const nonce = message.subarray(0, 12);
+  const ciphertext = message.subarray(12, -16);
+  const tag = message.subarray(-16);
+  const decipher = crypto.createDecipheriv(
+    "aes-128-gcm",
+    Buffer.from(accessKey.slice(8, 24), "utf8"),
+    nonce
+  );
+  decipher.setAuthTag(tag);
+  return JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8"));
+}
+
+function decryptPayload(encrypted, accessKey) {
+  try {
+    return decryptGcm(encrypted, accessKey);
+  } catch {
+    return decryptEcb(encrypted, accessKey);
+  }
 }
 
 export class TuyaMessageConsumer extends EventEmitter {
