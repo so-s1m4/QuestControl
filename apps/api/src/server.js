@@ -753,6 +753,30 @@ app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
 });
 
 app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
+  if (!Object.hasOwn(req.body || {},"bookingId")) {
+    if (!isOwner(req)) return res.status(403).json({ error:"OWNER_REQUIRED" });
+    const input=z.object({
+      roomId:z.string().uuid(),
+      status:z.enum(["RUNNING","PAUSED","FINISHED","CANCELLED"]),
+      startedAt:z.string().datetime({offset:true}),
+      endedAt:z.string().datetime({offset:true}).nullable().default(null),
+      remainingSeconds:z.number().int().min(0).max(14400).nullable().default(null),
+    }).refine(value=>!value.endedAt || new Date(value.endedAt)>=new Date(value.startedAt),{
+      message:"endedAt must not precede startedAt",
+      path:["endedAt"],
+    }).refine(value=>value.status!=="FINISHED" || Boolean(value.endedAt),{
+      message:"endedAt is required for a finished session",
+      path:["endedAt"],
+    }).parse(req.body);
+    const room=(await db.query("SELECT id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+    if (!room) return res.status(404).json({ error:"ROOM_NOT_FOUND" });
+    const { rows }=await db.query(`
+      INSERT INTO sessions(room_id,status,started_at,ended_at,remaining_seconds)
+      VALUES($1,$2,$3,$4,$5) RETURNING *
+    `,[input.roomId,input.status,input.startedAt,input.endedAt,input.remainingSeconds]);
+    await audit(req,"session.create","session",rows[0].id,null,rows[0]);
+    return res.status(201).json(rows[0]);
+  }
   const input = z.object({ bookingId:z.string().uuid(), durationSeconds:z.number().int().min(300).max(14400).default(3600) }).parse(req.body);
   const booking = (await db.query("SELECT * FROM bookings WHERE id=$1", [input.bookingId])).rows[0];
   if (!booking) return res.status(404).json({ error:"BOOKING_NOT_FOUND" });
@@ -832,6 +856,28 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
   }
   await audit(req,auditAction,"session",req.params.id,before,rows[0]);
   res.json(rows[0]);
+});
+
+app.delete("/sessions/:id", auth, permit("sessions:manage"), async (req,res) => {
+  if (!isOwner(req)) return res.status(403).json({ error:"OWNER_REQUIRED" });
+  const client=await db.connect();
+  try {
+    await client.query("BEGIN");
+    const before=(await client.query("SELECT * FROM sessions WHERE id=$1 FOR UPDATE",[req.params.id])).rows[0];
+    if (!before) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error:"SESSION_NOT_FOUND" });
+    }
+    await client.query("DELETE FROM sessions WHERE id=$1",[req.params.id]);
+    await client.query("COMMIT");
+    await audit(req,"session.delete","session",req.params.id,before,null);
+    res.status(204).end();
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.get("/statistics/players", auth, permit("statistics:read"), async (req, res) => {
@@ -914,6 +960,26 @@ app.patch("/rooms/:id", auth, permit("rooms:manage"), async (req,res) => {
   );
   await audit(req,"room.update","room",req.params.id,before,rows[0]);
   res.json(rows[0]);
+});
+
+app.delete("/rooms/:id", auth, permit("rooms:manage"), async (req,res) => {
+  if (!isOwner(req)) return res.status(403).json({ error:"OWNER_REQUIRED" });
+  const before=(await db.query("SELECT * FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!before) return res.status(404).json({ error:"ROOM_NOT_FOUND" });
+  const usage=(await db.query(`
+    SELECT
+      (SELECT count(*)::int FROM bookings WHERE room_id=$1) bookings,
+      (SELECT count(*)::int FROM sessions WHERE room_id=$1) sessions,
+      (SELECT count(*)::int FROM devices WHERE room_id=$1) devices,
+      (SELECT count(*)::int FROM cameras WHERE room_id=$1) cameras,
+      (SELECT count(*)::int FROM local_sites WHERE room_id=$1) local_sites
+  `,[req.params.id])).rows[0];
+  if (Object.values(usage).some(count=>count>0)) {
+    return res.status(409).json({ error:"ROOM_IN_USE",usage });
+  }
+  await db.query("DELETE FROM rooms WHERE id=$1",[req.params.id]);
+  await audit(req,"room.delete","room",req.params.id,before,null);
+  res.status(204).end();
 });
 
 app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
