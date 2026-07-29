@@ -1949,13 +1949,20 @@ const tuyaEventSignals = (value, signals=[], depth=0) => {
   for(const nested of Object.values(value)) tuyaEventSignals(nested,signals,depth+1);
   return signals;
 };
+const initiativeDoorbellEvent = (signal) => {
+  if(signal.code!=="initiative_message"||typeof signal.value!=="string") return false;
+  try {
+    const event=JSON.parse(Buffer.from(signal.value,"base64").toString("utf8"));
+    return String(event.cmd||"").toLowerCase()==="ipc_doorbell"&&event.alarm!==false;
+  } catch { return false; }
+};
 const doorbellEvent = (message) => {
   const data=message?.payload?.data||{};
   const signals=tuyaEventSignals(data);
   const codes=signals.map(item=>item.code);
   const bizCode=String(data.bizCode||data.biz_code||"").toLowerCase();
   if(bizCode==="deviceeventmessage") return true;
-  return signals.some(item=>
+  return signals.some(initiativeDoorbellEvent)||signals.some(item=>
     /(doorbell|door_bell|door bell|bell|help|call|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(item.code)
     && ![false,0,"0","false",null,undefined].includes(item.value)
   )||/(doorbell|door_bell|door bell|ac_doorbell|ipc_panel_doorbell|doorbell_pic)/.test(JSON.stringify({bizCode,type:data.type||"",codes}).toLowerCase());
@@ -1982,7 +1989,10 @@ tuyaMessages.on("message",async message=>{
     `,[externalId])).rows[0];
     if(!camera) return;
     const signals=tuyaEventSignals(data);
-    console.log("Tuya help device event",bizCode,externalId,JSON.stringify(signals.slice(0,20)));
+    console.log("Tuya help device event",bizCode,externalId,JSON.stringify(signals.slice(0,20).map(item=>({
+      code:item.code,
+      value:typeof item.value==="string"&&item.value.length>80?`[string:${item.value.length}]`:item.value,
+    }))));
     if(!doorbellEvent(message)) return;
     const externalMessageId=String(message.messageId||data.dataId||crypto.randomUUID());
     const call=(await db.query(`
