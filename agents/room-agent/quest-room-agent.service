@@ -5,6 +5,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=quest-agent
+SupplementaryGroups=audio
 WorkingDirectory=/opt/quest-control-room-agent
 EnvironmentFile=/etc/quest-control/room-agent.env
 ExecStart=/usr/bin/node src/index.js

@@ -1,0 +1,19 @@
+QUESTCONTROL ROOM AGENT — KRAMPUS
+
+1. Распакуйте архив на Raspberry Pi.
+2. Перейдите в каталог quest-control-room-agent.
+3. Запустите:
+
+   chmod +x install-on-pi.sh
+   sudo ./install-on-pi.sh
+
+Установщик интерактивно запросит URL QuestControl, agent token, UUID комнаты,
+адрес локального Krampus API и аудиоустройство. Существующий env можно сохранить.
+
+После установки:
+
+   sudo systemctl status quest-room-agent
+   sudo journalctl -u quest-room-agent -f
+   sudo -u quest-agent aplay /usr/share/sounds/alsa/Front_Center.wav
+
+Для микрофона браузерная панель QuestControl должна открываться по HTTPS.

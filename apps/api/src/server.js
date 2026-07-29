@@ -1425,7 +1425,10 @@ app.post("/rooms/:id/command", auth, permit("devices:command"), async (req, res)
 });
 
 async function roomAgentRequest(roomId, event, payload) {
-  const agent = await db.query("SELECT agent_id FROM devices WHERE room_id=$1 AND agent_id IS NOT NULL LIMIT 1", [roomId]);
+  const agent = await db.query(
+    "SELECT agent_id FROM devices WHERE room_id=$1 AND agent_id IS NOT NULL ORDER BY last_seen DESC NULLS LAST, id LIMIT 1",
+    [roomId]
+  );
   if (!agent.rowCount) return { success:false, error:"AGENT_NOT_CONFIGURED" };
   return new Promise(resolve => {
     io.of("/agent").to(`agent:${agent.rows[0].agent_id}`).timeout(8000).emit(event, payload, (err, responses) => {
@@ -1435,6 +1438,15 @@ async function roomAgentRequest(roomId, event, payload) {
 }
 
 const krampusRead = z.enum(["status","sensors","logs"]);
+const krampusCommands = [
+  "START","STATUS","RESET","ESTOP",
+  "LIGHT UV","LIGHT WHITE","LIGHT OK","LIGHT OFF","LIGHT RESET","MASK SOUND",
+  "PUZZLE SOLVE","PUZZLE RESET","BEAR SOUND","BEAR OPEN","BEAR CLOSE",
+  "DOOR OPEN","DOOR CLOSE","TABLE OPEN","TABLE CLOSE",
+  "OVEN SOLVED","OVEN RESET","OVEN UV ON","OVEN UV OFF","OVEN LIGHT ON",
+  "OVEN LIGHT OFF","OVEN MOVE ON","OVEN MOVE OFF","OVEN FOG ON","OVEN FOG OFF"
+];
+const krampusCommand = z.object({ command:z.enum(krampusCommands.map(value=>`ADMIN ${value}`)) }).strict();
 app.get("/rooms/:id/krampus/:resource", auth, permit("rooms:read"), async (req,res) => {
   const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
@@ -1446,7 +1458,7 @@ app.get("/rooms/:id/krampus/:resource", auth, permit("rooms:read"), async (req,r
 app.post("/rooms/:id/krampus/command", auth, permit("devices:command"), async (req,res) => {
   const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  const command=z.string().regex(/^ADMIN [A-Z0-9 _-]{2,120}$/).parse(req.body.command);
+  const { command }=krampusCommand.parse(req.body);
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:"command",command});
   await audit(req,"krampus.command","room",req.params.id,null,{command,result});
   res.status(result.success ? 200 : 502).json(result.success ? result.result : {error:result.error});
@@ -1455,7 +1467,10 @@ app.post("/rooms/:id/krampus/command", auth, permit("devices:command"), async (r
 app.post("/rooms/:id/krampus/sound", auth, permit("devices:command"), async (req,res) => {
   const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
-  const input=z.object({action:z.enum(["play","stop"]),sound:z.enum(["alert.mp3","calling.mp3"]).optional()}).parse(req.body);
+  const input=z.discriminatedUnion("action",[
+    z.object({action:z.literal("play"),sound:z.enum(["alert.mp3","calling.mp3"])}).strict(),
+    z.object({action:z.literal("stop"),sound:z.undefined().optional()}).strict()
+  ]).parse(req.body);
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:"sound",...input});
   await audit(req,"krampus.sound","room",req.params.id,null,{...input,result});
   res.status(result.success ? 200 : 502).json(result.success ? result.result : {error:result.error});
@@ -1528,6 +1543,58 @@ agentNs.on("connection", socket => {
       db.query("UPDATE devices SET status='OFFLINE' WHERE agent_id=$1", [socket.data.agentId]),
     ]);
   });
+});
+
+const voiceNs=io.of("/voice");
+const activeVoiceAgents=new Map();
+voiceNs.use(async(socket,next)=>{
+  try {
+    const token=socket.handshake.auth?.token;
+    if(!token) throw new Error("missing token");
+    const { payload }=await jwtVerify(token,key(env.JWT_ACCESS_SECRET));
+    const permissions=payload.permissions||[];
+    if(!(permissions.includes("*")||permissions.includes("devices:command")||permissions.includes("devices:*"))) throw new Error("forbidden");
+    socket.data.user=payload;
+    next();
+  } catch { next(new Error("unauthorized")); }
+});
+voiceNs.on("connection",socket=>{
+  let agentId;
+  let roomId;
+  const stop=()=>{
+    if(agentId&&activeVoiceAgents.get(agentId)===socket.id) {
+      activeVoiceAgents.delete(agentId);
+      agentNs.to(`agent:${agentId}`).emit("voice",{operation:"stop"});
+    }
+    agentId=undefined; roomId=undefined;
+  };
+  socket.on("start",async(message,ack)=>{
+    try {
+      const input=z.object({roomId:z.string().uuid(),contentType:z.enum(["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/ogg"])}).parse(message);
+      const room=(await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+      const fakeReq={user:socket.data.user};
+      if(!room||!(await locationAllowed(fakeReq,room.location_id))) return ack({success:false,error:"LOCATION_FORBIDDEN"});
+      const agent=(await db.query("SELECT agent_id FROM devices WHERE room_id=$1 AND agent_id IS NOT NULL ORDER BY last_seen DESC NULLS LAST,id LIMIT 1",[input.roomId])).rows[0];
+      if(!agent) return ack({success:false,error:"AGENT_NOT_CONFIGURED"});
+      if(activeVoiceAgents.has(agent.agent_id)&&activeVoiceAgents.get(agent.agent_id)!==socket.id) return ack({success:false,error:"VOICE_BUSY"});
+      activeVoiceAgents.set(agent.agent_id,socket.id);
+      agentNs.to(`agent:${agent.agent_id}`).timeout(5000).emit("voice",{operation:"start",contentType:input.contentType},(err,responses)=>{
+        const result=err?{success:false,error:"AGENT_TIMEOUT"}:responses?.[0]||{success:false,error:"EMPTY_AGENT_RESPONSE"};
+        if(result.success&&socket.connected){ agentId=agent.agent_id; roomId=input.roomId; activeVoiceAgents.set(agentId,socket.id); }
+        else if(result.success) agentNs.to(`agent:${agent.agent_id}`).emit("voice",{operation:"stop"});
+        else if(activeVoiceAgents.get(agent.agent_id)===socket.id) activeVoiceAgents.delete(agent.agent_id);
+        if(!socket.connected&&activeVoiceAgents.get(agent.agent_id)===socket.id) activeVoiceAgents.delete(agent.agent_id);
+        ack(result);
+      });
+    } catch(error){ ack({success:false,error:error instanceof z.ZodError?"INVALID_INPUT":error.message}); }
+  });
+  socket.on("chunk",data=>{
+    if(!agentId||!roomId) return;
+    const chunk=Buffer.isBuffer(data)?data:Buffer.from(data);
+    if(chunk.length<=256_000) agentNs.to(`agent:${agentId}`).emit("voice",{operation:"chunk",data:chunk});
+  });
+  socket.on("stop",(_,ack=()=>{})=>{ stop(); ack({success:true}); });
+  socket.on("disconnect",stop);
 });
 
 io.use(async (socket,next) => {
