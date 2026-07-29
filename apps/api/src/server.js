@@ -513,6 +513,9 @@ app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) 
   try {
     const devices = await tuya.listProjectDevices();
     const cameras = devices.filter(isTuyaCamera);
+    const krampusRoomId = (await db.query(
+      "SELECT id FROM rooms WHERE lower(replace(name,' ','_')) LIKE '%krampus%' ORDER BY id LIMIT 1"
+    )).rows[0]?.id || null;
     let created = 0;
     let updated = 0;
     for (const device of cameras) {
@@ -520,14 +523,15 @@ app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) 
       if (!externalId) continue;
       const name = String(device.customName || device.name || device.productName || `Tuya ${externalId.slice(-6)}`).slice(0, 120);
       const status = (device.isOnline ?? device.online) ? "ONLINE" : "OFFLINE";
+      const autoRoomId = /(lsc|ptz)/i.test(name) ? krampusRoomId : null;
       const existing = await db.query("SELECT id FROM cameras WHERE provider='TUYA' AND external_id=$1 LIMIT 1", [externalId]);
       if (existing.rowCount) {
-        await db.query("UPDATE cameras SET name=$1,status=$2 WHERE id=$3", [name, status, existing.rows[0].id]);
+        await db.query("UPDATE cameras SET name=$1,status=$2,room_id=COALESCE(room_id,$3) WHERE id=$4", [name, status, autoRoomId, existing.rows[0].id]);
         updated += 1;
       } else {
         await db.query(
-          "INSERT INTO cameras(name,provider,external_id,status,config) VALUES($1,'TUYA',$2,$3,$4)",
-          [name, externalId, status, { category: device.category || null, productId: device.productId || null }]
+          "INSERT INTO cameras(room_id,name,provider,external_id,status,config) VALUES($1,$2,'TUYA',$3,$4,$5)",
+          [autoRoomId, name, externalId, status, { category: device.category || null, productId: device.productId || null }]
         );
         created += 1;
       }
@@ -775,5 +779,11 @@ await db.query(
   `UPDATE rooms SET location_id=(SELECT id FROM locations WHERE external_id=$1)
    WHERE lower(replace(name,' ','_')) LIKE '%krampus%'`,
   ["01js4ahx79xbw5gd05jy1mmsdw"]
+);
+await db.query(
+  `UPDATE cameras
+   SET room_id=(SELECT id FROM rooms WHERE lower(replace(name,' ','_')) LIKE '%krampus%' ORDER BY id LIMIT 1)
+   WHERE provider='TUYA' AND room_id IS NULL AND name ~* '(LSC|PTZ)'
+     AND EXISTS(SELECT 1 FROM rooms WHERE lower(replace(name,' ','_')) LIKE '%krampus%')`
 );
 server.listen(env.PORT, "0.0.0.0", () => console.log(`QuestControl API listening on ${env.PORT}`));
