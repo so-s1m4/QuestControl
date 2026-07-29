@@ -16,7 +16,7 @@ type Camera={id:string;name:string;provider:string;status:string;location_id:str
   <div class="camera-table"><div class="table-head"><span>Камера</span><span>Локация</span><span>Зона или комната на плане</span><span></span></div>
   @for(camera of cameras();track camera.id){<article>
     <div class="camera-name"><i [class.online]="camera.status==='ONLINE'"></i><span><b>{{camera.name}}</b><small>{{camera.provider}} · {{camera.status}}</small></span></div>
-    <select [ngModel]="camera.location_id||''" (ngModelChange)="locationChanged(camera,$event)"><option value="">Не назначена</option>@for(location of locations();track location.id){<option [value]="location.id">{{location.name}}</option>}</select>
+    <select [ngModel]="camera.location_id||''" (ngModelChange)="locationChanged(camera,$event)">@if(isOwner()){<option value="">Не назначена</option>}@else if(!camera.location_id){<option value="" disabled>Выберите локацию</option>}@for(location of locations();track location.id){<option [value]="location.id">{{location.name}}</option>}</select>
     <select [disabled]="!camera.location_id||loadingZones().includes(camera.location_id)" [ngModel]="camera.plan_zone_id||''" (ngModelChange)="zoneChanged(camera,$event)"><option value="">Без зоны</option>@for(zone of zonesFor(camera.location_id);track zone.id){<option [value]="zone.id">{{zone.name}} · {{zoneType(zone.type)}}@if(zone.room_id){ · квест-комната}</option>}</select>
     <div class="assignment">@if(camera.zone_name){<b>{{camera.zone_name}}</b><small>{{camera.room_name||"Обычная зона плана"}}</small>}@else if(camera.location_name){<span>Только локация</span>}@else{<span>Не распределена</span>}</div>
   </article>}@empty{<div class="empty"><b>Камер в аккаунте пока нет</b><span>Выполните синхронизацию Tuya на вкладке камер.</span></div>}</div>
@@ -29,8 +29,9 @@ type Camera={id:string;name:string;provider:string;status:string;location_id:str
 export class CameraSettingsComponent{
   private http=inject(HttpClient);private router=inject(Router);
   cameras=signal<Camera[]>([]);locations=signal<Location[]>([]);zones=signal<Record<string,Zone[]>>({});loadingZones=signal<string[]>([]);syncing=signal(false);error=signal("");notice=signal("");
-  constructor(){if(!this.isOwner()){void this.router.navigateByUrl("/cameras");return}this.http.get<Location[]>("/api/locations").subscribe({next:l=>this.locations.set(l)});this.load()}
+  constructor(){if(!this.canConfigure()){void this.router.navigateByUrl("/cameras");return}this.http.get<Location[]>("/api/locations").subscribe({next:l=>this.locations.set(l)});this.load()}
   isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}
+  canConfigure(){try{return ["OWNER","ADMIN"].includes(JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role)}catch{return false}}
   load(){this.http.get<Camera[]>("/api/camera-settings").subscribe({next:c=>{this.cameras.set(c);for(const id of new Set(c.map(x=>x.location_id).filter((x):x is string=>!!x)))this.loadZones(id)},error:()=>this.error.set("Не удалось загрузить настройки камер.")})}
   loadZones(locationId:string){if(this.zones()[locationId]||this.loadingZones().includes(locationId))return;this.loadingZones.update(v=>[...v,locationId]);this.http.get<{zones:Zone[]}>(`/api/locations/${locationId}/plan`).subscribe({next:p=>{this.zones.update(v=>({...v,[locationId]:p.zones}));this.loadingZones.update(v=>v.filter(id=>id!==locationId))},error:()=>this.loadingZones.update(v=>v.filter(id=>id!==locationId))})}
   zonesFor(locationId:string|null){return locationId?this.zones()[locationId]||[]:[]}

@@ -40,6 +40,7 @@ const tuya = new TuyaCloud({
 });
 const app = express();
 const isOwner = (req) => req.user?.role === "OWNER";
+const canConfigureCameras = (req) => ["OWNER","ADMIN"].includes(req.user?.role);
 async function locationAllowed(req, locationId) {
   if (isOwner(req)) return true;
   return Boolean((await db.query("SELECT 1 FROM user_locations WHERE user_id=$1 AND location_id=$2", [req.user.sub, locationId])).rowCount);
@@ -654,7 +655,10 @@ app.patch("/cameras/:id/name", auth, permit("cameras:manage"), async (req,res) =
 });
 
 app.get("/camera-settings", auth, async (req,res) => {
-  if(!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  if(!canConfigureCameras(req)) return res.status(403).json({error:"CAMERA_SETTINGS_FORBIDDEN"});
+  const scoped=isOwner(req)
+    ? {clause:"TRUE",values:[]}
+    : {clause:"COALESCE(c.location_id,r.location_id) IS NULL OR COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)",values:[req.user.sub]};
   const { rows }=await db.query(`
     SELECT c.id,c.name,c.provider,c.external_id,c.status,c.location_id,c.room_id,c.plan_zone_id,
            l.name AS location_name,r.name AS room_name,z.name AS zone_name
@@ -662,19 +666,26 @@ app.get("/camera-settings", auth, async (req,res) => {
     LEFT JOIN locations l ON l.id=c.location_id
     LEFT JOIN rooms r ON r.id=c.room_id
     LEFT JOIN plan_zones z ON z.id=c.plan_zone_id
+    WHERE ${scoped.clause}
     ORDER BY c.name
-  `);
+  `,scoped.values);
   res.json(rows);
 });
 
 app.patch("/cameras/:id/assignment", auth, async (req,res) => {
-  if(!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  if(!canConfigureCameras(req)) return res.status(403).json({error:"CAMERA_SETTINGS_FORBIDDEN"});
   const input=z.object({
     locationId:z.string().uuid().nullable(),
     zoneId:z.string().uuid().nullable(),
   }).parse(req.body);
-  const before=(await db.query("SELECT * FROM cameras WHERE id=$1",[req.params.id])).rows[0];
+  const before=(await db.query(
+    "SELECT c.*,COALESCE(c.location_id,r.location_id) AS effective_location_id FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1",
+    [req.params.id]
+  )).rows[0];
   if(!before) return res.status(404).json({error:"CAMERA_NOT_FOUND"});
+  if(!isOwner(req) && before.effective_location_id && !(await locationAllowed(req,before.effective_location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!isOwner(req) && !input.locationId) return res.status(403).json({error:"ADMIN_LOCATION_REQUIRED"});
+  if(input.locationId && !(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   let roomId=null;
   if(input.zoneId){
     if(!input.locationId) return res.status(400).json({error:"ZONE_REQUIRES_LOCATION"});
