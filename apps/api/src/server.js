@@ -1077,11 +1077,11 @@ app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
   res.json(rows);
 });
 
-const tuyaCameraCategories = new Set(["sp", "ipc", "camera", "wf_camera"]);
+const tuyaCameraCategories = new Set(["sp", "ipc", "camera", "wf_camera", "dghsxj"]);
 const isTuyaCamera = (device) => {
   const category = String(device.category || device.categoryCode || "").toLowerCase();
   const description = `${device.name || ""} ${device.customName || ""} ${device.productName || ""}`.toLowerCase();
-  return tuyaCameraCategories.has(category) || /(camera|камера|ipc|ptz)/i.test(description);
+  return tuyaCameraCategories.has(category) || /(camera|камера|ipc|ptz|doorbell|door bell|video bell|дверн\w* звон)/i.test(description);
 };
 
 app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) => {
