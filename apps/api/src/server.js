@@ -47,7 +47,7 @@ async function locationAllowed(req, locationId) {
 app.set("trust proxy", env.TRUST_PROXY);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
-app.use(express.json({ limit: "3mb" }));
+app.use(express.json({ limit: "8mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyHeaders: false }));
 
 const server = http.createServer(app);
@@ -628,7 +628,7 @@ const planZoneInput = z.object({
   roomId:z.string().uuid().nullable().optional(),
 });
 const locationPlanInput = z.object({
-  backgroundImage:z.string().max(2_500_000).nullable().optional(),
+  backgroundImage:z.string().max(7_000_000).nullable().optional(),
   backgroundMode:z.enum(["CONTAIN","COVER","CUSTOM"]).default("CONTAIN"),
   backgroundScale:z.number().min(10).max(400).default(100),
   backgroundX:z.number().min(0).max(100).default(50),
