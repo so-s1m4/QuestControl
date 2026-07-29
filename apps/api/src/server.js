@@ -234,9 +234,18 @@ app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => 
       name: z.string(),
       timezone: z.string(),
       address: z.string().nullable().optional(),
+      phone: z.string().nullable().optional(),
+      email: z.string().nullable().optional(),
     }).passthrough()).parse(payload.data);
     res.json({
-      data: clubs.map(club => ({ id: club.id, name: club.name, timezone: club.timezone, address: club.address || null })),
+      data: clubs.map(club => ({
+        id: club.id,
+        name: club.name,
+        timezone: club.timezone,
+        address: club.address || null,
+        phone: club.phone || null,
+        email: club.email || null,
+      })),
       defaultClubId: env.TIME_TO_GROW_CLUB_ID || clubs[0]?.id || null,
     });
   } catch (error) {

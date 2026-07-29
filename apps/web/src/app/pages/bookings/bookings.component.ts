@@ -13,7 +13,7 @@ type ExternalClub={id:string;name:string;timezone:string;address:string|null};
 @Component({
   selector:"app-bookings",standalone:true,imports:[FormsModule,RouterLink,DatePipe],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a class="active" routerLink="/bookings">Бронирования</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a class="active" routerLink="/bookings">Бронирования</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/krampus">Krampus House</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section><header><div><h2>Бронирования</h2><p>Расписание гостей и запуск игровых сессий</p></div><button (click)="showForm.set(!showForm())">{{showForm()?"Закрыть":"+ Новое бронирование"}}</button></header>
   <div class="external-toolbar"><div><h3>Time to Grow</h3><span>Подтверждённые бронирования</span></div><div class="external-filters"><label>Клуб<select [(ngModel)]="externalClubId" (ngModelChange)="loadExternal()">@for(club of externalClubs();track club.id){<option [value]="club.id">{{club.name}}</option>}</select></label><label>Дата<input type="date" [(ngModel)]="externalDate" (ngModelChange)="loadExternal()"></label></div></div>
   @if(externalLoading()){<p class="muted">Загружаем расписание…</p>}

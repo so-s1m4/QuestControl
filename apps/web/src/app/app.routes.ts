@@ -7,6 +7,7 @@ import { KrampusComponent } from "./pages/krampus/krampus.component";
 import { UsersComponent } from "./pages/users/users.component";
 import { BookingsComponent } from "./pages/bookings/bookings.component";
 import { RoomsComponent } from "./pages/rooms/rooms.component";
+import { LocationsComponent } from "./pages/locations/locations.component";
 export const routes:Routes=[
   {path:"login",component:LoginComponent},
   {path:"",component:OverviewComponent,canActivate:[authGuard]},
@@ -14,6 +15,7 @@ export const routes:Routes=[
   {path:"krampus",component:KrampusComponent,canActivate:[authGuard]},
   {path:"users",component:UsersComponent,canActivate:[authGuard]},
   {path:"bookings",component:BookingsComponent,canActivate:[authGuard]},
+  {path:"locations",component:LocationsComponent,canActivate:[authGuard]},
   {path:"rooms",component:RoomsComponent,canActivate:[authGuard]},
   {path:"**",redirectTo:""}
 ];
