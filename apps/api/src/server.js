@@ -516,14 +516,50 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
 });
 
 app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
-  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
+  if (!["OWNER","ADMIN"].includes(req.user?.role)) return res.status(403).json({ error:"SESSIONS_HISTORY_FORBIDDEN" });
+  const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+  const input = z.object({
+    locationId:z.string().uuid().optional(),
+    from:date.optional(),
+    to:date.optional(),
+  }).parse(req.query);
+  if (input.from && input.to && input.from > input.to) return res.status(400).json({ error:"INVALID_DATE_RANGE" });
+  if (input.locationId && !(await locationAllowed(req,input.locationId))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  const values = isOwner(req) ? [] : [req.user.sub];
+  const scopeClause = isOwner(req)
+    ? "TRUE"
+    : "r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)";
+  let locationClause = "TRUE";
+  if (input.locationId) {
+    values.push(input.locationId);
+    locationClause = `r.location_id=$${values.length}`;
+  }
+  let dateClause = "TRUE";
+  if (input.from) {
+    values.push(input.from);
+    dateClause = `s.started_at >= $${values.length}::date`;
+  }
+  if (input.to) {
+    values.push(input.to);
+    dateClause += ` AND s.started_at < ($${values.length}::date + interval '1 day')`;
+  }
   const { rows } = await db.query(`
-    SELECT s.*,r.name room_name,b.customer_name
-    FROM sessions s JOIN rooms r ON r.id=s.room_id
-    LEFT JOIN bookings b ON b.id=s.booking_id
-    WHERE ${scoped.clause}
+    SELECT s.*,r.name room_name,r.location_id,l.name location_name,
+           count(sp.person_id)::int player_count,
+           count(sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_player_count,
+           count(sp.person_id) FILTER (WHERE p.identity_type='BOOKING_RANDOM')::int anonymous_player_count,
+           CASE WHEN s.started_at IS NULL THEN NULL
+             ELSE extract(epoch FROM (COALESCE(s.ended_at,now())-s.started_at))::int
+           END elapsed_seconds
+    FROM sessions s
+    JOIN rooms r ON r.id=s.room_id
+    JOIN locations l ON l.id=r.location_id
+    LEFT JOIN session_participants sp ON sp.session_id=s.id
+    LEFT JOIN people p ON p.id=sp.person_id
+    WHERE ${scopeClause} AND ${locationClause} AND ${dateClause}
+    GROUP BY s.id,r.id,r.name,r.location_id,l.name
     ORDER BY COALESCE(s.started_at,now()) DESC LIMIT 250
-  `,scoped.values);
+  `,values);
   res.json(rows);
 });
 
@@ -586,32 +622,45 @@ app.get("/statistics/players", auth, permit("statistics:read"), async (req, res)
   const input = z.object({
     from: date.default(monthAgo.toISOString().slice(0,10)),
     to: date.default(today.toISOString().slice(0,10)),
+    locationId: z.string().uuid().optional(),
   }).parse(req.query);
   if (input.from > input.to) return res.status(400).json({ error:"INVALID_DATE_RANGE" });
-  const scoped = isOwner(req)
-    ? { clause:"TRUE", values:[input.from,input.to] }
-    : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$3)", values:[input.from,input.to,req.user.sub] };
+  if (input.locationId && !(await locationAllowed(req,input.locationId))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  const values = isOwner(req) ? [input.from,input.to] : [input.from,input.to,req.user.sub];
+  const scopeClause = isOwner(req)
+    ? "TRUE"
+    : "r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$3)";
+  let locationClause = "TRUE";
+  if (input.locationId) {
+    values.push(input.locationId);
+    locationClause = `r.location_id=$${values.length}`;
+  }
+  const scoped = { clause:`${scopeClause} AND ${locationClause}`, values };
   const base = `
     FROM session_participants sp
     JOIN people p ON p.id=sp.person_id
     JOIN sessions s ON s.id=sp.session_id
     JOIN rooms r ON r.id=s.room_id
+    JOIN locations l ON l.id=r.location_id
     WHERE s.started_at >= $1::date
       AND s.started_at < ($2::date + interval '1 day')
       AND ${scoped.clause}
   `;
-  const [summary,categories,ageBands,games] = await Promise.all([
+  const [summary,crossLocation,categories,ageBands,games,locations] = await Promise.all([
     db.query(`SELECT count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(*) FILTER (WHERE p.identity_type='BOOKING_RANDOM')::int anonymous_player_plays,count(DISTINCT s.id)::int sessions ${base}`,scoped.values),
+    db.query(`SELECT count(*)::int cross_location_players FROM (SELECT sp.person_id ${base} AND p.identity_type='EMAIL_HMAC' GROUP BY sp.person_id HAVING count(DISTINCT r.location_id)>1) visitors`,scoped.values),
     db.query(`SELECT COALESCE(sp.category_at_play,'UNKNOWN') category,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players ${base} GROUP BY 1 ORDER BY player_plays DESC`,scoped.values),
     db.query(`SELECT COALESCE(sp.age_band_at_play,'UNKNOWN') age_band,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players ${base} GROUP BY 1 ORDER BY player_plays DESC`,scoped.values),
     db.query(`SELECT r.id room_id,r.name game,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY r.id,r.name ORDER BY player_plays DESC`,scoped.values),
+    db.query(`SELECT l.id location_id,l.name location,count(*)::int player_plays,count(DISTINCT sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_unique_players,count(DISTINCT s.id)::int sessions ${base} GROUP BY l.id,l.name ORDER BY player_plays DESC`,scoped.values),
   ]);
   res.json({
     period: input,
-    summary: summary.rows[0],
+    summary: { ...summary.rows[0], ...crossLocation.rows[0] },
     byCategory: categories.rows,
     byAgeBand: ageBands.rows,
     byGame: games.rows,
+    byLocation: locations.rows,
   });
 });
 

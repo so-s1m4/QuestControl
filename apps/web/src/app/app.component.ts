@@ -16,7 +16,8 @@ export class AppComponent{
   private router=inject(Router);
   private http=inject(HttpClient);
   showLogout=signal(this.router.url!=="/login");
-  constructor(){this.router.events.pipe(filter((event):event is NavigationEnd=>event instanceof NavigationEnd)).subscribe(event=>this.showLogout.set(event.urlAfterRedirects!=="/login"))}
-  logout(){sessionStorage.removeItem("access_token");localStorage.removeItem("refresh_token");localStorage.removeItem("questcontrol.selectedCameras");void this.router.navigateByUrl("/login")}
+  constructor(){this.updateManagementClass();this.router.events.pipe(filter((event):event is NavigationEnd=>event instanceof NavigationEnd)).subscribe(event=>{this.showLogout.set(event.urlAfterRedirects!=="/login");this.updateManagementClass();})}
+  logout(){document.body.classList.remove("management-user");sessionStorage.removeItem("access_token");localStorage.removeItem("refresh_token");localStorage.removeItem("questcontrol.selectedCameras");void this.router.navigateByUrl("/login")}
+  private updateManagementClass(){try{const token=sessionStorage.getItem("access_token");const role=token?JSON.parse(atob(token.split(".")[1])).role:null;document.body.classList.toggle("management-user",role==="OWNER"||role==="ADMIN");}catch{document.body.classList.remove("management-user");}}
   changePassword(){const currentPassword=prompt("Введите текущий пароль:");if(currentPassword===null)return;const newPassword=prompt("Введите новый пароль (минимум 12 символов):");if(newPassword===null)return;if(newPassword.length<12){alert("Новый пароль должен содержать минимум 12 символов.");return}const confirmation=prompt("Повторите новый пароль:");if(confirmation!==newPassword){alert("Пароли не совпадают.");return}this.http.patch("/api/auth/password",{currentPassword,newPassword}).subscribe({next:()=>{alert("Пароль изменён. Войдите заново.");this.logout()},error:({error})=>alert(error?.error==="CURRENT_PASSWORD_INVALID"?"Текущий пароль указан неверно.":"Не удалось изменить пароль.")})}
 }

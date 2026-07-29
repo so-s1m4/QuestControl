@@ -26,6 +26,7 @@ type Location = { id:string;name:string };
         <nav>
           <a routerLink="/">Обзор</a>
           <a routerLink="/bookings">Бронирования</a>
+          <a class="sessions-nav" routerLink="/sessions">Сессии</a>
           <a routerLink="/locations">Локации</a>
           <a routerLink="/rooms">Комнаты</a>
           <a routerLink="/cameras">Камеры</a>
