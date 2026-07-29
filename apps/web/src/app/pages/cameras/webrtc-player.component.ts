@@ -27,6 +27,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private socket?:Socket;private peer?:RTCPeerConnection;private sessionId="";private fallbackSent=false;
   private timeout?:ReturnType<typeof setTimeout>;private disconnectTimeout?:ReturnType<typeof setTimeout>;
   private stream=new MediaStream();
+  private silentContext?:AudioContext;private silentOscillator?:OscillatorNode;private silentTrack?:MediaStreamTrack;
 
   ngAfterViewInit(){
     const token=sessionStorage.getItem("access_token");
@@ -47,7 +48,15 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private async startPeer(iceServers:RTCIceServer[]){
     try{
       this.peer=new RTCPeerConnection({iceServers});
-      this.peer.addTransceiver("audio",{direction:"recvonly"});
+      const AudioContextClass=window.AudioContext||(window as typeof window&{webkitAudioContext:typeof AudioContext}).webkitAudioContext;
+      this.silentContext=new AudioContextClass();
+      const destination=this.silentContext.createMediaStreamDestination();
+      const gain=this.silentContext.createGain();
+      gain.gain.value=0;
+      this.silentOscillator=this.silentContext.createOscillator();
+      this.silentOscillator.connect(gain);gain.connect(destination);this.silentOscillator.start();
+      this.silentTrack=destination.stream.getAudioTracks()[0];
+      this.peer.addTrack(this.silentTrack,destination.stream);
       this.peer.addTransceiver("video",{direction:"recvonly"});
       this.peer.ontrack=event=>{
         if(!this.stream.getTracks().some(track=>track.id===event.track.id))this.stream.addTrack(event.track);
@@ -104,6 +113,8 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     if(this.sessionId)this.send("disconnect","");
     this.peer?.close();this.socket?.disconnect();
     this.peer=undefined;this.socket=undefined;
+    this.silentTrack?.stop();this.silentOscillator?.stop();void this.silentContext?.close();
+    this.silentTrack=undefined;this.silentOscillator=undefined;this.silentContext=undefined;
     for(const track of this.stream.getTracks())track.stop();
   }
 
