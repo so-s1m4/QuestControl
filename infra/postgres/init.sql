@@ -4,7 +4,8 @@ CREATE TYPE room_kind AS ENUM ('REAL', 'VR');
 CREATE TYPE entity_status AS ENUM ('ONLINE', 'OFFLINE', 'DEGRADED', 'DISABLED');
 CREATE TABLE roles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE NOT NULL, permissions jsonb NOT NULL DEFAULT '[]');
 CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email citext UNIQUE NOT NULL, password_hash text NOT NULL, display_name text NOT NULL, role_id uuid REFERENCES roles(id), is_active boolean NOT NULL DEFAULT true, refresh_token_hash text, created_at timestamptz NOT NULL DEFAULT now());
-CREATE TABLE locations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, timezone text NOT NULL DEFAULT 'Europe/Vienna', address text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE locations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), external_id text UNIQUE, name text NOT NULL, timezone text NOT NULL DEFAULT 'Europe/Vienna', address text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE user_locations (user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE, PRIMARY KEY(user_id,location_id));
 CREATE TABLE rooms (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), location_id uuid NOT NULL REFERENCES locations(id), name text NOT NULL, kind room_kind NOT NULL, status entity_status NOT NULL DEFAULT 'OFFLINE', capacity int NOT NULL DEFAULT 1, metadata jsonb NOT NULL DEFAULT '{}');
 CREATE TABLE integrations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), location_id uuid REFERENCES locations(id), type text NOT NULL, name text NOT NULL, status entity_status NOT NULL DEFAULT 'OFFLINE', encrypted_config bytea, last_health_at timestamptz);
 CREATE TABLE local_sites (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), room_id uuid REFERENCES rooms(id), agent_id text NOT NULL, name text NOT NULL, local_url text NOT NULL, allowed_methods text[] NOT NULL DEFAULT ARRAY['GET'], enabled boolean NOT NULL DEFAULT true);
@@ -17,6 +18,6 @@ CREATE INDEX audit_logs_created_at_idx ON audit_logs(created_at DESC);
 CREATE INDEX bookings_room_starts_idx ON bookings(room_id, starts_at);
 INSERT INTO roles(name, permissions) VALUES
  ('OWNER','["*"]'), ('ADMIN','["bookings:*","rooms:*","locations:read","sessions:*","devices:read","cameras:*"]'),
- ('OPERATOR','["bookings:read","rooms:read","sessions:*","devices:command","cameras:read","local_sites:open"]'),
+ ('OPERATOR','["bookings:read","rooms:read","locations:read","sessions:*","devices:read","devices:command","cameras:read","local_sites:open"]'),
  ('TECHNICIAN','["rooms:read","locations:read","devices:*","integrations:*","cameras:*","audit:read"]')
 ON CONFLICT DO NOTHING;

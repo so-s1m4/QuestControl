@@ -11,7 +11,9 @@ type User = {
   role: Role;
   is_active: boolean;
   created_at: string;
+  location_ids: string[];
 };
+type Location = { id:string;name:string };
 
 @Component({
   selector: "app-users",
@@ -50,6 +52,7 @@ type User = {
               </select>
             </label>
             <label>Временный пароль<input name="password" type="password" [(ngModel)]="draft.password" required minlength="12" autocomplete="new-password"></label>
+            <fieldset><legend>Локации</legend>@for(location of locations();track location.id){<label class="check"><input type="checkbox" [checked]="draft.locationIds.includes(location.id)" (change)="toggleDraftLocation(location.id)">{{location.name}}</label>}</fieldset>
             <button type="submit" [disabled]="saving()">{{saving() ? "Создаём…" : "Создать"}}</button>
             <p class="hint">Минимум 12 символов. Передайте пароль пользователю безопасным способом.</p>
           </form>
@@ -68,7 +71,9 @@ type User = {
                   <span>{{user.email}}</span>
                 </div>
                 <span class="role">{{roleName(user.role)}}</span>
+                <div class="assigned">@for(location of locationsFor(user);track location.id){<span>{{location.name}}</span>}@empty{<span>Нет локаций</span>}</div>
                 <span class="status" [class.online]="user.is_active">{{user.is_active ? "Активен" : "Отключён"}}</span>
+                <button class="secondary" (click)="editLocations(user)">Локации</button>
                 <button class="secondary" (click)="toggle(user)">{{user.is_active ? "Отключить" : "Включить"}}</button>
               </article>
             } @empty {
@@ -80,20 +85,21 @@ type User = {
     </main>
   `,
   styles: [`
-    .user-list{display:grid;gap:10px;margin-top:24px}.user-list article{display:grid;grid-template-columns:44px minmax(220px,1fr) 150px 110px auto;gap:16px;align-items:center;padding:16px 18px;background:white;border:1px solid #e1e5ed;border-radius:10px}.user-list article.disabled{opacity:.62}.avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#eef0ff;color:#4058df;font-weight:700}.identity strong,.identity span{display:block}.identity span{margin-top:5px;color:#788295}.role{font-weight:600}.status{color:#b42318}.status.online{color:#067647}.secondary{background:#eef1f6;color:#344054}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}@media(max-width:900px){.user-list article{grid-template-columns:44px 1fr}.role,.status,.user-list button{grid-column:2}}
+    form fieldset{grid-column:1/-1;display:flex;gap:14px;border:1px solid var(--line);border-radius:9px;padding:10px 12px}fieldset .check{display:flex;grid-template-columns:auto 1fr;align-items:center}fieldset input{width:auto}.user-list{display:grid;gap:10px;margin-top:24px}.user-list article{display:grid;grid-template-columns:44px minmax(180px,1fr) 110px minmax(140px,1fr) 90px auto auto;gap:12px;align-items:center;padding:16px 18px;background:white;border:1px solid #e1e5ed;border-radius:10px}.user-list article.disabled{opacity:.62}.avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#eef0ff;color:#4058df;font-weight:700}.identity strong,.identity span{display:block}.identity span{margin-top:5px;color:#788295}.role{font-weight:600}.assigned{display:flex;flex-wrap:wrap;gap:5px}.assigned span{padding:5px 7px;border-radius:999px;background:#eef4ff;color:#3448a5;font-size:10px}.status{color:#b42318}.status.online{color:#067647}.secondary{background:#eef1f6;color:#344054}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}@media(max-width:900px){.user-list article{grid-template-columns:44px 1fr}.role,.assigned,.status,.user-list button{grid-column:2}}
   `]
 })
 export class UsersComponent {
   private http = inject(HttpClient);
   users = signal<User[]>([]);
+  locations = signal<Location[]>([]);
   loading = signal(true);
   saving = signal(false);
   showForm = signal(false);
   error = signal("");
   notice = signal("");
-  draft = { displayName: "", email: "", role: "OPERATOR" as Role, password: "" };
+  draft = { displayName: "", email: "", role: "OPERATOR" as Role, password: "", locationIds:[] as string[] };
 
-  constructor() { this.load(); }
+  constructor() { this.load(); this.http.get<Location[]>("/api/locations").subscribe({next:value=>this.locations.set(value)}); }
 
   load() {
     this.loading.set(true);
@@ -113,7 +119,7 @@ export class UsersComponent {
     this.http.post<User>("/api/users", this.draft).subscribe({
       next: user => {
         this.notice.set(`Пользователь ${user.email} создан.`);
-        this.draft = { displayName: "", email: "", role: "OPERATOR", password: "" };
+        this.draft = { displayName: "", email: "", role: "OPERATOR", password: "", locationIds:[] };
         this.saving.set(false);
         this.showForm.set(false);
         this.load();
@@ -131,6 +137,15 @@ export class UsersComponent {
       next: () => this.load(),
       error: ({ status }) => this.error.set(status === 409 ? "Нельзя отключить собственный аккаунт." : "Не удалось изменить статус пользователя.")
     });
+  }
+  toggleDraftLocation(id:string){this.draft.locationIds=this.draft.locationIds.includes(id)?this.draft.locationIds.filter(value=>value!==id):[...this.draft.locationIds,id];}
+  locationsFor(user:User){return this.locations().filter(location=>user.location_ids.includes(location.id));}
+  editLocations(user:User){
+    const names=this.locations().map((location,index)=>`${index+1}: ${location.name}${user.location_ids.includes(location.id)?" ✓":""}`).join("\n");
+    const value=prompt(`Введите номера локаций через запятую:\n${names}`,this.locations().map((_,index)=>user.location_ids.includes(this.locations()[index].id)?index+1:null).filter(Boolean).join(","));
+    if(value===null)return;
+    const locationIds=value.split(",").map(item=>Number(item.trim())-1).filter(index=>index>=0&&index<this.locations().length).map(index=>this.locations()[index].id);
+    this.http.put(`/api/users/${user.id}/locations`,{locationIds:[...new Set(locationIds)]}).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось обновить локации пользователя.")});
   }
 
   initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join(""); }

@@ -39,6 +39,11 @@ const tuya = new TuyaCloud({
   redis,
 });
 const app = express();
+const isOwner = (req) => req.user?.role === "OWNER";
+async function locationAllowed(req, locationId) {
+  if (isOwner(req)) return true;
+  return Boolean((await db.query("SELECT 1 FROM user_locations WHERE user_id=$1 AND location_id=$2", [req.user.sub, locationId])).rowCount);
+}
 app.set("trust proxy", env.TRUST_PROXY);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
@@ -102,9 +107,12 @@ app.post("/auth/refresh", async (req, res) => {
 
 app.get("/users", auth, permit("users:manage"), async (_, res) => {
   const { rows } = await db.query(`
-    SELECT u.id,u.email,u.display_name,u.is_active,u.created_at,r.name AS role
+    SELECT u.id,u.email,u.display_name,u.is_active,u.created_at,r.name AS role,
+           COALESCE(array_agg(ul.location_id) FILTER (WHERE ul.location_id IS NOT NULL),'{}') AS location_ids
     FROM users u
     JOIN roles r ON r.id=u.role_id
+    LEFT JOIN user_locations ul ON ul.user_id=u.id
+    GROUP BY u.id,r.name
     ORDER BY u.created_at DESC
   `);
   res.json(rows);
@@ -115,6 +123,7 @@ const userInput = z.object({
   displayName: z.string().trim().min(2).max(120),
   password: z.string().min(12).max(200),
   role: z.enum(["OWNER", "ADMIN", "OPERATOR", "TECHNICIAN"]),
+  locationIds: z.array(z.string().uuid()).default([]),
 });
 
 app.post("/users", auth, permit("users:manage"), async (req, res) => {
@@ -126,15 +135,47 @@ app.post("/users", auth, permit("users:manage"), async (req, res) => {
   }
   const role = (await db.query("SELECT id FROM roles WHERE name=$1", [input.role])).rows[0];
   if (!role) return res.status(400).json({ error: "INVALID_ROLE" });
-  const { rows } = await db.query(
-    `INSERT INTO users(email,password_hash,display_name,role_id)
-     VALUES($1,$2,$3,$4)
-     RETURNING id,email,display_name,is_active,created_at`,
-    [input.email, await argon2.hash(input.password), input.displayName, role.id]
-  );
+  const client = await db.connect();
+  let rows;
+  try {
+    await client.query("BEGIN");
+    ({ rows } = await client.query(
+      `INSERT INTO users(email,password_hash,display_name,role_id)
+       VALUES($1,$2,$3,$4)
+       RETURNING id,email,display_name,is_active,created_at`,
+      [input.email, await argon2.hash(input.password), input.displayName, role.id]
+    ));
+    for (const locationId of input.locationIds) {
+      await client.query("INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)", [rows[0].id, locationId]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
   const user = { ...rows[0], role: input.role };
   await audit(req, "user.create", "user", user.id, null, user);
   res.status(201).json(user);
+});
+
+app.put("/users/:id/locations", auth, permit("users:manage"), async (req, res) => {
+  const { locationIds } = z.object({ locationIds:z.array(z.string().uuid()) }).parse(req.body);
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    if (!(await client.query("SELECT 1 FROM users WHERE id=$1", [req.params.id])).rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error:"USER_NOT_FOUND" });
+    }
+    await client.query("DELETE FROM user_locations WHERE user_id=$1", [req.params.id]);
+    for (const locationId of locationIds) await client.query("INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)", [req.params.id,locationId]);
+    await client.query("COMMIT");
+    await audit(req,"user.locations.update","user",req.params.id,null,{locationIds});
+    res.json({ locationIds });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
 });
 
 app.patch("/users/:id/status", auth, permit("users:manage"), async (req, res) => {
@@ -154,24 +195,27 @@ app.patch("/users/:id/status", auth, permit("users:manage"), async (req, res) =>
 });
 
 app.get("/dashboard", auth, async (req, res) => {
+  const scope = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const [rooms, bookings, devices] = await Promise.all([
     db.query(`SELECT r.*,l.name location_name,
       COALESCE((SELECT d.status FROM devices d WHERE d.room_id=r.id ORDER BY d.last_seen DESC NULLS LAST LIMIT 1),r.status) live_status
-      FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY r.name`),
-    db.query("SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date ORDER BY starts_at"),
-    db.query("SELECT status,count(*)::int total FROM devices GROUP BY status")
+      FROM rooms r JOIN locations l ON l.id=r.location_id WHERE ${scope.clause} ORDER BY r.name`,scope.values),
+    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND ${scope.clause} ORDER BY starts_at`,scope.values),
+    db.query(`SELECT d.status,count(*)::int total FROM devices d JOIN rooms r ON r.id=d.room_id WHERE ${scope.clause} GROUP BY d.status`,scope.values)
   ]);
   res.json({ rooms: rooms.rows, bookings: bookings.rows, deviceSummary: devices.rows });
 });
 
-app.get("/bookings", auth, permit("bookings:read"), async (_, res) => {
+app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
+  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
     SELECT b.*,r.name room_name,s.id session_id,s.status session_status
     FROM bookings b
     JOIN rooms r ON r.id=b.room_id
     LEFT JOIN sessions s ON s.booking_id=b.id
+    WHERE ${scoped.clause}
     ORDER BY b.starts_at DESC LIMIT 250
-  `);
+  `,scoped.values);
   res.json(rows);
 });
 
@@ -237,8 +281,19 @@ app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => 
       phone: z.string().nullable().optional(),
       email: z.string().nullable().optional(),
     }).passthrough()).parse(payload.data);
+    for (const club of clubs) {
+      await db.query(
+        `INSERT INTO locations(external_id,name,timezone,address) VALUES($1,$2,$3,$4)
+         ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO UPDATE SET name=excluded.name,timezone=excluded.timezone,address=excluded.address`,
+        [club.id,club.name,club.timezone,club.address || null]
+      );
+    }
+    const allowedExternalIds = isOwner(_)
+      ? null
+      : new Set((await db.query("SELECT l.external_id FROM user_locations ul JOIN locations l ON l.id=ul.location_id WHERE ul.user_id=$1", [_.user.sub])).rows.map(row=>row.external_id));
+    const visibleClubs = allowedExternalIds ? clubs.filter(club=>allowedExternalIds.has(club.id)) : clubs;
     res.json({
-      data: clubs.map(club => ({
+      data: visibleClubs.map(club => ({
         id: club.id,
         name: club.name,
         timezone: club.timezone,
@@ -246,7 +301,7 @@ app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => 
         phone: club.phone || null,
         email: club.email || null,
       })),
-      defaultClubId: env.TIME_TO_GROW_CLUB_ID || clubs[0]?.id || null,
+      defaultClubId: visibleClubs.some(club=>club.id===env.TIME_TO_GROW_CLUB_ID) ? env.TIME_TO_GROW_CLUB_ID : visibleClubs[0]?.id || null,
     });
   } catch (error) {
     if (error?.code === "TIME_TO_GROW_NOT_CONFIGURED") return res.status(503).json({ error: error.code });
@@ -266,6 +321,10 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
   if (!parsed.success) return res.status(400).json({ error: "INVALID_DATE" });
   const clubId = parsed.data.clubId || env.TIME_TO_GROW_CLUB_ID;
   if (!clubId) return res.status(400).json({ error: "CLUB_REQUIRED" });
+  if (!isOwner(req)) {
+    const allowed = await db.query("SELECT 1 FROM user_locations ul JOIN locations l ON l.id=ul.location_id WHERE ul.user_id=$1 AND l.external_id=$2", [req.user.sub,clubId]);
+    if (!allowed.rowCount) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  }
 
   const query = new URLSearchParams({
     filtering: JSON.stringify({ status: "reserved", start_date: parsed.data.date, view_mode: "bookings" }),
@@ -374,13 +433,15 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
   }
 });
 
-app.get("/sessions", auth, permit("sessions:read"), async (_, res) => {
+app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
+  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
     SELECT s.*,r.name room_name,b.customer_name
     FROM sessions s JOIN rooms r ON r.id=s.room_id
     LEFT JOIN bookings b ON b.id=s.booking_id
+    WHERE ${scoped.clause}
     ORDER BY COALESCE(s.started_at,now()) DESC LIMIT 250
-  `);
+  `,scoped.values);
   res.json(rows);
 });
 
@@ -388,6 +449,8 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
   const input = z.object({ bookingId:z.string().uuid(), durationSeconds:z.number().int().min(300).max(14400).default(3600) }).parse(req.body);
   const booking = (await db.query("SELECT * FROM bookings WHERE id=$1", [input.bookingId])).rows[0];
   if (!booking) return res.status(404).json({ error:"BOOKING_NOT_FOUND" });
+  const bookingRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[booking.room_id])).rows[0];
+  if (!bookingRoom || !(await locationAllowed(req,bookingRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   if ((await db.query("SELECT 1 FROM sessions WHERE booking_id=$1 AND status NOT IN ('FINISHED','CANCELLED')", [booking.id])).rowCount) {
     return res.status(409).json({ error:"SESSION_EXISTS" });
   }
@@ -403,6 +466,8 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
   const action = z.enum(["PAUSE","RESUME","FINISH"]).parse(req.body.action);
   const before = (await db.query("SELECT * FROM sessions WHERE id=$1", [req.params.id])).rows[0];
   if (!before) return res.status(404).json({ error:"SESSION_NOT_FOUND" });
+  const sessionRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[before.room_id])).rows[0];
+  if (!sessionRoom || !(await locationAllowed(req,sessionRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const status = action === "PAUSE" ? "PAUSED" : action === "RESUME" ? "RUNNING" : "FINISHED";
   const { rows } = await db.query(
     "UPDATE sessions SET status=$1,ended_at=CASE WHEN $1='FINISHED' THEN now() ELSE ended_at END WHERE id=$2 RETURNING *",
@@ -414,6 +479,7 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
 
 app.post("/rooms", auth, permit("rooms:manage"), async (req, res) => {
   const input = z.object({ locationId:z.string().uuid(),name:z.string().trim().min(2).max(120),kind:z.enum(["REAL","VR"]),capacity:z.number().int().min(1).max(100) }).parse(req.body);
+  if (!(await locationAllowed(req,input.locationId))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const { rows } = await db.query(
     "INSERT INTO rooms(location_id,name,kind,capacity,status) VALUES($1,$2,$3,$4,'OFFLINE') RETURNING *",
     [input.locationId,input.name,input.kind,input.capacity]
@@ -422,14 +488,16 @@ app.post("/rooms", auth, permit("rooms:manage"), async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-app.get("/cameras", auth, permit("cameras:read"), async (_, res) => {
+app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
+  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
     SELECT c.id,c.room_id,c.integration_id,c.name,c.provider,c.external_id,c.stream_key,c.status,
            r.name AS room_name
     FROM cameras c
     LEFT JOIN rooms r ON r.id=c.room_id
+    WHERE ${scoped.clause}
     ORDER BY c.name
-  `);
+  `,scoped.values);
   res.json(rows);
 });
 
@@ -489,6 +557,10 @@ const cameraInput = z.object({
 
 app.post("/cameras", auth, permit("cameras:manage"), async (req, res) => {
   const input = cameraInput.parse(req.body);
+  if (input.roomId) {
+    const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+    if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  }
   const { rows } = await db.query(
     `INSERT INTO cameras(room_id,name,provider,external_id,stream_key,status)
      VALUES($1,$2,$3,$4,$5,'OFFLINE') RETURNING *`,
@@ -502,6 +574,10 @@ app.patch("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
   const input = cameraInput.parse(req.body);
   const before = (await db.query("SELECT * FROM cameras WHERE id=$1", [req.params.id])).rows[0];
   if (!before) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (input.roomId) {
+    const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+    if (!room || !(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  }
   const { rows } = await db.query(
     `UPDATE cameras SET room_id=$1,name=$2,provider=$3,external_id=$4,stream_key=$5
      WHERE id=$6 RETURNING *`,
@@ -518,12 +594,35 @@ app.delete("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
   res.status(204).end();
 });
 
-for (const resource of ["locations","rooms","integrations","local_sites","devices","bookings","sessions"]) {
+for (const resource of ["integrations","local_sites","bookings","sessions"]) {
   app.get(`/${resource}`, auth, permit(`${resource}:read`), async (_, res) => res.json((await db.query(`SELECT * FROM ${resource} ORDER BY 1 DESC LIMIT 250`)).rows));
 }
 
+app.get("/locations", auth, permit("locations:read"), async (req,res) => {
+  const { rows } = isOwner(req)
+    ? await db.query("SELECT * FROM locations ORDER BY name")
+    : await db.query("SELECT l.* FROM locations l JOIN user_locations ul ON ul.location_id=l.id WHERE ul.user_id=$1 ORDER BY l.name",[req.user.sub]);
+  res.json(rows);
+});
+
+app.get("/rooms", auth, permit("rooms:read"), async (req,res) => {
+  const { rows } = isOwner(req)
+    ? await db.query("SELECT * FROM rooms ORDER BY name")
+    : await db.query("SELECT r.* FROM rooms r JOIN user_locations ul ON ul.location_id=r.location_id WHERE ul.user_id=$1 ORDER BY r.name",[req.user.sub]);
+  res.json(rows);
+});
+
+app.get("/devices", auth, permit("devices:read"), async (req,res) => {
+  const { rows } = isOwner(req)
+    ? await db.query("SELECT * FROM devices ORDER BY name")
+    : await db.query("SELECT d.* FROM devices d JOIN rooms r ON r.id=d.room_id JOIN user_locations ul ON ul.location_id=r.location_id WHERE ul.user_id=$1 ORDER BY d.name",[req.user.sub]);
+  res.json(rows);
+});
+
 app.post("/bookings", auth, permit("bookings:create"), async (req, res) => {
   const input = z.object({ roomId:z.string().uuid(), customerName:z.string().min(2), customerPhone:z.string().optional(), startsAt:z.string().datetime(), endsAt:z.string().datetime(), players:z.number().int().positive(), amountCents:z.number().int().nonnegative().default(0), notes:z.string().max(2000).optional() }).parse(req.body);
+  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
+  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const conflict = await db.query("SELECT 1 FROM bookings WHERE room_id=$1 AND tstzrange(starts_at,ends_at) && tstzrange($2,$3) LIMIT 1", [input.roomId,input.startsAt,input.endsAt]);
   if (conflict.rowCount) return res.status(409).json({ error: "BOOKING_CONFLICT" });
   const { rows } = await db.query("INSERT INTO bookings(room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [input.roomId,input.customerName,input.customerPhone||null,input.startsAt,input.endsAt,input.players,input.amountCents,input.notes||null]);
@@ -531,6 +630,8 @@ app.post("/bookings", auth, permit("bookings:create"), async (req, res) => {
 });
 
 app.post("/rooms/:id/command", auth, permit("devices:command"), async (req, res) => {
+  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const command = z.object({ action:z.enum(["status","start_game","pause_game","reset_room","send_hint","add_time","end_game"]), payload:z.record(z.unknown()).default({}) }).parse(req.body);
   const commandId = crypto.randomUUID();
   const agent = await db.query("SELECT agent_id FROM devices WHERE room_id=$1 AND agent_id IS NOT NULL LIMIT 1", [req.params.id]);
@@ -554,12 +655,16 @@ async function roomAgentRequest(roomId, event, payload) {
 
 const krampusRead = z.enum(["status","sensors","logs"]);
 app.get("/rooms/:id/krampus/:resource", auth, permit("rooms:read"), async (req,res) => {
+  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const resource=krampusRead.parse(req.params.resource);
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:resource});
   res.status(result.success ? 200 : 502).json(result.success ? result.result : {error:result.error});
 });
 
 app.post("/rooms/:id/krampus/command", auth, permit("devices:command"), async (req,res) => {
+  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const command=z.string().regex(/^ADMIN [A-Z0-9 _-]{2,120}$/).parse(req.body.command);
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:"command",command});
   await audit(req,"krampus.command","room",req.params.id,null,{command,result});
@@ -567,6 +672,8 @@ app.post("/rooms/:id/krampus/command", auth, permit("devices:command"), async (r
 });
 
 app.post("/rooms/:id/krampus/sound", auth, permit("devices:command"), async (req,res) => {
+  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   const input=z.object({action:z.enum(["play","stop"]),sound:z.enum(["alert.mp3","calling.mp3"]).optional()}).parse(req.body);
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:"sound",...input});
   await audit(req,"krampus.sound","room",req.params.id,null,{...input,result});
@@ -596,8 +703,9 @@ app.get("/tunnel/:ticket", auth, permit("local_sites:open"), async (req,res) => 
 });
 
 app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => {
-  const { rows } = await db.query("SELECT * FROM cameras WHERE id=$1", [req.params.id]);
+  const { rows } = await db.query("SELECT c.*,r.location_id FROM cameras c JOIN rooms r ON r.id=c.room_id WHERE c.id=$1", [req.params.id]);
   const camera=rows[0]; if(!camera) return res.status(404).json({error:"CAMERA_NOT_FOUND"});
+  if (!(await locationAllowed(req,camera.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   if(camera.provider==="TUYA") {
     if(!tuya.configured) return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
     if(!camera.external_id) return res.status(409).json({error:"TUYA_DEVICE_NOT_CONFIGURED"});
@@ -652,4 +760,8 @@ app.use((err, req, res, _next) => {
   if (err instanceof z.ZodError) return res.status(400).json({ error:"INVALID_INPUT",details:err.flatten(),requestId:req.requestId });
   res.status(500).json({ error:"INTERNAL_ERROR",requestId:req.requestId });
 });
+await db.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id text");
+await db.query("CREATE UNIQUE INDEX IF NOT EXISTS locations_external_id_idx ON locations(external_id) WHERE external_id IS NOT NULL");
+await db.query("CREATE TABLE IF NOT EXISTS user_locations(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,PRIMARY KEY(user_id,location_id))");
+await db.query(`UPDATE roles SET permissions='["bookings:read","rooms:read","locations:read","sessions:*","devices:read","devices:command","cameras:read","local_sites:open"]'::jsonb WHERE name='OPERATOR'`);
 server.listen(env.PORT, "0.0.0.0", () => console.log(`QuestControl API listening on ${env.PORT}`));
