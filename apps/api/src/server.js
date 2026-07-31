@@ -1845,6 +1845,10 @@ cameraNs.use(async(socket,next)=>{
   } catch { next(new Error("unauthorized")); }
 });
 cameraNs.on("connection",socket=>{
+  socket.on("diagnostic",message=>{
+    const parsed=z.object({cameraId:z.string().uuid(),stage:z.string().max(40),detail:z.string().max(160).optional()}).safeParse(message);
+    if(parsed.success)console.info("Tuya WebRTC client",parsed.data.cameraId,parsed.data.stage,parsed.data.detail||"");
+  });
   socket.on("start",async(message,ack=()=>{})=>{
     try {
       const input=z.object({cameraId:z.string().uuid()}).parse(message);

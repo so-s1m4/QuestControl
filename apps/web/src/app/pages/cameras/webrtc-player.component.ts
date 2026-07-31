@@ -31,18 +31,19 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
 
   ngAfterViewInit(){
     const token=sessionStorage.getItem("access_token");
-    if(!token)return this.fallback();
+    if(!token)return this.fallback("missing-token");
     this.socket=io("/webrtc",{path:"/socket.io",auth:{token},transports:["websocket"],timeout:10_000});
     this.socket.on("signal",(message:SignalMessage)=>void this.onSignal(message));
-    this.socket.on("connect_error",()=>this.fallback());
+    this.socket.on("connect_error",error=>this.fallback("socket-connect-error",error.message));
     this.socket.on("connect",()=>{
       this.socket?.emit("start",{cameraId:this.cameraId},(response:StartResponse)=>{
-        if(!response?.success||!response.sessionId)return this.fallback();
+        if(!response?.success||!response.sessionId)return this.fallback("session-start-failed",response?.error||"");
         this.sessionId=response.sessionId;
+        this.diagnostic("session-started");
         void this.startPeer(response.iceServers||[]);
       });
     });
-    this.timeout=setTimeout(()=>this.fallback(),15_000);
+    this.timeout=setTimeout(()=>this.fallback("media-timeout"),15_000);
   }
 
   private async startPeer(iceServers:RTCIceServer[]){
@@ -62,35 +63,37 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
         if(!this.stream.getTracks().some(track=>track.id===event.track.id))this.stream.addTrack(event.track);
         this.video.nativeElement.srcObject=this.stream;
         this.status.set("");
+        this.diagnostic("media-track",event.track.kind);
         if(this.timeout)clearTimeout(this.timeout);
         this.video.nativeElement.play().catch(()=>{});
       };
       this.peer.onicecandidate=event=>this.send("candidate",event.candidate?`a=${event.candidate.candidate}`:"");
       this.peer.onconnectionstatechange=()=>{
         const state=this.peer?.connectionState;
+        if(state)this.diagnostic("connection-state",state);
         if(state==="connected"){
           this.status.set("");
           if(this.timeout)clearTimeout(this.timeout);
           if(this.disconnectTimeout)clearTimeout(this.disconnectTimeout);
-        }else if(state==="failed"||state==="closed")this.fallback();
+        }else if(state==="failed"||state==="closed")this.fallback("connection-state",state);
         else if(state==="disconnected"){
-          this.disconnectTimeout=setTimeout(()=>this.fallback(),5_000);
+          this.disconnectTimeout=setTimeout(()=>this.fallback("connection-disconnected"),5_000);
         }
       };
       const offer=await this.peer.createOffer();
       await this.peer.setLocalDescription(offer);
       const compactSdp=String(offer.sdp||"").replace(/\r\na=extmap[^\r\n]*/g,"");
       this.send("offer",compactSdp);
-    }catch{this.fallback()}
+    }catch(error){this.fallback("peer-error",error instanceof Error?error.message:String(error))}
   }
 
   private async onSignal(message:SignalMessage){
     if(message.sessionId!==this.sessionId||!this.peer)return;
     try{
-      if(message.type==="answer")await this.peer.setRemoteDescription({type:"answer",sdp:message.payload});
+      if(message.type==="answer"){this.diagnostic("camera-answer");await this.peer.setRemoteDescription({type:"answer",sdp:message.payload});}
       else if(message.type==="candidate"&&message.payload)await this.peer.addIceCandidate({candidate:message.payload,sdpMid:"0",sdpMLineIndex:0});
-      else if(message.type==="disconnect")this.fallback();
-    }catch{this.fallback()}
+      else if(message.type==="disconnect")this.fallback("camera-disconnect");
+    }catch(error){this.fallback("signal-error",error instanceof Error?error.message:String(error))}
   }
 
   private send(type:"offer"|"candidate"|"disconnect",payload:string){
@@ -102,8 +105,11 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     video.muted=false;video.volume=1;this.muted.set(false);video.play().catch(()=>{});
   }
 
-  private fallback(){
+  private diagnostic(stage:string,detail=""){this.socket?.emit("diagnostic",{cameraId:this.cameraId,stage,detail:detail.slice(0,160)})}
+
+  private fallback(stage:string,detail=""){
     if(this.fallbackSent)return;
+    this.diagnostic(stage,detail);
     this.fallbackSent=true;this.cleanup();this.fallbackRequested.emit();
   }
 

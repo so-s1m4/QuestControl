@@ -38,6 +38,7 @@ export class TuyaWebRTCManager {
       hub,
       publishTopic: topicFor(hub.sinkTopic, config.moto_id, deviceId),
     });
+    console.info("Tuya WebRTC session started",deviceId,sessionId.slice(0,8));
 
     const rawIce = config?.p2p_config?.ices || [];
     const iceServers = rawIce
@@ -111,6 +112,7 @@ export class TuyaWebRTCManager {
       const session = this.sessions.get(frame?.data?.header?.sessionid);
       if (!session || !session.socket.connected) return;
       const type = frame?.data?.header?.type;
+      if(type==="answer"||type==="candidate"||type==="disconnect")console.info("Tuya WebRTC camera signal",session.deviceId,type,session.sessionId.slice(0,8));
       if (type === "answer") {
         session.socket.emit("signal", { sessionId: session.sessionId, type, payload: frame?.data?.msg?.sdp || "" });
       } else if (type === "candidate") {
@@ -154,6 +156,7 @@ export class TuyaWebRTCManager {
     await new Promise((resolve, reject) => {
       session.hub.client.publish(session.publishTopic, JSON.stringify(frame), { qos: 1 }, (error) => error ? reject(error) : resolve());
     });
+    if(type==="offer"||type==="disconnect")console.info("Tuya WebRTC client signal",session.deviceId,type,sessionId.slice(0,8));
     if (type === "disconnect") this.sessions.delete(sessionId);
   }
 
