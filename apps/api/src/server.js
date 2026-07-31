@@ -1639,6 +1639,35 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
   res.json({provider:camera.provider,mode:"player",endpoint});
 });
 
+const cameraControlInput=z.discriminatedUnion("action",[
+  z.object({action:z.literal("ptz"),direction:z.enum(["UP","RIGHT","DOWN","LEFT","STOP"])}),
+  z.object({action:z.literal("nightVision"),mode:z.enum(["auto","on","off"])})
+]);
+
+app.post("/cameras/:id/control",auth,permit("devices:command"),async(req,res)=>{
+  const input=cameraControlInput.parse(req.body);
+  const camera=(await db.query(`
+    SELECT c.*,COALESCE(c.location_id,r.location_id) AS effective_location_id
+    FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1
+  `,[req.params.id])).rows[0];
+  if(!camera)return res.status(404).json({error:"CAMERA_NOT_FOUND"});
+  if(!camera.effective_location_id||!(await locationAllowed(req,camera.effective_location_id)))return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(camera.provider!=="TUYA"||!camera.external_id)return res.status(409).json({error:"CAMERA_CONTROL_NOT_SUPPORTED"});
+  if(!tuya.configured)return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
+  try{
+    if(input.action==="ptz")await tuya.ptz(camera.external_id,input.direction);
+    else{
+      const value={auto:"0",off:"1",on:"2"}[input.mode];
+      await tuya.sendCommands(camera.external_id,[{code:"basic_nightvision",value}]);
+    }
+    await audit(req,"camera.control","camera",camera.id,null,input);
+    res.json({ok:true,...input});
+  }catch(error){
+    console.warn(req.requestId,"Tuya camera control failed",camera.external_id,error.code,error.message);
+    res.status(502).json({error:"TUYA_CAMERA_CONTROL_FAILED",providerCode:error.code,message:error.message});
+  }
+});
+
 app.get("/rooms/:id/doorbell-calls", auth, permit("cameras:read"), async (req,res) => {
   const room=(await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if(!room) return res.status(404).json({error:"ROOM_NOT_FOUND"});

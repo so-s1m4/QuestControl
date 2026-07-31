@@ -83,6 +83,26 @@ export class TuyaCloud {
     return this.request("GET", `/v1.0/devices/${encodeURIComponent(deviceId)}/webrtc-configs`, undefined, token);
   }
 
+  async ptz(deviceId, direction) {
+    const token = await this.accessToken();
+    return this.request(
+      "POST",
+      `/v1.0/cameras/${encodeURIComponent(deviceId)}/configs/ptz`,
+      { value: direction },
+      token,
+    );
+  }
+
+  async sendCommands(deviceId, commands) {
+    const token = await this.accessToken();
+    return this.request(
+      "POST",
+      `/v1.0/devices/${encodeURIComponent(deviceId)}/commands`,
+      { commands },
+      token,
+    );
+  }
+
   async mqttConfig(uid) {
     const token = await this.accessToken();
     return this.request("POST", "/v2.0/open-iot-hub/access/config", {
