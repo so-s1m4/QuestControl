@@ -84,13 +84,11 @@ export class TuyaCloud {
   }
 
   async ptz(deviceId, direction) {
-    const token = await this.accessToken();
-    return this.request(
-      "POST",
-      `/v1.0/cameras/${encodeURIComponent(deviceId)}/configs/ptz`,
-      { value: direction },
-      token,
-    );
+    if (direction === "STOP") {
+      return this.sendCommands(deviceId, [{ code: "ptz_stop", value: true }]);
+    }
+    const values = { UP: "0", RIGHT: "2", DOWN: "4", LEFT: "6" };
+    return this.sendCommands(deviceId, [{ code: "ptz_control", value: values[direction] }]);
   }
 
   async sendCommands(deviceId, commands) {
