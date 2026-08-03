@@ -1880,7 +1880,7 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
         .replace('ri(e,Object.assign({path:"webadmin/v1/gamecommand"},t||{}))', 'ri(e,Object.assign({},t||{},{protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/proxy/webadmin/v1/gamecommand"}))')
         .replace('Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({path:"session/"},t||{}))}', 'Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({},t||{},{protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/station/"+encodeURIComponent((null==t?void 0:t.host)||"auto")+"/session/"}))}'));
     }
-    if(req.method==="GET"&&/^(webadmin\/v1\/(games|instances|sessions)|webadmin\/v1\/(?:meta)?session\/(create|terminate))$/.test(path)&&response.ok) {
+    if(req.method==="GET"&&response.headers.get("content-type")?.includes("application/json")&&/^(webadmin\/v1\/(games|instances|sessions)|webadmin\/v1\/(?:meta)?session\/(create|terminate))$/.test(path)&&response.ok) {
       try { await trackVrSession(req,path,JSON.parse(responseBytes.toString("utf8")),true); } catch(error) { console.warn("VR session log capture failed",error.message); }
     }
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
