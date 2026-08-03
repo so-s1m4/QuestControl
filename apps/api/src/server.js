@@ -1666,15 +1666,28 @@ async function trackVrSession(req,path,responseValue,responseOk) {
   if(!responseOk) return;
   await rememberVrCatalog(path,responseValue);
   if(path==="webadmin/v1/sessions") {
-    for(const session of vrResponseItems(responseValue)) {
-      if(session?.is_terminated===undefined||session?.is_terminated===false) continue;
+    const sessions=vrResponseItems(responseValue);
+    const visibleIds=[];
+    for(const session of sessions) {
       const externalId=String(session.id??session.sid??"");
+      if(externalId) visibleIds.push(externalId);
+      if(session?.is_terminated===undefined||session?.is_terminated===false) continue;
       if(!externalId) continue;
       const reportedDuration=Number(session.duration);
       const durationSeconds=Number.isFinite(reportedDuration)&&reportedDuration>=0?Math.round(reportedDuration):null;
       await db.query(`UPDATE vr_session_logs SET status='FINISHED',ended_at=COALESCE(ended_at,now()),duration_seconds=COALESCE($3,duration_seconds,GREATEST(0,extract(epoch FROM now()-started_at)::int)),raw_end=$4
         WHERE location_id=$1 AND external_session_id=$2 AND status='ACTIVE'`,[req.vrSession.locationId,externalId,durationSeconds,{source:"sessions",isTerminated:true,reportedDuration:durationSeconds}]);
     }
+    if(visibleIds.length===1) {
+      await db.query(`UPDATE vr_session_logs SET external_session_id=$2
+        WHERE id=(SELECT id FROM vr_session_logs WHERE location_id=$1 AND status='ACTIVE' AND external_session_id IS NULL ORDER BY started_at DESC LIMIT 1)`,
+        [req.vrSession.locationId,visibleIds[0]]);
+    }
+    await db.query(`UPDATE vr_session_logs SET status='FINISHED',ended_at=now(),
+      duration_seconds=GREATEST(0,extract(epoch FROM now()-started_at)::int),raw_end=$3
+      WHERE location_id=$1 AND status='ACTIVE' AND started_at < now()-interval '15 seconds'
+        AND (cardinality($2::text[])=0 OR (external_session_id IS NOT NULL AND NOT (external_session_id=ANY($2::text[]))))`,
+      [req.vrSession.locationId,visibleIds,{source:"sessions",reason:"no-longer-visible"}]);
     return;
   }
   const match=/^(?:webadmin\/v1\/)?(?:meta)?session\/(create|terminate)$/.exec(path);
@@ -1841,13 +1854,15 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
         .replaceAll(".vrp_authorization",'["vrp-authorization"]')
         .replaceAll(".vrp_session",'["vrp-session"]')
         .replaceAll(".vrp_user",'["vrp-user"]')
+        .replace('ri=function(e,t){t=t||{};var n=Object(be.isUndefined)(t.path)?ni:t.path,r=', 'ri=function(e,t){t=t||{};var n=Object(be.isUndefined)(t.path)?ni:t.path;0===n.indexOf("api/vr/sankt-poelten/")&&(t=Object.assign({},t,{api:location.hostname,host:location.hostname,protocol:"https",port:"443"}));var r=')
         .replace('var QH={port:"1717",path:"catcher/v1/"}','var QH={port:"443",path:"api/vr/sankt-poelten/screen/"}')
         .replace('host:null==e?void 0:e.ip,queryParams:{w:', 'host:location.hostname,queryParams:{host:null==e?void 0:e.ip,w:')
         .replace('path:"arvi/vrp2/websockettools/vnc",port:"22035"','path:"api/vr/sankt-poelten/vnc",port:"443"')
         .replace('o.host=e.data.ip', '(o.path=KB.path+"?stationHost="+encodeURIComponent(e.data.ip),o.host=location.hostname)')
+        .replace('ri(e,Object.assign({path:"webadmin/v1/gamecommand"},t||{}))', 'ri(e,Object.assign({},t||{},{protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/proxy/webadmin/v1/gamecommand"}))')
         .replace('Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({path:"session/"},t||{}))}', 'Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({},t||{},{protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/station/"+encodeURIComponent((null==t?void 0:t.host)||"auto")+"/session/"}))}'));
     }
-    if(/^(webadmin\/v1\/(games|instances|sessions)|webadmin\/v1\/(?:meta)?session\/(create|terminate))$/.test(path)&&response.ok) {
+    if(req.method==="GET"&&/^(webadmin\/v1\/(games|instances|sessions)|webadmin\/v1\/(?:meta)?session\/(create|terminate))$/.test(path)&&response.ok) {
       try { await trackVrSession(req,path,JSON.parse(responseBytes.toString("utf8")),true); } catch(error) { console.warn("VR session log capture failed",error.message); }
     }
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
