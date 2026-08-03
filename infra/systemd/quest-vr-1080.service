@@ -1,0 +1,11 @@
+[Unit]
+Description=QuestControl internal proxy to VR LAN tunnel
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:1080
+User=nobody
+Group=nogroup
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true

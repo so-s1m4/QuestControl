@@ -9,6 +9,8 @@ import argon2 from "argon2";
 import pg from "pg";
 import Redis from "ioredis";
 import { Server } from "socket.io";
+import WebSocket, { WebSocketServer } from "ws";
+import { SocksProxyAgent } from "socks-proxy-agent";
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
 import { TuyaCloud } from "./tuya.js";
@@ -35,6 +37,7 @@ const env = z.object({
   TIME_TO_GROW_PASSWORD: z.string().optional(),
   VR_SANKT_POELTEN_PANEL_URL: z.string().url().default("http://172.23.0.1:30000"),
   VR_SANKT_POELTEN_DEVICE_URL: z.string().url().default("http://172.23.0.1:6101"),
+  VR_SANKT_POELTEN_SOCKS_URL: z.string().url().default("socks5h://172.23.0.1:1080"),
 }).parse(process.env);
 
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, max: 10 });
@@ -65,6 +68,7 @@ app.use(express.json({ limit: "9mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyHeaders: false, skip:req=>req.path.startsWith("/vr/sankt-poelten/proxy/") }));
 
 const server = http.createServer(app);
+const vrVncServer = new WebSocketServer({ noServer:true });
 const io = new Server(server, { path: "/socket.io", cors: { origin: env.CORS_ORIGIN.split(","), credentials: true }, maxHttpBufferSize: 1e6 });
 const key = (v) => new TextEncoder().encode(v);
 const normalizeEmail = (email) => email.trim().normalize("NFKC").toLowerCase();
@@ -1624,6 +1628,11 @@ async function vrTcpReachable(url) {
 function vrCookie(req) {
   return String(req.get("cookie")||"").split(/;\s*/).find(value=>value.startsWith("quest_vr_poelten="))?.slice("quest_vr_poelten=".length);
 }
+function vrPrivateHost(value) {
+  const match=/^192\.168\.31\.(\d{1,3})$/.exec(String(value||""));
+  return match&&Number(match[1])<=255 ? match[0] : null;
+}
+const vrSocksAgent=new SocksProxyAgent(env.VR_SANKT_POELTEN_SOCKS_URL);
 async function requireVrPoeltenAccess(req,res,next) {
   const sessionId=vrCookie(req);
   const raw=sessionId&&await redis.get(`vr-session:${sessionId}`);
@@ -1665,6 +1674,22 @@ app.get("/vr/sankt-poelten/panel/content/79/index",async(req,res)=>{
   const query=new URLSearchParams({protocol:"https",api:host,apiPort:"443",apiPath:"api/vr/sankt-poelten/proxy/webadmin/v1/",ip:host,cb:assetVersion});
   res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}")</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=${assetVersion}"></script></body></html>`);
 });
+app.get("/vr/sankt-poelten/screen/get-screen",requireVrPoeltenAccess,async(req,res)=>{
+  const host=vrPrivateHost(req.query.host);
+  if(!host) return res.status(400).json({error:"INVALID_VR_HOST"});
+  const query=new URLSearchParams();
+  for(const name of ["w","h"]) if(/^\d{1,4}$/.test(String(req.query[name]||""))) query.set(name,String(req.query[name]));
+  const target=`http://${host}:1717/catcher/v1/get-screen?${query}`;
+  const upstream=http.get(target,{agent:vrSocksAgent,timeout:12_000,headers:{accept:req.get("accept")||"image/*"}},response=>{
+    res.status(response.statusCode||502);
+    for(const name of ["content-type","content-length","cache-control"]) {
+      const value=response.headers[name]; if(value) res.set(name,String(value));
+    }
+    response.pipe(res);
+  });
+  upstream.once("timeout",()=>upstream.destroy(new Error("timeout")));
+  upstream.once("error",()=>{if(!res.headersSent) res.status(502).json({error:"VR_SCREEN_UNAVAILABLE"});else res.end();});
+});
 app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standardHeaders:true,legacyHeaders:false}),requireVrPoeltenAccess,express.raw({type:()=>true,limit:"20mb"}),async(req,res)=>{
   const path=req.params[0]||"";
   if(!path||path.includes("..")||path.includes("\\")) return res.status(400).json({error:"INVALID_VR_PATH"});
@@ -1682,7 +1707,11 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
       responseBytes=Buffer.from(responseBytes.toString("utf8")
         .replaceAll(".vrp_authorization",'["vrp-authorization"]')
         .replaceAll(".vrp_session",'["vrp-session"]')
-        .replaceAll(".vrp_user",'["vrp-user"]'));
+        .replaceAll(".vrp_user",'["vrp-user"]')
+        .replace('var QH={port:"1717",path:"catcher/v1/"}','var QH={port:"443",path:"api/vr/sankt-poelten/screen/"}')
+        .replace('host:null==e?void 0:e.ip,queryParams:{w:', 'host:location.hostname,queryParams:{host:null==e?void 0:e.ip,w:')
+        .replace('path:"arvi/vrp2/websockettools/vnc",port:"22035"','path:"api/vr/sankt-poelten/vnc",port:"443"')
+        .replace('o.host=e.data.ip', '(o.path=KB.path+"?stationHost="+encodeURIComponent(e.data.ip),o.host=location.hostname)'));
     }
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
       const value=response.headers.get(name); if(value) res.set(name,value);
@@ -2154,4 +2183,19 @@ tuyaMessages.on("message",async message=>{
   }
 });
 tuyaMessages.start();
+server.on("upgrade",async(req,socket,head)=>{
+  let parsed;
+  try { parsed=new URL(req.url,"http://local"); } catch { return; }
+  if(parsed.pathname!=="/vr/sankt-poelten/vnc") return;
+  const sessionId=String(req.headers.cookie||"").split(/;\s*/).find(value=>value.startsWith("quest_vr_poelten="))?.slice("quest_vr_poelten=".length);
+  const host=vrPrivateHost(parsed.searchParams.get("stationHost"));
+  if(!sessionId||!host||!(await redis.get(`vr-session:${sessionId}`))) return socket.destroy();
+  vrVncServer.handleUpgrade(req,socket,head,client=>{
+    const upstream=new WebSocket(`ws://${host}:22035/arvi/vrp2/websockettools/vnc`,{agent:vrSocksAgent});
+    const close=()=>{if(client.readyState<2)client.close();if(upstream.readyState<2)upstream.close();};
+    client.on("message",data=>{if(upstream.readyState===WebSocket.OPEN)upstream.send(data);});
+    upstream.on("message",data=>{if(client.readyState===WebSocket.OPEN)client.send(data);});
+    client.on("close",close); upstream.on("close",close); upstream.on("error",close); client.on("error",close);
+  });
+});
 server.listen(env.PORT, "0.0.0.0", () => console.log(`QuestControl API listening on ${env.PORT}`));
