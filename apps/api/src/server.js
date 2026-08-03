@@ -1633,6 +1633,7 @@ function vrPrivateHost(value) {
   return match&&Number(match[1])<=255 ? match[0] : null;
 }
 const vrSocksAgent=new SocksProxyAgent(env.VR_SANKT_POELTEN_SOCKS_URL);
+const vrScreenCache=new Map();
 async function requireVrPoeltenAccess(req,res,next) {
   const sessionId=vrCookie(req);
   const raw=sessionId&&await redis.get(`vr-session:${sessionId}`);
@@ -1679,16 +1680,34 @@ app.get("/vr/sankt-poelten/screen/get-screen",requireVrPoeltenAccess,async(req,r
   if(!host) return res.status(400).json({error:"INVALID_VR_HOST"});
   const query=new URLSearchParams();
   for(const name of ["w","h"]) if(/^\d{1,4}$/.test(String(req.query[name]||""))) query.set(name,String(req.query[name]));
+  const cacheKey=`${host}?${query}`;
+  const cached=vrScreenCache.get(cacheKey);
+  if(cached&&cached.expiresAt>Date.now()) return res.type(cached.contentType).set("cache-control","private, max-age=2").send(cached.bytes);
   const target=`http://${host}:1717/catcher/v1/get-screen?${query}`;
   const upstream=http.get(target,{agent:vrSocksAgent,timeout:12_000,headers:{accept:req.get("accept")||"image/*"}},response=>{
     res.status(response.statusCode||502);
     for(const name of ["content-type","content-length","cache-control"]) {
       const value=response.headers[name]; if(value) res.set(name,String(value));
     }
-    response.pipe(res);
+    const chunks=[];
+    response.on("data",chunk=>chunks.push(chunk));
+    response.on("end",()=>{
+      const bytes=Buffer.concat(chunks);
+      if((response.statusCode||0)>=200&&(response.statusCode||0)<300) {
+        vrScreenCache.set(cacheKey,{bytes,contentType:String(response.headers["content-type"]||"image/jpeg"),expiresAt:Date.now()+5_000});
+        if(vrScreenCache.size>50) for(const [key,value] of vrScreenCache) if(value.expiresAt<=Date.now()) vrScreenCache.delete(key);
+      }
+      res.send(bytes);
+    });
   });
   upstream.once("timeout",()=>upstream.destroy(new Error("timeout")));
   upstream.once("error",()=>{if(!res.headersSent) res.status(502).json({error:"VR_SCREEN_UNAVAILABLE"});else res.end();});
+});
+app.get("/vr/sankt-poelten/panel/content/79/dist/*",requireVrPoeltenAccess,(req,res)=>{
+  const asset=req.params[0]||"";
+  if(!asset||asset.includes("..")||asset.includes("\\")) return res.status(400).json({error:"INVALID_VR_PATH"});
+  const query=new URL(req.originalUrl,"http://local").search;
+  res.redirect(307,`/api/vr/sankt-poelten/proxy/content/79/dist/${asset}${query}`);
 });
 app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standardHeaders:true,legacyHeaders:false}),requireVrPoeltenAccess,express.raw({type:()=>true,limit:"20mb"}),async(req,res)=>{
   const path=req.params[0]||"";
