@@ -1656,13 +1656,14 @@ app.get("/vr/sankt-poelten/panel/content/79/index",async(req,res)=>{
   if(!raw) return res.status(410).send("Ссылка запуска VR истекла. Вернитесь в Quest Control и откройте панель снова.");
   const launch=JSON.parse(raw);
   const sessionId=crypto.randomBytes(32).toString("base64url");
+  const assetVersion=crypto.randomBytes(8).toString("hex");
   await redis.setex(`vr-session:${sessionId}`,8*60*60,JSON.stringify(launch));
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/api/vr/sankt-poelten/"});
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/webadmin/v1/"});
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/content/79/"});
   const host=req.get("host").split(":")[0];
-  const query=new URLSearchParams({protocol:"https",api:host,apiPort:"443",apiPath:"api/vr/sankt-poelten/proxy/webadmin/v1/",ip:host,cb:"1"});
-  res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}")</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=1"></script></body></html>`);
+  const query=new URLSearchParams({protocol:"https",api:host,apiPort:"443",apiPath:"api/vr/sankt-poelten/proxy/webadmin/v1/",ip:host,cb:assetVersion});
+  res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}")</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=${assetVersion}"></script></body></html>`);
 });
 app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standardHeaders:true,legacyHeaders:false}),requireVrPoeltenAccess,express.raw({type:()=>true,limit:"20mb"}),async(req,res)=>{
   const path=req.params[0]||"";
@@ -1686,6 +1687,7 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
       const value=response.headers.get(name); if(value) res.set(name,value);
     }
+    if(path==="content/79/dist/bundle.js") res.set("cache-control","no-store");
     res.status(response.status).send(responseBytes);
   } catch {
     res.status(502).json({error:"VR_DEVICE_UNAVAILABLE"});
