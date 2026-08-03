@@ -1656,6 +1656,11 @@ async function rememberVrCatalog(path,value) {
     if(id!==undefined&&name) entries[String(id)]=String(name);
   }
   if(Object.keys(entries).length) await redis.hset(`vr-catalog:${kind}`,entries);
+  if(kind==="stations") {
+    const ips={};
+    for(const item of vrResponseItems(value)) if((item?.sid??item?.id)!==undefined&&vrPrivateHost(item?.ip)) ips[String(item.sid??item.id)]=String(item.ip);
+    if(Object.keys(ips).length) await redis.hset("vr-catalog:station-ips",ips);
+  }
 }
 async function trackVrSession(req,path,responseValue,responseOk) {
   if(!responseOk) return;
@@ -1773,7 +1778,13 @@ app.get("/vr/sankt-poelten/screen/get-screen",requireVrPoeltenAccess,async(req,r
   upstream.once("error",()=>{if(!res.headersSent) res.status(502).json({error:"VR_SCREEN_UNAVAILABLE"});else res.end();});
 });
 app.all("/vr/sankt-poelten/station/:host/session/:action",requireVrPoeltenAccess,express.raw({type:()=>true,limit:"1mb"}),async(req,res)=>{
-  const host=vrPrivateHost(req.params.host);
+  const requestQuery=new URL(req.originalUrl,"http://local").searchParams;
+  let host=vrPrivateHost(req.params.host);
+  if(!host) {
+    const stationId=requestQuery.get("ms")||requestQuery.get("m");
+    if(stationId) host=vrPrivateHost(await redis.hget("vr-catalog:station-ips",stationId));
+    if(!host&&requestQuery.get("sid")) host=vrPrivateHost(await redis.hget("vr-session-hosts",requestQuery.get("sid")));
+  }
   if(!host||!["create","terminate","join","leave","joinsession","changepaidtime"].includes(req.params.action)) return res.status(400).json({error:"INVALID_VR_STATION_ACTION"});
   const target=new URL(`https://${host}/session/${req.params.action}${new URL(req.originalUrl,"http://local").search}`);
   const headers={accept:req.get("accept")||"application/json"};
@@ -1783,7 +1794,15 @@ app.all("/vr/sankt-poelten/station/:host/session/:action",requireVrPoeltenAccess
       const bytes=Buffer.concat(chunks);
       if(response.headers["content-type"]) res.set("content-type",String(response.headers["content-type"]));
       if((response.statusCode||0)>=200&&(response.statusCode||0)<300) {
-        try { await trackVrSession(req,`session/${req.params.action}`,JSON.parse(bytes.toString("utf8")),true); } catch(error) { console.warn("VR station event capture failed",error.message); }
+        try {
+          const value=JSON.parse(bytes.toString("utf8"));
+          await trackVrSession(req,`session/${req.params.action}`,value,true);
+          if(req.params.action==="create") {
+            const created=value?.response??value?.data??value;
+            const externalId=String(created?.id??created?.sid??created??"");
+            if(externalId&&host) await redis.hset("vr-session-hosts",externalId,host);
+          }
+        } catch(error) { console.warn("VR station event capture failed",error.message); }
       }
       res.status(response.statusCode||502).send(bytes);
     });
@@ -1821,7 +1840,7 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
         .replace('host:null==e?void 0:e.ip,queryParams:{w:', 'host:location.hostname,queryParams:{host:null==e?void 0:e.ip,w:')
         .replace('path:"arvi/vrp2/websockettools/vnc",port:"22035"','path:"api/vr/sankt-poelten/vnc",port:"443"')
         .replace('o.host=e.data.ip', '(o.path=KB.path+"?stationHost="+encodeURIComponent(e.data.ip),o.host=location.hostname)')
-        .replace('Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({path:"session/"},t||{}))}', 'Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({},t||{},{protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/station/"+encodeURIComponent((null==t?void 0:t.host)||"")+"/session/"}))}'));
+        .replace('Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({path:"session/"},t||{}))}', 'Nk=function(e,t,n){return!La&&ai(void 0,Ck(Ck({action:e},n||xk),null==t?void 0:t.queryParams))||ri(e,Object.assign({},t||{},{protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/station/"+encodeURIComponent((null==t?void 0:t.host)||"auto")+"/session/"}))}'));
     }
     if(/^(webadmin\/v1\/(games|instances|sessions)|webadmin\/v1\/(?:meta)?session\/(create|terminate))$/.test(path)&&response.ok) {
       try { await trackVrSession(req,path,JSON.parse(responseBytes.toString("utf8")),true); } catch(error) { console.warn("VR session log capture failed",error.message); }
