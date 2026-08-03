@@ -1670,16 +1670,23 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
   const target=new URL(path+new URL(req.originalUrl,"http://local").search,vrPoelten.deviceUrl.href.replace(/\/?$/,"/"));
   const headers={};
   for(const name of ["accept","content-type","vrp_authorization","vrp_user","vrp_session"]) {
-    const value=req.get(name); if(value) headers[name]=value;
+    const value=req.get(name)||req.get(name.replaceAll("_","-")); if(value) headers[name]=value;
   }
   let body;
   if(!["GET","HEAD"].includes(req.method)&&req.body!==undefined) body=Buffer.isBuffer(req.body)?req.body:JSON.stringify(req.body);
   try {
     const response=await fetch(target,{method:req.method,headers,body,redirect:"manual",signal:AbortSignal.timeout(30_000)});
+    let responseBytes=Buffer.from(await response.arrayBuffer());
+    if(path==="content/79/dist/bundle.js"&&response.ok) {
+      responseBytes=Buffer.from(responseBytes.toString("utf8")
+        .replaceAll("vrp_authorization","vrp-authorization")
+        .replaceAll("vrp_session","vrp-session")
+        .replaceAll("vrp_user","vrp-user"));
+    }
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
       const value=response.headers.get(name); if(value) res.set(name,value);
     }
-    res.status(response.status).send(Buffer.from(await response.arrayBuffer()));
+    res.status(response.status).send(responseBytes);
   } catch {
     res.status(502).json({error:"VR_DEVICE_UNAVAILABLE"});
   }
