@@ -1597,16 +1597,19 @@ const vrPoelten = {
   deviceUrl:new URL(env.VR_SANKT_POELTEN_DEVICE_URL),
 };
 async function vrPoeltenLocation(req) {
-  const location=(await db.query(`
+  const location=await vrPoeltenLocationRecord();
+  if(!location) return null;
+  return await locationAllowed(req,location.id) ? location : false;
+}
+async function vrPoeltenLocationRecord() {
+  return (await db.query(`
     SELECT DISTINCT l.id,l.name
     FROM locations l
     JOIN rooms r ON r.location_id=l.id
     WHERE r.kind='VR'
       AND (lower(l.name) LIKE '%pölten%' OR lower(l.name) LIKE '%polten%' OR lower(l.name) LIKE '%peolten%' OR lower(r.name) LIKE '%sankt polten%')
     ORDER BY l.name LIMIT 1
-  `)).rows[0];
-  if(!location) return null;
-  return await locationAllowed(req,location.id) ? location : false;
+  `)).rows[0]||null;
 }
 async function vrReachable(url,path) {
   const started=Date.now();
@@ -1683,6 +1686,26 @@ async function trackVrSession(req,path,responseValue,responseOk) {
         WHERE id=(SELECT id FROM vr_session_logs WHERE location_id=$1 AND status='ACTIVE' AND external_session_id IS NULL ORDER BY started_at DESC LIMIT 1)`,
         [req.vrSession.locationId,visibleIds[0]]);
     }
+    for(const session of sessions) {
+      const externalId=String(session.id??session.sid??"");
+      if(!externalId||session?.is_terminated===true) continue;
+      const gameId=String(session.game_sid??session.game?.sid??session.game?.id??"");
+      const gameName=String(session.game?.name??session.game_name??await redis.hget("vr-catalog:games",gameId)??"Неизвестная игра");
+      const stationNames=[];
+      for(const member of Array.isArray(session.members)?session.members:[]) {
+        const station=member?.station??member?.instance??member;
+        const stationId=String(station?.sid??station?.id??"");
+        const stationName=station?.name??(stationId&&await redis.hget("vr-catalog:stations",stationId));
+        if(stationName&&!stationNames.includes(String(stationName))) stationNames.push(String(stationName));
+      }
+      const reportedDuration=Number(session.duration);
+      const durationSeconds=Number.isFinite(reportedDuration)&&reportedDuration>=0?Math.round(reportedDuration):0;
+      await db.query(`INSERT INTO vr_session_logs(location_id,external_session_id,game_name,stations,started_at,started_by,raw_start)
+        VALUES($1,$2,$3,$4,now()-($5::int*interval '1 second'),$6,$7)
+        ON CONFLICT(location_id,external_session_id) WHERE external_session_id IS NOT NULL
+        DO UPDATE SET game_name=EXCLUDED.game_name,stations=EXCLUDED.stations`,
+        [req.vrSession.locationId,externalId,gameName,stationNames,req.vrSession.userId||null,{source:"sessions-monitor",gameId,durationSeconds}]);
+    }
     await db.query(`UPDATE vr_session_logs SET status='FINISHED',ended_at=now(),
       duration_seconds=GREATEST(0,extract(epoch FROM now()-started_at)::int),raw_end=$3
       WHERE location_id=$1 AND status='ACTIVE' AND started_at < now()-interval '15 seconds'
@@ -1715,15 +1738,44 @@ async function trackVrSession(req,path,responseValue,responseOk) {
       [req.vrSession.locationId,externalId,{externalId}]);
   }
 }
+let vrSessionMonitorBusy=false;
+let vrSessionMonitorCatalogAt=0;
+async function vrSessionMonitorOnce() {
+  if(vrSessionMonitorBusy) return;
+  vrSessionMonitorBusy=true;
+  try {
+    const [location,rawHeaders]=await Promise.all([vrPoeltenLocationRecord(),redis.get("vr-monitor:headers")]);
+    if(!location||!rawHeaders) return;
+    const headers=JSON.parse(rawHeaders);
+    const refreshCatalog=Date.now()-vrSessionMonitorCatalogAt>5*60_000;
+    const paths=refreshCatalog?["webadmin/v1/games","webadmin/v1/instances","webadmin/v1/sessions"]:["webadmin/v1/sessions"];
+    let sessionsObserved=false;
+    for(const path of paths) {
+      const response=await fetch(new URL(path,vrPoelten.deviceUrl.href.replace(/\/?$/,"/")),{headers,signal:AbortSignal.timeout(20_000)});
+      if(!response.ok||!response.headers.get("content-type")?.includes("application/json")) continue;
+      const value=await response.json();
+      await trackVrSession({vrSession:{locationId:location.id,userId:null}},path,value,true);
+      if(path==="webadmin/v1/sessions") sessionsObserved=true;
+    }
+    if(refreshCatalog) vrSessionMonitorCatalogAt=Date.now();
+    if(sessionsObserved) await redis.set("vr-monitor:last-success",new Date().toISOString());
+    else await redis.set("vr-monitor:last-error","ARVI sessions response unavailable");
+  } catch(error) {
+    await redis.set("vr-monitor:last-error",String(error.message||error));
+  } finally { vrSessionMonitorBusy=false; }
+}
+setInterval(vrSessionMonitorOnce,10_000).unref();
+setTimeout(vrSessionMonitorOnce,2_000).unref();
 app.get("/vr/sankt-poelten/status",auth,permit("local_sites:open"),async(req,res)=>{
   const location=await vrPoeltenLocation(req);
   if(location===false) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   if(!location) return res.status(404).json({error:"VR_LOCATION_NOT_FOUND"});
-  const [panel,device]=await Promise.all([
+  const [panel,device,monitorState]=await Promise.all([
     vrTcpReachable(vrPoelten.panelUrl),
     vrReachable(vrPoelten.deviceUrl,"/content/79/dist/bundle.js"),
+    redis.mget("vr-monitor:last-success","vr-monitor:last-error","vr-monitor:headers"),
   ]);
-  res.json({location,panel,device,ready:panel.online&&device.online});
+  res.json({location,panel,device,ready:panel.online&&device.online,monitor:{authorized:Boolean(monitorState[2]),lastSuccess:monitorState[0],lastError:monitorState[1]}});
 });
 app.get("/vr/sankt-poelten/session-logs",auth,permit("local_sites:open"),async(req,res)=>{
   const location=await vrPoeltenLocation(req);
@@ -1857,6 +1909,9 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
   const headers={};
   for(const name of ["accept","content-type","vrp_authorization","vrp_user","vrp_session"]) {
     const value=req.get(name)||req.get(name.replaceAll("_","-")); if(value) headers[name]=value;
+  }
+  if(headers.vrp_authorization&&headers.vrp_user&&headers.vrp_session) {
+    await redis.set("vr-monitor:headers",JSON.stringify({accept:"application/json",vrp_authorization:headers.vrp_authorization,vrp_user:headers.vrp_user,vrp_session:headers.vrp_session}));
   }
   let body;
   if(!["GET","HEAD"].includes(req.method)&&req.body!==undefined) body=Buffer.isBuffer(req.body)?req.body:JSON.stringify(req.body);
