@@ -1757,7 +1757,7 @@ app.get("/vr/sankt-poelten/panel/content/79/index",async(req,res)=>{
   await redis.setex(`vr-session:${sessionId}`,8*60*60,JSON.stringify(launch));
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/api/vr/sankt-poelten/"});
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/webadmin/v1/"});
-  res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/content/79/"});
+  res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/content/"});
   const host=req.get("host").split(":")[0];
   const query=new URLSearchParams({protocol:"https",api:host,apiPort:"443",apiPath:"api/vr/sankt-poelten/proxy/webadmin/v1/",ip:host,cb:assetVersion});
   res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}")</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=${assetVersion}"></script></body></html>`);
@@ -1789,6 +1789,23 @@ app.get("/vr/sankt-poelten/screen/get-screen",requireVrPoeltenAccess,async(req,r
   });
   upstream.once("timeout",()=>upstream.destroy(new Error("timeout")));
   upstream.once("error",()=>{if(!res.headersSent) res.status(502).json({error:"VR_SCREEN_UNAVAILABLE"});else res.end();});
+});
+app.get("/vr/sankt-poelten/telemetry",requireVrPoeltenAccess,async(req,res)=>{
+  const stationIps=await redis.hvals("vr-catalog:station-ips");
+  const host=stationIps.map(vrPrivateHost).find(Boolean);
+  if(!host) return res.status(503).json({error:"VR_TELEMETRY_STATION_UNAVAILABLE"});
+  const query=new URLSearchParams();
+  if(typeof req.query.modules==="string"&&req.query.modules.length<=500) query.set("modules",req.query.modules);
+  const target=`http://${host}:22031/discovery/telemetry${query.size?`?${query}`:""}`;
+  const upstream=http.get(target,{agent:vrSocksAgent,timeout:30_000,headers:{accept:req.get("accept")||"application/json"}},response=>{
+    res.status(response.statusCode||502);
+    for(const name of ["content-type","content-length","cache-control"]) {
+      const value=response.headers[name]; if(value) res.set(name,String(value));
+    }
+    response.pipe(res);
+  });
+  upstream.once("timeout",()=>upstream.destroy(new Error("timeout")));
+  upstream.once("error",()=>{if(!res.headersSent)res.status(502).json({error:"VR_TELEMETRY_UNAVAILABLE"});else res.end();});
 });
 app.all("/vr/sankt-poelten/station/:host/session/:action",requireVrPoeltenAccess,express.raw({type:()=>true,limit:"1mb"}),async(req,res)=>{
   const requestQuery=new URL(req.originalUrl,"http://local").searchParams;
@@ -1854,7 +1871,8 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
         .replaceAll(".vrp_authorization",'["vrp-authorization"]')
         .replaceAll(".vrp_session",'["vrp-session"]')
         .replaceAll(".vrp_user",'["vrp-user"]')
-        .replace('ri=function(e,t){t=t||{};var n=Object(be.isUndefined)(t.path)?ni:t.path,r=', 'ri=function(e,t){t=t||{};var n=Object(be.isUndefined)(t.path)?ni:t.path;0===n.indexOf("api/vr/sankt-poelten/")&&(t=Object.assign({},t,{api:location.hostname,host:location.hostname,protocol:"https",port:"443"}));var r=')
+        .replace('ri=function(e,t){t=t||{};var n=Object(be.isUndefined)(t.path)?ni:t.path,r=', 'ri=function(e,t){t=t||{};var n=Object(be.isUndefined)(t.path)?ni:t.path;/^192\\.168\\.31\\.\\d+$/.test(t.host||"")&&0===n.indexOf("webadmin/v1/")&&(n="api/vr/sankt-poelten/proxy/"+n);(0===n.indexOf("api/vr/sankt-poelten/")||/^192\\.168\\.31\\.\\d+$/.test(t.host||""))&&(t=Object.assign({},t,{api:location.hostname,host:location.hostname,protocol:"https",port:"443"}));var r=')
+        .replace('yD={port:"22031",path:"discovery/telemetry"}', 'yD={protocol:"https",host:location.hostname,port:"443",path:"api/vr/sankt-poelten/telemetry"}')
         .replace('var QH={port:"1717",path:"catcher/v1/"}','var QH={port:"443",path:"api/vr/sankt-poelten/screen/"}')
         .replace('host:null==e?void 0:e.ip,queryParams:{w:', 'host:location.hostname,queryParams:{host:null==e?void 0:e.ip,w:')
         .replace('path:"arvi/vrp2/websockettools/vnc",port:"22035"','path:"api/vr/sankt-poelten/vnc",port:"443"')
