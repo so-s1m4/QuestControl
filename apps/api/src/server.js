@@ -33,8 +33,8 @@ const env = z.object({
   TIME_TO_GROW_JWT: z.string().optional(),
   TIME_TO_GROW_EMAIL: z.union([z.string().email(), z.literal("")]).optional(),
   TIME_TO_GROW_PASSWORD: z.string().optional(),
-  VR_SANKT_POELTEN_PANEL_URL: z.string().url().default("http://host.docker.internal:30000"),
-  VR_SANKT_POELTEN_DEVICE_URL: z.string().url().default("http://host.docker.internal:6101"),
+  VR_SANKT_POELTEN_PANEL_URL: z.string().url().default("http://172.23.0.1:30000"),
+  VR_SANKT_POELTEN_DEVICE_URL: z.string().url().default("http://172.23.0.1:6101"),
 }).parse(process.env);
 
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, max: 10 });
