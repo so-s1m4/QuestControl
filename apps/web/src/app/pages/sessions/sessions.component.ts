@@ -29,7 +29,7 @@ type Statistics={
   standalone:true,
   imports:[RouterLink,FormsModule,DatePipe],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="active" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="active" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/vr-sankt-poelten">VR Санкт-Пёльтен</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
     <header><div><h2>Сессии</h2><p>История игр и статистика по всей сети</p></div><div class="header-actions">@if(canManageSessions()){<button (click)="newSession()">+ Добавить сессию</button>}<button class="secondary" (click)="load()" [disabled]="loading()">{{loading()?"Обновляем…":"↻ Обновить"}}</button></div></header>
     @if(canManageSessions()&&showForm()){<form class="editor" (ngSubmit)="saveSession()">

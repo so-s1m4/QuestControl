@@ -10,6 +10,7 @@ import { RoomsComponent } from "./pages/rooms/rooms.component";
 import { LocationsComponent } from "./pages/locations/locations.component";
 import { CameraSettingsComponent } from "./pages/camera-settings/camera-settings.component";
 import { SessionsComponent } from "./pages/sessions/sessions.component";
+import { VrPoeltenComponent } from "./pages/vr-poelten/vr-poelten.component";
 import { adminGuard } from "./core/admin.guard";
 export const routes:Routes=[
   {path:"login",component:LoginComponent},
@@ -22,5 +23,6 @@ export const routes:Routes=[
   {path:"sessions",component:SessionsComponent,canActivate:[authGuard,adminGuard]},
   {path:"locations",component:LocationsComponent,canActivate:[authGuard]},
   {path:"rooms",component:RoomsComponent,canActivate:[authGuard]},
+  {path:"vr-sankt-poelten",component:VrPoeltenComponent,canActivate:[authGuard]},
   {path:"**",redirectTo:""}
 ];

@@ -29,7 +29,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
 @Component({
   selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule,HlsPlayerComponent],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/vr-sankt-poelten">VR Санкт-Пёльтен</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
     <header><div><h2>Krampus House</h2><p>Управление комнатой через защищённый room-agent</p></div>
       <div class="connections"><span class="connection" [class.online]="agentOnline()">{{agentOnline()?"Agent online":"Agent offline"}}</span><span class="connection" [class.online]="arduinoOnline()">{{arduinoOnline()?"Arduino online":"Arduino offline"}}</span></div>

@@ -74,6 +74,10 @@ services:
       TIME_TO_GROW_PASSWORD: ${TIME_TO_GROW_PASSWORD}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      VR_SANKT_POELTEN_PANEL_URL: ${VR_SANKT_POELTEN_PANEL_URL:-http://host.docker.internal:30000}
+      VR_SANKT_POELTEN_DEVICE_URL: ${VR_SANKT_POELTEN_DEVICE_URL:-http://host.docker.internal:6101}
+    extra_hosts:
+      - host.docker.internal:host-gateway
     depends_on:
       migrate:
         condition: service_completed_successfully

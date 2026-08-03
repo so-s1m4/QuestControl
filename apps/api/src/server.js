@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import crypto from "node:crypto";
 import express from "express";
 import cors from "cors";
@@ -32,6 +33,8 @@ const env = z.object({
   TIME_TO_GROW_JWT: z.string().optional(),
   TIME_TO_GROW_EMAIL: z.union([z.string().email(), z.literal("")]).optional(),
   TIME_TO_GROW_PASSWORD: z.string().optional(),
+  VR_SANKT_POELTEN_PANEL_URL: z.string().url().default("http://host.docker.internal:30000"),
+  VR_SANKT_POELTEN_DEVICE_URL: z.string().url().default("http://host.docker.internal:6101"),
 }).parse(process.env);
 
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, max: 10 });
@@ -59,7 +62,7 @@ app.set("trust proxy", env.TRUST_PROXY);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
 app.use(express.json({ limit: "9mb" }));
-app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyHeaders: false }));
+app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyHeaders: false, skip:req=>req.path.startsWith("/vr/sankt-poelten/proxy/") }));
 
 const server = http.createServer(app);
 const io = new Server(server, { path: "/socket.io", cors: { origin: env.CORS_ORIGIN.split(","), credentials: true }, maxHttpBufferSize: 1e6 });
@@ -1582,6 +1585,102 @@ app.delete("/rooms/:id/voice-hints/:hintId", auth, permit("devices:command"), as
   if(!hint) return res.status(404).json({error:"VOICE_HINT_NOT_FOUND"});
   await audit(req,"voice_hint.delete","voice_hint",hint.id,hint,null);
   res.status(204).end();
+});
+
+const vrPoelten = {
+  panelUrl:new URL(env.VR_SANKT_POELTEN_PANEL_URL),
+  deviceUrl:new URL(env.VR_SANKT_POELTEN_DEVICE_URL),
+};
+async function vrPoeltenLocation(req) {
+  const location=(await db.query(`
+    SELECT DISTINCT l.id,l.name
+    FROM locations l
+    JOIN rooms r ON r.location_id=l.id
+    WHERE r.kind='VR'
+      AND (lower(l.name) LIKE '%pölten%' OR lower(l.name) LIKE '%polten%' OR lower(l.name) LIKE '%peolten%' OR lower(r.name) LIKE '%sankt polten%')
+    ORDER BY l.name LIMIT 1
+  `)).rows[0];
+  if(!location) return null;
+  return await locationAllowed(req,location.id) ? location : false;
+}
+async function vrReachable(url,path) {
+  const started=Date.now();
+  try {
+    const response=await fetch(new URL(path,url),{method:"HEAD",signal:AbortSignal.timeout(3500),redirect:"manual"});
+    return {online:response.ok,latencyMs:Date.now()-started,status:response.status};
+  } catch { return {online:false,latencyMs:null,status:null}; }
+}
+async function vrTcpReachable(url) {
+  const started=Date.now();
+  return new Promise(resolve=>{
+    const socket=net.createConnection({host:url.hostname,port:Number(url.port)||80});
+    const finish=online=>{socket.destroy();resolve({online,latencyMs:online?Date.now()-started:null,status:null});};
+    socket.setTimeout(3500);
+    socket.once("connect",()=>finish(true));
+    socket.once("timeout",()=>finish(false));
+    socket.once("error",()=>finish(false));
+  });
+}
+function vrCookie(req) {
+  return String(req.get("cookie")||"").split(/;\s*/).find(value=>value.startsWith("quest_vr_poelten="))?.slice("quest_vr_poelten=".length);
+}
+async function requireVrPoeltenAccess(req,res,next) {
+  const sessionId=vrCookie(req);
+  const raw=sessionId&&await redis.get(`vr-session:${sessionId}`);
+  if(!raw) return res.status(401).json({error:"VR_SESSION_EXPIRED"});
+  req.vrSession=JSON.parse(raw);
+  next();
+}
+app.get("/vr/sankt-poelten/status",auth,permit("local_sites:open"),async(req,res)=>{
+  const location=await vrPoeltenLocation(req);
+  if(location===false) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!location) return res.status(404).json({error:"VR_LOCATION_NOT_FOUND"});
+  const [panel,device]=await Promise.all([
+    vrTcpReachable(vrPoelten.panelUrl),
+    vrReachable(vrPoelten.deviceUrl,"/content/79/dist/bundle.js"),
+  ]);
+  res.json({location,panel,device,ready:panel.online&&device.online});
+});
+app.post("/vr/sankt-poelten/launch",auth,permit("local_sites:open"),async(req,res)=>{
+  const location=await vrPoeltenLocation(req);
+  if(location===false) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!location) return res.status(404).json({error:"VR_LOCATION_NOT_FOUND"});
+  const ticket=crypto.randomBytes(32).toString("base64url");
+  await redis.setex(`vr-launch:${ticket}`,60,JSON.stringify({userId:req.user.sub,locationId:location.id}));
+  await audit(req,"vr.panel.launch","location",location.id,null,{provider:"ARVI"});
+  res.json({url:`/api/vr/sankt-poelten/panel/content/79/index?ticket=${ticket}`,expiresIn:60});
+});
+app.get("/vr/sankt-poelten/panel/content/79/index",async(req,res)=>{
+  const ticket=typeof req.query.ticket==="string"?req.query.ticket:"";
+  const raw=ticket&&await redis.getdel(`vr-launch:${ticket}`);
+  if(!raw) return res.status(410).send("Ссылка запуска VR истекла. Вернитесь в Quest Control и откройте панель снова.");
+  const launch=JSON.parse(raw);
+  const sessionId=crypto.randomBytes(32).toString("base64url");
+  await redis.setex(`vr-session:${sessionId}`,8*60*60,JSON.stringify(launch));
+  res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/api/vr/sankt-poelten/"});
+  const host=req.get("host").split(":")[0];
+  const query=new URLSearchParams({protocol:"https",api:host,apiPort:"443",apiPath:"api/vr/sankt-poelten/proxy/webadmin/v1/",ip:host,cb:"1"});
+  res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}")</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=1"></script></body></html>`);
+});
+app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standardHeaders:true,legacyHeaders:false}),requireVrPoeltenAccess,express.raw({type:()=>true,limit:"20mb"}),async(req,res)=>{
+  const path=req.params[0]||"";
+  if(!path||path.includes("..")||path.includes("\\")) return res.status(400).json({error:"INVALID_VR_PATH"});
+  const target=new URL(path+new URL(req.originalUrl,"http://local").search,vrPoelten.deviceUrl.href.replace(/\/?$/,"/"));
+  const headers={};
+  for(const name of ["accept","content-type","vrp_authorization","vrp_user","vrp_session"]) {
+    const value=req.get(name); if(value) headers[name]=value;
+  }
+  let body;
+  if(!["GET","HEAD"].includes(req.method)&&req.body!==undefined) body=Buffer.isBuffer(req.body)?req.body:JSON.stringify(req.body);
+  try {
+    const response=await fetch(target,{method:req.method,headers,body,redirect:"manual",signal:AbortSignal.timeout(30_000)});
+    for(const name of ["content-type","cache-control","last-modified","etag"]) {
+      const value=response.headers.get(name); if(value) res.set(name,value);
+    }
+    res.status(response.status).send(Buffer.from(await response.arrayBuffer()));
+  } catch {
+    res.status(502).json({error:"VR_DEVICE_UNAVAILABLE"});
+  }
 });
 
 app.post("/local-sites/:id/tunnel", auth, permit("local_sites:open"), async (req, res) => {
