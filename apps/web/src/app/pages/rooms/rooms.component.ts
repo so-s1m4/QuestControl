@@ -3,13 +3,530 @@ import { DatePipe } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import { HttpClient } from "@angular/common/http";
 import { RouterLink } from "@angular/router";
-type Location={id:string;name:string}; type Room={id:string;name:string;kind:string;capacity:number;status:string;location_id:string;location_name:string}; type Game={id:string;room_id:string;name:string}; type Device={id:string;room_id:string;name:string;type:string;status:string;last_seen:string|null;agent_id:string|null};
-type VrStatus={ready:boolean;panel:{online:boolean};device:{online:boolean}};
-type VrSessionLog={id:string;game_name:string;stations:string[];status:string;started_at:string;ended_at:string|null;duration_seconds:number|null;operator:string};
-@Component({selector:"app-rooms",standalone:true,imports:[FormsModule,RouterLink,DatePipe],template:`
-<main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a class="active" routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
-<section><header><div><h2>Комнаты и устройства</h2><p>Состояние площадок и подключённых агентов</p></div><button (click)="toggleForm()">{{showForm()?"Закрыть":"+ Добавить комнату"}}</button></header>
-@if(showForm()){<form (ngSubmit)="save()"><label>Название<input name="name" [(ngModel)]="draft.name" required></label><label>Локация<select name="location" [(ngModel)]="draft.locationId" required>@for(l of locations();track l.id){<option [value]="l.id">{{l.name}}</option>}</select></label><label>Тип<select name="kind" [(ngModel)]="draft.kind"><option value="REAL">Реальная</option><option value="VR">VR</option></select></label><label>Вместимость<input name="capacity" type="number" min="1" [(ngModel)]="draft.capacity"></label><button>{{editingId()?"Сохранить":"Создать"}}</button></form>}
-@if(error()){<p class="error">{{error()}}</p>}<div class="location-groups">@for(l of locations();track l.id){<div class="location-group"><div class="location-title"><h3>{{l.name}}</h3><span>{{roomsForLocation(l.id).length}} зон</span></div><div class="room-grid">@for(r of roomsForLocation(l.id);track r.id){<article><div class="room-head"><div><span class="eyebrow">{{r.kind}} · до {{r.capacity}} игроков</span><h3>{{r.name}}</h3></div><div class="room-actions"><span class="dot" [class.online]="roomOnline(r.id)">{{roomOnline(r.id)?"ONLINE":"OFFLINE"}}</span><button class="edit" (click)="edit(r)">Изменить</button>@if(isOwner()){<button class="danger" (click)="remove(r)">Удалить</button>}</div></div><div class="games"><div><b>Игры</b>@if(isOwner()){<button class="edit" (click)="addGame(r)">+ Добавить</button>}</div><div class="game-list">@for(game of roomGames(r.id);track game.id){<span>{{game.name}}@if(isOwner()){<button (click)="renameGame(game)">✎</button><button (click)="removeGame(game)">×</button>}</span>}@empty{<small>Каталог игр пока пуст</small>}</div></div><div class="devices">@if(isPoeltenVr(r)){<div class="vr-agent"><span><b>VRP Agent</b><small>ARVI · защищённый туннель</small></span><span><b>{{vrStatus()?.ready?"ONLINE":"OFFLINE"}}</b><small>{{vrStatus()?.ready?"панель и сервер доступны":"нет соединения"}}</small></span></div>}@for(d of roomDevices(r.id);track d.id){<div><span><b>{{d.name}}</b><small>{{d.type}} · {{d.agent_id||"без агента"}}</small></span><span><b>{{d.status}}</b><small>{{d.last_seen?(d.last_seen|date:'HH:mm:ss'):"нет heartbeat"}}</small></span></div>}@empty{@if(!isPoeltenVr(r)){<p>Устройства не привязаны</p>}}</div>@if(isPoeltenVr(r)){<button class="room-link vr-open" [disabled]="launching()||!vrStatus()?.ready" (click)="launchVr()">{{launching()?"Открываем…":"Открыть VR-панель →"}}</button><div class="vr-log"><div class="vr-log-title"><b>Журнал VR-сессий</b><button class="edit" (click)="loadVrLogs()">↻</button></div>@for(log of vrLogs();track log.id){<div class="vr-log-row"><span><b>{{log.game_name}}</b><small>{{log.stations.length?log.stations.join(', '):'Станции не указаны'}} · {{log.operator}}</small></span><span><b>{{log.status==='ACTIVE'?'Идёт':formatDuration(log.duration_seconds)}}</b><small>{{log.started_at|date:'dd.MM.yyyy HH:mm'}}@if(log.ended_at){<span> — {{log.ended_at|date:'HH:mm'}}</span>}</small></span></div>}@empty{<p class="vr-log-empty">Новых сессий пока нет</p>}</div>}@if(/krampus/i.test(r.name)){<a class="room-link" routerLink="/krampus">Открыть панель Krampus →</a>}</article>}@empty{<div class="empty compact"><b>В этой локации зон пока нет</b></div>}</div></div>}@empty{<div class="empty"><b>Локаций пока нет</b></div>}</div></section></main>`,
-styles:[`.location-groups{display:grid;gap:30px;margin-top:24px}.location-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.location-title h3{margin:0;font-size:20px}.location-title span{color:var(--muted)}.room-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.room-grid>article{padding:20px;background:#fff;border:1px solid var(--line);border-radius:16px}.empty.compact{margin:0;padding:35px;grid-column:1/-1}.room-head{display:flex;justify-content:space-between}.room-head h3{margin:6px 0 18px;font-size:20px}.room-actions{display:flex;align-items:flex-start;gap:7px}.edit{padding:7px 9px;background:#eef1f6;color:#344054;box-shadow:none}.eyebrow{color:var(--muted);font-size:11px;font-weight:700}.dot{height:max-content;padding:7px 9px;border-radius:999px;background:#feecef;color:#a62938;font-size:10px;font-weight:800}.dot.online{background:#e5f8ed;color:#087443}.games{margin-bottom:14px;padding:12px;background:#f8f9fb;border-radius:10px}.games>div:first-child{display:flex;justify-content:space-between;align-items:center}.game-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}.game-list>span{padding:6px 8px;background:#fff;border-radius:8px}.game-list button{padding:0 0 0 6px;background:transparent;color:#667085;box-shadow:none}.game-list small{color:var(--muted)}.devices{display:grid;gap:8px}.devices>div{display:flex;justify-content:space-between;padding:12px;background:#f8f9fb;border-radius:10px}.devices b,.devices small{display:block}.devices small{margin-top:4px;color:var(--muted)}.vr-agent{border:1px solid #c7d2fe;background:#f5f7ff!important}.room-link{display:block;margin-top:16px;color:var(--primary);text-decoration:none;font-weight:700}.vr-open{padding:0;background:transparent;box-shadow:none}.vr-open:disabled{color:var(--muted)}.vr-log{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.vr-log-title,.vr-log-row{display:flex;justify-content:space-between;gap:12px}.vr-log-title{align-items:center;margin-bottom:8px}.vr-log-row{padding:10px 0;border-top:1px solid #eef0f4}.vr-log-row>span:last-child{text-align:right;white-space:nowrap}.vr-log-row b,.vr-log-row small{display:block}.vr-log-row small,.vr-log-empty{margin-top:3px;color:var(--muted);font-size:12px}.vr-log-empty{margin-bottom:0}@media(max-width:900px){.room-grid{grid-template-columns:1fr}}`]})
-export class RoomsComponent{private http=inject(HttpClient);rooms=signal<Room[]>([]);games=signal<Game[]>([]);devices=signal<Device[]>([]);locations=signal<Location[]>([]);vrStatus=signal<VrStatus|null>(null);vrLogs=signal<VrSessionLog[]>([]);launching=signal(false);showForm=signal(false);editingId=signal<string|null>(null);error=signal("");draft={name:"",locationId:"",kind:"REAL",capacity:4};constructor(){this.load();}load(){this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});this.http.get<Game[]>("/api/games").subscribe({next:g=>this.games.set(g)});this.http.get<Device[]>("/api/devices").subscribe({next:d=>this.devices.set(d)});this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(!this.draft.locationId&&l[0])this.draft.locationId=l[0].id;}});this.http.get<VrStatus>("/api/vr/sankt-poelten/status").subscribe({next:s=>this.vrStatus.set(s),error:()=>this.vrStatus.set(null)});this.loadVrLogs();}loadVrLogs(){this.http.get<VrSessionLog[]>("/api/vr/sankt-poelten/session-logs").subscribe({next:logs=>this.vrLogs.set(logs),error:()=>this.vrLogs.set([])});}formatDuration(seconds:number|null){if(seconds===null)return"Завершена";const minutes=Math.floor(seconds/60);return minutes<60?`${minutes} мин`:`${Math.floor(minutes/60)} ч ${minutes%60} мин`;}toggleForm(){if(this.showForm()){this.resetForm();}else{this.showForm.set(true);}}edit(room:Room){this.editingId.set(room.id);this.draft={name:room.name,locationId:room.location_id,kind:room.kind,capacity:room.capacity};this.showForm.set(true);window.scrollTo({top:0,behavior:"smooth"});}save(){const request=this.editingId()?this.http.patch(`/api/rooms/${this.editingId()}`,this.draft):this.http.post("/api/rooms",this.draft);request.subscribe({next:()=>{this.resetForm();this.load();},error:({status})=>this.error.set(status===403?"Нет доступа к выбранной локации.":"Не удалось сохранить комнату.")});}remove(room:Room){if(!confirm(`Удалить зону «${room.name}»?`))return;this.http.delete(`/api/rooms/${room.id}`).subscribe({next:()=>this.load(),error:({status})=>this.error.set(status===409?"Зона используется в бронях, сессиях или устройствах и не может быть удалена.":"Не удалось удалить зону.")});}roomGames(roomId:string){return this.games().filter(game=>game.room_id===roomId)}addGame(room:Room){const name=prompt(`Название игры в зоне «${room.name}»:`)?.trim();if(!name)return;this.http.post("/api/games",{roomId:room.id,name}).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось добавить игру.")});}renameGame(game:Game){const name=prompt("Новое название игры:",game.name)?.trim();if(!name||name===game.name)return;this.http.patch(`/api/games/${game.id}`,{name}).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось переименовать игру.")});}removeGame(game:Game){if(!confirm(`Убрать игру «${game.name}» из каталога?`))return;this.http.delete(`/api/games/${game.id}`).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось убрать игру.")});}isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}resetForm(){this.showForm.set(false);this.editingId.set(null);this.draft={name:"",locationId:this.locations()[0]?.id||"",kind:"REAL",capacity:4};}roomsForLocation(id:string){return this.rooms().filter(room=>room.location_id===id)}roomDevices(id:string){return this.devices().filter(d=>d.room_id===id)}isPoeltenVr(room:Room){return room.kind==="VR"&&/(pölten|polten|peolten|пёльтен)/i.test(room.location_name)}roomOnline(id:string){const room=this.rooms().find(r=>r.id===id);return this.roomDevices(id).some(d=>d.status==="ONLINE")||Boolean(room&&this.isPoeltenVr(room)&&this.vrStatus()?.ready)}launchVr(){const panel=window.open("about:blank","_blank");this.launching.set(true);this.http.post<{url:string}>("/api/vr/sankt-poelten/launch",{}).subscribe({next:r=>{this.launching.set(false);if(panel)panel.location.href=r.url;else window.location.href=r.url},error:()=>{panel?.close();this.launching.set(false);this.error.set("Не удалось открыть VR-панель.")}})}}
+type Location = { id: string; name: string };
+type Room = {
+  id: string;
+  name: string;
+  kind: string;
+  capacity: number;
+  status: string;
+  location_id: string;
+  location_name: string;
+};
+type Game = { id: string; room_id: string; name: string };
+type Device = {
+  id: string;
+  room_id: string;
+  name: string;
+  type: string;
+  status: string;
+  last_seen: string | null;
+  agent_id: string | null;
+};
+type VrStatus = {
+  ready: boolean;
+  panel: { online: boolean };
+  device: { online: boolean };
+};
+@Component({
+  selector: "app-rooms",
+  standalone: true,
+  imports: [FormsModule, RouterLink, DatePipe],
+  template: ` <main>
+    <aside>
+      <h1>Q <span>QUESTCONTROL</span></h1>
+      <nav>
+        <a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a
+        ><a class="sessions-nav" routerLink="/sessions">Сессии</a
+        ><a routerLink="/locations">Локации</a
+        ><a class="active" routerLink="/rooms">Комнаты</a
+        ><a routerLink="/cameras">Камеры</a
+        ><a routerLink="/users">Пользователи</a>
+      </nav>
+    </aside>
+    <section>
+      <header>
+        <div>
+          <h2>Комнаты и устройства</h2>
+          <p>Состояние площадок и подключённых агентов</p>
+        </div>
+        <button (click)="toggleForm()">
+          {{ showForm() ? "Закрыть" : "+ Добавить комнату" }}
+        </button>
+      </header>
+      @if (showForm()) {
+        <form (ngSubmit)="save()">
+          <label
+            >Название<input
+              name="name"
+              [(ngModel)]="draft.name"
+              required /></label
+          ><label
+            >Локация<select
+              name="location"
+              [(ngModel)]="draft.locationId"
+              required
+            >
+              @for (l of locations(); track l.id) {
+                <option [value]="l.id">{{ l.name }}</option>
+              }
+            </select></label
+          ><label
+            >Тип<select name="kind" [(ngModel)]="draft.kind">
+              <option value="REAL">Реальная</option>
+              <option value="VR">VR</option>
+            </select></label
+          ><label
+            >Вместимость<input
+              name="capacity"
+              type="number"
+              min="1"
+              [(ngModel)]="draft.capacity" /></label
+          ><button>{{ editingId() ? "Сохранить" : "Создать" }}</button>
+        </form>
+      }
+      @if (error()) {
+        <p class="error">{{ error() }}</p>
+      }
+      <div class="location-groups">
+        @for (l of locations(); track l.id) {
+          <div class="location-group">
+            <div class="location-title">
+              <h3>{{ l.name }}</h3>
+              <span>{{ roomsForLocation(l.id).length }} зон</span>
+            </div>
+            <div class="room-grid">
+              @for (r of roomsForLocation(l.id); track r.id) {
+                <article>
+                  <div class="room-head">
+                    <div>
+                      <span class="eyebrow"
+                        >{{ r.kind }} · до {{ r.capacity }} игроков</span
+                      >
+                      <h3>{{ r.name }}</h3>
+                    </div>
+                    <div class="room-actions">
+                      <span class="dot" [class.online]="roomOnline(r.id)">{{
+                        roomOnline(r.id) ? "ONLINE" : "OFFLINE"
+                      }}</span
+                      ><button class="edit" (click)="edit(r)">Изменить</button>
+                      @if (isOwner()) {
+                        <button class="danger" (click)="remove(r)">
+                          Удалить
+                        </button>
+                      }
+                    </div>
+                  </div>
+                  <div class="games">
+                    <div>
+                      <b>Игры</b>
+                      @if (isOwner()) {
+                        <button class="edit" (click)="addGame(r)">
+                          + Добавить
+                        </button>
+                      }
+                    </div>
+                    <div class="game-list">
+                      @for (game of roomGames(r.id); track game.id) {
+                        <span
+                          >{{ game.name }}
+                          @if (isOwner()) {
+                            <button (click)="renameGame(game)">✎</button
+                            ><button (click)="removeGame(game)">×</button>
+                          }
+                        </span>
+                      } @empty {
+                        <small>Каталог игр пока пуст</small>
+                      }
+                    </div>
+                  </div>
+                  <div class="devices">
+                    @if (isPoeltenVr(r)) {
+                      <div class="vr-agent">
+                        <span
+                          ><b>VRP Agent</b
+                          ><small>ARVI · защищённый туннель</small></span
+                        ><span
+                          ><b>{{ vrStatus()?.ready ? "ONLINE" : "OFFLINE" }}</b
+                          ><small>{{
+                            vrStatus()?.ready
+                              ? "панель и сервер доступны"
+                              : "нет соединения"
+                          }}</small></span
+                        >
+                      </div>
+                    }
+                    @for (d of roomDevices(r.id); track d.id) {
+                      <div>
+                        <span
+                          ><b>{{ d.name }}</b
+                          ><small
+                            >{{ d.type }} ·
+                            {{ d.agent_id || "без агента" }}</small
+                          ></span
+                        ><span
+                          ><b>{{ d.status }}</b
+                          ><small>{{
+                            d.last_seen
+                              ? (d.last_seen | date: "HH:mm:ss")
+                              : "нет heartbeat"
+                          }}</small></span
+                        >
+                      </div>
+                    } @empty {
+                      @if (!isPoeltenVr(r)) {
+                        <p>Устройства не привязаны</p>
+                      }
+                    }
+                  </div>
+                  @if (isPoeltenVr(r)) {
+                    <button
+                      class="room-link vr-open"
+                      [disabled]="launching() || !vrStatus()?.ready"
+                      (click)="launchVr()"
+                    >
+                      {{ launching() ? "Открываем…" : "Открыть VR-панель →" }}
+                    </button>
+                    <a
+                      class="room-link vr-open"
+                      routerLink="/vr-sankt-poelten/logs"
+                      >Открыть журнал →</a
+                    >
+                  }
+                  @if (/krampus/i.test(r.name)) {
+                    <a class="room-link" routerLink="/krampus"
+                      >Открыть панель Krampus →</a
+                    >
+                  }
+                </article>
+              } @empty {
+                <div class="empty compact">
+                  <b>В этой локации зон пока нет</b>
+                </div>
+              }
+            </div>
+          </div>
+        } @empty {
+          <div class="empty"><b>Локаций пока нет</b></div>
+        }
+      </div>
+    </section>
+  </main>`,
+  styles: [
+    `
+      .location-groups {
+        display: grid;
+        gap: 30px;
+        margin-top: 24px;
+      }
+      .location-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .location-title h3 {
+        margin: 0;
+        font-size: 20px;
+      }
+      .location-title span {
+        color: var(--muted);
+      }
+      .room-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .room-grid > article {
+        padding: 20px;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+      }
+      .empty.compact {
+        margin: 0;
+        padding: 35px;
+        grid-column: 1/-1;
+      }
+      .room-head {
+        display: flex;
+        justify-content: space-between;
+      }
+      .room-head h3 {
+        margin: 6px 0 18px;
+        font-size: 20px;
+      }
+      .room-actions {
+        display: flex;
+        align-items: flex-start;
+        gap: 7px;
+      }
+      .edit {
+        padding: 7px 9px;
+        background: #eef1f6;
+        color: #344054;
+        box-shadow: none;
+      }
+      .eyebrow {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .dot {
+        height: max-content;
+        padding: 7px 9px;
+        border-radius: 999px;
+        background: #feecef;
+        color: #a62938;
+        font-size: 10px;
+        font-weight: 800;
+      }
+      .dot.online {
+        background: #e5f8ed;
+        color: #087443;
+      }
+      .games {
+        margin-bottom: 14px;
+        padding: 12px;
+        background: #f8f9fb;
+        border-radius: 10px;
+      }
+      .games > div:first-child {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .game-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 9px;
+      }
+      .game-list > span {
+        padding: 6px 8px;
+        background: #fff;
+        border-radius: 8px;
+      }
+      .game-list button {
+        padding: 0 0 0 6px;
+        background: transparent;
+        color: #667085;
+        box-shadow: none;
+      }
+      .game-list small {
+        color: var(--muted);
+      }
+      .devices {
+        display: grid;
+        gap: 8px;
+      }
+      .devices > div {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px;
+        background: #f8f9fb;
+        border-radius: 10px;
+      }
+      .devices b,
+      .devices small {
+        display: block;
+      }
+      .devices small {
+        margin-top: 4px;
+        color: var(--muted);
+      }
+      .vr-agent {
+        border: 1px solid #c7d2fe;
+        background: #f5f7ff !important;
+      }
+      .room-link {
+        display: block;
+        margin-top: 16px;
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 700;
+      }
+      .vr-open {
+        padding: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+      .vr-open:disabled {
+        color: var(--muted);
+      }
+      @media (max-width: 900px) {
+        .room-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    `,
+  ],
+})
+export class RoomsComponent {
+  private http = inject(HttpClient);
+  rooms = signal<Room[]>([]);
+  games = signal<Game[]>([]);
+  devices = signal<Device[]>([]);
+  locations = signal<Location[]>([]);
+  vrStatus = signal<VrStatus | null>(null);
+  launching = signal(false);
+  showForm = signal(false);
+  editingId = signal<string | null>(null);
+  error = signal("");
+  draft = { name: "", locationId: "", kind: "REAL", capacity: 4 };
+  constructor() {
+    this.load();
+  }
+  load() {
+    this.http
+      .get<Room[]>("/api/rooms")
+      .subscribe({ next: (r) => this.rooms.set(r) });
+    this.http
+      .get<Game[]>("/api/games")
+      .subscribe({ next: (g) => this.games.set(g) });
+    this.http
+      .get<Device[]>("/api/devices")
+      .subscribe({ next: (d) => this.devices.set(d) });
+    this.http.get<Location[]>("/api/locations").subscribe({
+      next: (l) => {
+        this.locations.set(l);
+        if (!this.draft.locationId && l[0]) this.draft.locationId = l[0].id;
+      },
+    });
+    this.http.get<VrStatus>("/api/vr/sankt-poelten/status").subscribe({
+      next: (s) => this.vrStatus.set(s),
+      error: () => this.vrStatus.set(null),
+    });
+  }
+  toggleForm() {
+    if (this.showForm()) {
+      this.resetForm();
+    } else {
+      this.showForm.set(true);
+    }
+  }
+  edit(room: Room) {
+    this.editingId.set(room.id);
+    this.draft = {
+      name: room.name,
+      locationId: room.location_id,
+      kind: room.kind,
+      capacity: room.capacity,
+    };
+    this.showForm.set(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  save() {
+    const request = this.editingId()
+      ? this.http.patch(`/api/rooms/${this.editingId()}`, this.draft)
+      : this.http.post("/api/rooms", this.draft);
+    request.subscribe({
+      next: () => {
+        this.resetForm();
+        this.load();
+      },
+      error: ({ status }) =>
+        this.error.set(
+          status === 403
+            ? "Нет доступа к выбранной локации."
+            : "Не удалось сохранить комнату.",
+        ),
+    });
+  }
+  remove(room: Room) {
+    if (!confirm(`Удалить зону «${room.name}»?`)) return;
+    this.http.delete(`/api/rooms/${room.id}`).subscribe({
+      next: () => this.load(),
+      error: ({ status }) =>
+        this.error.set(
+          status === 409
+            ? "Зона используется в бронях, сессиях или устройствах и не может быть удалена."
+            : "Не удалось удалить зону.",
+        ),
+    });
+  }
+  roomGames(roomId: string) {
+    return this.games().filter((game) => game.room_id === roomId);
+  }
+  addGame(room: Room) {
+    const name = prompt(`Название игры в зоне «${room.name}»:`)?.trim();
+    if (!name) return;
+    this.http.post("/api/games", { roomId: room.id, name }).subscribe({
+      next: () => this.load(),
+      error: () => this.error.set("Не удалось добавить игру."),
+    });
+  }
+  renameGame(game: Game) {
+    const name = prompt("Новое название игры:", game.name)?.trim();
+    if (!name || name === game.name) return;
+    this.http.patch(`/api/games/${game.id}`, { name }).subscribe({
+      next: () => this.load(),
+      error: () => this.error.set("Не удалось переименовать игру."),
+    });
+  }
+  removeGame(game: Game) {
+    if (!confirm(`Убрать игру «${game.name}» из каталога?`)) return;
+    this.http.delete(`/api/games/${game.id}`).subscribe({
+      next: () => this.load(),
+      error: () => this.error.set("Не удалось убрать игру."),
+    });
+  }
+  isOwner() {
+    try {
+      return (
+        JSON.parse(
+          atob((sessionStorage.getItem("access_token") || "").split(".")[1]),
+        ).role === "OWNER"
+      );
+    } catch {
+      return false;
+    }
+  }
+  resetForm() {
+    this.showForm.set(false);
+    this.editingId.set(null);
+    this.draft = {
+      name: "",
+      locationId: this.locations()[0]?.id || "",
+      kind: "REAL",
+      capacity: 4,
+    };
+  }
+  roomsForLocation(id: string) {
+    return this.rooms().filter((room) => room.location_id === id);
+  }
+  roomDevices(id: string) {
+    return this.devices().filter((d) => d.room_id === id);
+  }
+  isPoeltenVr(room: Room) {
+    return (
+      room.kind === "VR" &&
+      /(pölten|polten|peolten|пёльтен)/i.test(room.location_name)
+    );
+  }
+  roomOnline(id: string) {
+    const room = this.rooms().find((r) => r.id === id);
+    return (
+      this.roomDevices(id).some((d) => d.status === "ONLINE") ||
+      Boolean(room && this.isPoeltenVr(room) && this.vrStatus()?.ready)
+    );
+  }
+  launchVr() {
+    const panel = window.open("about:blank", "_blank");
+    this.launching.set(true);
+    this.http
+      .post<{ url: string }>("/api/vr/sankt-poelten/launch", {})
+      .subscribe({
+        next: (r) => {
+          this.launching.set(false);
+          if (panel) panel.location.href = r.url;
+          else window.location.href = r.url;
+        },
+        error: () => {
+          panel?.close();
+          this.launching.set(false);
+          this.error.set("Не удалось открыть VR-панель.");
+        },
+      });
+  }
+}

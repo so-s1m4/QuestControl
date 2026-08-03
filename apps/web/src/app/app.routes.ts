@@ -11,18 +11,40 @@ import { LocationsComponent } from "./pages/locations/locations.component";
 import { CameraSettingsComponent } from "./pages/camera-settings/camera-settings.component";
 import { SessionsComponent } from "./pages/sessions/sessions.component";
 import { VrPoeltenComponent } from "./pages/vr-poelten/vr-poelten.component";
+import { VrSessionLogsComponent } from "./pages/vr-session-logs/vr-session-logs.component";
 import { adminGuard } from "./core/admin.guard";
-export const routes:Routes=[
-  {path:"login",component:LoginComponent},
-  {path:"",component:OverviewComponent,canActivate:[authGuard]},
-  {path:"cameras",component:CamerasComponent,canActivate:[authGuard]},
-  {path:"camera-settings",component:CameraSettingsComponent,canActivate:[authGuard]},
-  {path:"krampus",component:KrampusComponent,canActivate:[authGuard]},
-  {path:"users",component:UsersComponent,canActivate:[authGuard]},
-  {path:"bookings",component:BookingsComponent,canActivate:[authGuard]},
-  {path:"sessions",component:SessionsComponent,canActivate:[authGuard,adminGuard]},
-  {path:"locations",component:LocationsComponent,canActivate:[authGuard]},
-  {path:"rooms",component:RoomsComponent,canActivate:[authGuard]},
-  {path:"vr-sankt-poelten",component:VrPoeltenComponent,canActivate:[authGuard]},
-  {path:"**",redirectTo:""}
+export const routes: Routes = [
+  { path: "login", component: LoginComponent },
+  { path: "", component: OverviewComponent, canActivate: [authGuard] },
+  { path: "cameras", component: CamerasComponent, canActivate: [authGuard] },
+  {
+    path: "camera-settings",
+    component: CameraSettingsComponent,
+    canActivate: [authGuard],
+  },
+  { path: "krampus", component: KrampusComponent, canActivate: [authGuard] },
+  { path: "users", component: UsersComponent, canActivate: [authGuard] },
+  { path: "bookings", component: BookingsComponent, canActivate: [authGuard] },
+  {
+    path: "sessions",
+    component: SessionsComponent,
+    canActivate: [authGuard, adminGuard],
+  },
+  {
+    path: "locations",
+    component: LocationsComponent,
+    canActivate: [authGuard],
+  },
+  { path: "rooms", component: RoomsComponent, canActivate: [authGuard] },
+  {
+    path: "vr-sankt-poelten/logs",
+    component: VrSessionLogsComponent,
+    canActivate: [authGuard],
+  },
+  {
+    path: "vr-sankt-poelten",
+    component: VrPoeltenComponent,
+    canActivate: [authGuard],
+  },
+  { path: "**", redirectTo: "" },
 ];
