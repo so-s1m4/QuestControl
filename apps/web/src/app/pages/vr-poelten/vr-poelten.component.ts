@@ -10,7 +10,7 @@ type VrStatus={location:{id:string;name:string};panel:EndpointStatus;device:Endp
   standalone:true,
   imports:[RouterLink],
   template:`
-  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/vr-sankt-poelten">VR Санкт-Пёльтен</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
+  <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
     <header><div><h2>VR Санкт-Пёльтен</h2><p>Запуск и управление VR через защищённое соединение Quest Control</p></div><button class="secondary" (click)="load()" [disabled]="loading()">{{loading()?"Проверяем…":"↻ Проверить"}}</button></header>
     @if(error()){<p class="error">{{error()}}</p>}

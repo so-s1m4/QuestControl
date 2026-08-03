@@ -29,7 +29,6 @@ type Location = { id:string;name:string };
           <a class="sessions-nav" routerLink="/sessions">Сессии</a>
           <a routerLink="/locations">Локации</a>
           <a routerLink="/rooms">Комнаты</a>
-          <a routerLink="/vr-sankt-poelten">VR Санкт-Пёльтен</a>
           <a routerLink="/cameras">Камеры</a>
           <a class="active" routerLink="/users">Пользователи</a>
         </nav>
