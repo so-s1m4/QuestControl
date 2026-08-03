@@ -1680,9 +1680,9 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
     let responseBytes=Buffer.from(await response.arrayBuffer());
     if(path==="content/79/dist/bundle.js"&&response.ok) {
       responseBytes=Buffer.from(responseBytes.toString("utf8")
-        .replaceAll("vrp_authorization","vrp-authorization")
-        .replaceAll("vrp_session","vrp-session")
-        .replaceAll("vrp_user","vrp-user"));
+        .replaceAll(".vrp_authorization",'["vrp-authorization"]')
+        .replaceAll(".vrp_session",'["vrp-session"]')
+        .replaceAll(".vrp_user",'["vrp-user"]'));
     }
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
       const value=response.headers.get(name); if(value) res.set(name,value);
