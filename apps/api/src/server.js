@@ -1662,10 +1662,13 @@ app.post("/vr/sankt-poelten/launch",auth,permit("local_sites:open"),async(req,re
 });
 app.get("/vr/sankt-poelten/panel/content/79/index",async(req,res)=>{
   const ticket=typeof req.query.ticket==="string"?req.query.ticket:"";
-  const raw=ticket&&await redis.getdel(`vr-launch:${ticket}`);
-  if(!raw) return res.status(410).send("Ссылка запуска VR истекла. Вернитесь в Quest Control и откройте панель снова.");
-  const launch=JSON.parse(raw);
-  const sessionId=crypto.randomBytes(32).toString("base64url");
+  const ticketRaw=ticket&&await redis.getdel(`vr-launch:${ticket}`);
+  let sessionId=vrCookie(req);
+  let launchRaw=ticketRaw;
+  if(!launchRaw&&sessionId) launchRaw=await redis.get(`vr-session:${sessionId}`);
+  if(!launchRaw) return res.status(410).send("Сессия VR завершена. Вернитесь в Quest Control и откройте панель снова.");
+  const launch=JSON.parse(launchRaw);
+  if(ticketRaw||!sessionId) sessionId=crypto.randomBytes(32).toString("base64url");
   const assetVersion=crypto.randomBytes(8).toString("hex");
   await redis.setex(`vr-session:${sessionId}`,8*60*60,JSON.stringify(launch));
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/api/vr/sankt-poelten/"});
