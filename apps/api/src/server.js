@@ -1641,6 +1641,49 @@ async function requireVrPoeltenAccess(req,res,next) {
   req.vrSession=JSON.parse(raw);
   next();
 }
+function vrResponseItems(value) {
+  const payload=value?.response??value?.data??value;
+  return Array.isArray(payload)?payload:Array.isArray(payload?.items)?payload.items:[];
+}
+async function rememberVrCatalog(path,value) {
+  const kind=path==="webadmin/v1/games"?"games":path==="webadmin/v1/instances"?"stations":null;
+  if(!kind) return;
+  const entries={};
+  for(const item of vrResponseItems(value)) {
+    const id=item?.sid??item?.id;
+    const name=item?.name??item?.title??item?.hostname;
+    if(id!==undefined&&name) entries[String(id)]=String(name);
+  }
+  if(Object.keys(entries).length) await redis.hset(`vr-catalog:${kind}`,entries);
+}
+async function trackVrSession(req,path,responseValue,responseOk) {
+  if(!responseOk) return;
+  await rememberVrCatalog(path,responseValue);
+  const match=/^webadmin\/v1\/(?:meta)?session\/(create|terminate)$/.exec(path);
+  if(!match) return;
+  const query=new URL(req.originalUrl,"http://local").searchParams;
+  let body={};
+  try { if(req.body?.length) body=JSON.parse(req.body.toString("utf8")); } catch {}
+  const input={...Object.fromEntries(query),...body};
+  const response=responseValue?.response??responseValue?.data??responseValue??{};
+  const externalId=String(response?.id??response?.sid??input.sid??"")||null;
+  if(match[1]==="create") {
+    const gameId=String(input.gsid??input.game_sid??input.game??"");
+    const gameName=String(input.game_name??response?.game?.name??response?.game_name??await redis.hget("vr-catalog:games",gameId)??"Неизвестная игра");
+    const stationIds=[...query.getAll("ms"),...query.getAll("m"),...(Array.isArray(body.ms)?body.ms:[]),...(Array.isArray(body.m)?body.m:[])].flatMap(value=>String(value).split(",")).filter(Boolean);
+    const stationNames=[];
+    for(const id of [...new Set(stationIds)]) stationNames.push(await redis.hget("vr-catalog:stations",id)||id);
+    await db.query(`INSERT INTO vr_session_logs(location_id,external_session_id,game_name,stations,started_by,raw_start)
+      VALUES($1,$2,$3,$4,$5,$6)
+      ON CONFLICT(location_id,external_session_id) WHERE external_session_id IS NOT NULL
+      DO UPDATE SET game_name=EXCLUDED.game_name,stations=EXCLUDED.stations,started_by=EXCLUDED.started_by,raw_start=EXCLUDED.raw_start`,
+      [req.vrSession.locationId,externalId,gameName,stationNames,req.vrSession.userId,{gameId,stationIds}]);
+  } else {
+    await db.query(`UPDATE vr_session_logs SET status='FINISHED',ended_at=now(),duration_seconds=GREATEST(0,extract(epoch FROM now()-started_at)::int),raw_end=$3
+      WHERE id=(SELECT id FROM vr_session_logs WHERE location_id=$1 AND ($2::text IS NULL OR external_session_id=$2) AND status='ACTIVE' ORDER BY started_at DESC LIMIT 1)`,
+      [req.vrSession.locationId,externalId,{externalId}]);
+  }
+}
 app.get("/vr/sankt-poelten/status",auth,permit("local_sites:open"),async(req,res)=>{
   const location=await vrPoeltenLocation(req);
   if(location===false) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
@@ -1650,6 +1693,16 @@ app.get("/vr/sankt-poelten/status",auth,permit("local_sites:open"),async(req,res
     vrReachable(vrPoelten.deviceUrl,"/content/79/dist/bundle.js"),
   ]);
   res.json({location,panel,device,ready:panel.online&&device.online});
+});
+app.get("/vr/sankt-poelten/session-logs",auth,permit("local_sites:open"),async(req,res)=>{
+  const location=await vrPoeltenLocation(req);
+  if(location===false) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!location) return res.status(404).json({error:"VR_LOCATION_NOT_FOUND"});
+  const rows=(await db.query(`SELECT l.id,l.game_name,l.stations,l.status,l.started_at,l.ended_at,l.duration_seconds,
+    COALESCE(u.display_name,u.email,'Неизвестно') operator
+    FROM vr_session_logs l LEFT JOIN users u ON u.id=l.started_by
+    WHERE l.location_id=$1 ORDER BY l.started_at DESC LIMIT 100`,[location.id])).rows;
+  res.json(rows);
 });
 app.post("/vr/sankt-poelten/launch",auth,permit("local_sites:open"),async(req,res)=>{
   const location=await vrPoeltenLocation(req);
@@ -1734,6 +1787,9 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
         .replace('host:null==e?void 0:e.ip,queryParams:{w:', 'host:location.hostname,queryParams:{host:null==e?void 0:e.ip,w:')
         .replace('path:"arvi/vrp2/websockettools/vnc",port:"22035"','path:"api/vr/sankt-poelten/vnc",port:"443"')
         .replace('o.host=e.data.ip', '(o.path=KB.path+"?stationHost="+encodeURIComponent(e.data.ip),o.host=location.hostname)'));
+    }
+    if(path.startsWith("webadmin/v1/")&&response.ok) {
+      try { await trackVrSession(req,path,JSON.parse(responseBytes.toString("utf8")),true); } catch(error) { console.warn("VR session log capture failed",error.message); }
     }
     for(const name of ["content-type","cache-control","last-modified","etag"]) {
       const value=response.headers.get(name); if(value) res.set(name,value);
