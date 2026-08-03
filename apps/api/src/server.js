@@ -1665,8 +1665,10 @@ async function trackVrSession(req,path,responseValue,responseOk) {
       if(session?.is_terminated===undefined||session?.is_terminated===false) continue;
       const externalId=String(session.id??session.sid??"");
       if(!externalId) continue;
-      await db.query(`UPDATE vr_session_logs SET status='FINISHED',ended_at=COALESCE(ended_at,now()),duration_seconds=COALESCE(duration_seconds,GREATEST(0,extract(epoch FROM now()-started_at)::int)),raw_end=$3
-        WHERE location_id=$1 AND external_session_id=$2 AND status='ACTIVE'`,[req.vrSession.locationId,externalId,{source:"sessions",isTerminated:true}]);
+      const reportedDuration=Number(session.duration);
+      const durationSeconds=Number.isFinite(reportedDuration)&&reportedDuration>=0?Math.round(reportedDuration):null;
+      await db.query(`UPDATE vr_session_logs SET status='FINISHED',ended_at=COALESCE(ended_at,now()),duration_seconds=COALESCE($3,duration_seconds,GREATEST(0,extract(epoch FROM now()-started_at)::int)),raw_end=$4
+        WHERE location_id=$1 AND external_session_id=$2 AND status='ACTIVE'`,[req.vrSession.locationId,externalId,durationSeconds,{source:"sessions",isTerminated:true,reportedDuration:durationSeconds}]);
     }
     return;
   }
