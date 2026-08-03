@@ -1833,6 +1833,9 @@ app.all("/vr/sankt-poelten/proxy/*",rateLimit({windowMs:60_000,limit:900,standar
     let responseBytes=Buffer.from(await response.arrayBuffer());
     if(path==="content/79/dist/bundle.js"&&response.ok) {
       responseBytes=Buffer.from(responseBytes.toString("utf8")
+        .replaceAll('REACT_APP_API_PROTOCOL:"http"','REACT_APP_API_PROTOCOL:"https"')
+        .replaceAll('REACT_APP_API_HOST:"localhost"','REACT_APP_API_HOST:location.hostname')
+        .replaceAll('REACT_APP_API_PORT:"6101"','REACT_APP_API_PORT:"443"')
         .replaceAll(".vrp_authorization",'["vrp-authorization"]')
         .replaceAll(".vrp_session",'["vrp-session"]')
         .replaceAll(".vrp_user",'["vrp-user"]')
