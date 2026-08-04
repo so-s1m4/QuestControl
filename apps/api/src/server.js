@@ -1636,6 +1636,34 @@ function vrPrivateHost(value) {
   const match=/^192\.168\.31\.(\d{1,3})$/.exec(String(value||""));
   return match&&Number(match[1])<=255 ? match[0] : null;
 }
+const vrBrowserRequestGuard=`(()=>{
+  const station=/^192\\.168\\.31\\.\\d{1,3}$/;
+  const prefix="/api/vr/sankt-poelten";
+  function safeUrl(value){try{return new URL(String(value),location.href)}catch{return null}}
+  function rewrite(value){
+    const url=safeUrl(value);if(!url)return value;
+    if(url.hostname==="vrp.arvilab.com"&&url.pathname==="/api/widget/support/unread-count"){
+      return prefix+"/support/unread-count"+url.search;
+    }
+    if(!station.test(url.hostname))return value;
+    const stationHost=url.hostname;
+    if(!url.pathname.startsWith(prefix+"/")){
+      const action=/^\\/(?:api\\/vr\\/sankt-poelten\\/station\\/auto\\/)?session\\/(create|terminate|join|leave|joinsession|changepaidtime)\\/?$/.exec(url.pathname);
+      if(action)url.pathname=prefix+"/station/"+stationHost+"/session/"+action[1];
+      else return value;
+    }
+    url.protocol=location.protocol;url.host=location.host;
+    return url.href;
+  }
+  const open=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(method,url,...rest){return open.call(this,method,rewrite(url),...rest)};
+  if(typeof window.fetch==="function"){
+    const originalFetch=window.fetch.bind(window);
+    window.fetch=(input,init)=>input instanceof Request
+      ? originalFetch(new Request(rewrite(input.url),input),init)
+      : originalFetch(rewrite(input),init);
+  }
+})();`;
 const vrSocksAgent=new SocksProxyAgent(env.VR_SANKT_POELTEN_SOCKS_URL);
 const vrScreenCache=new Map();
 async function requireVrPoeltenAccess(req,res,next) {
@@ -1812,7 +1840,16 @@ app.get("/vr/sankt-poelten/panel/content/79/index",async(req,res)=>{
   res.cookie("quest_vr_poelten",sessionId,{httpOnly:true,secure:true,sameSite:"strict",maxAge:8*60*60*1000,path:"/content/"});
   const host=req.get("host").split(":")[0];
   const query=new URLSearchParams({protocol:"https",api:host,apiPort:"443",apiPath:"api/vr/sankt-poelten/proxy/webadmin/v1/",ip:host,cb:assetVersion});
-  res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}")</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=${assetVersion}"></script></body></html>`);
+  res.type("html").set("cache-control","no-store").send(`<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VR Санкт-Пёльтен</title><style>body{margin:0;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}#pre-load{margin:16px}</style></head><body><div id="app" class="root"><p id="pre-load">Загрузка VR…</p></div><script>history.replaceState(null,"",location.pathname+"?${query.toString()}");${vrBrowserRequestGuard}</script><script src="/api/vr/sankt-poelten/proxy/content/79/dist/bundle.js?cb=${assetVersion}"></script></body></html>`);
+});
+app.get("/vr/sankt-poelten/support/unread-count",requireVrPoeltenAccess,async(req,res)=>{
+  try {
+    const response=await fetch("https://vrp.arvilab.com/api/widget/support/unread-count",{headers:{accept:"application/json"},signal:AbortSignal.timeout(5000)});
+    if(!response.ok) throw new Error(`support upstream ${response.status}`);
+    res.type("application/json").set("cache-control","private, max-age=30").send(Buffer.from(await response.arrayBuffer()));
+  } catch {
+    res.set("cache-control","private, max-age=30").json({count:0,unread_count:0});
+  }
 });
 app.get("/vr/sankt-poelten/screen/get-screen",requireVrPoeltenAccess,async(req,res)=>{
   const host=vrPrivateHost(req.query.host);
