@@ -1868,12 +1868,12 @@ app.all("/vr/sankt-poelten/station/:host/session/:action",requireVrPoeltenAccess
     if(!host&&requestQuery.get("sid")) host=vrPrivateHost(await redis.hget("vr-session-hosts",requestQuery.get("sid")));
   }
   if(!host||!["create","terminate","join","leave","joinsession","changepaidtime"].includes(req.params.action)) return res.status(400).json({error:"INVALID_VR_STATION_ACTION"});
-  const target=new URL(`https://${host}/session/${req.params.action}${new URL(req.originalUrl,"http://local").search}`);
+  const target=new URL(`http://${host}/session/${req.params.action}${new URL(req.originalUrl,"http://local").search}`);
   const headers={accept:req.get("accept")||"application/json"};
   for(const name of ["content-type","vrp_authorization","vrp_user","vrp_session"]) {
     const value=req.get(name)||req.get(name.replaceAll("_","-")); if(value) headers[name]=value;
   }
-  const upstream=https.request(target,{method:req.method,headers,agent:vrSocksAgent,rejectUnauthorized:false,timeout:20_000},response=>{
+  const upstream=http.request(target,{method:req.method,headers,agent:vrSocksAgent,timeout:20_000},response=>{
     const chunks=[]; response.on("data",chunk=>chunks.push(chunk)); response.on("end",async()=>{
       const bytes=Buffer.concat(chunks);
       if(response.headers["content-type"]) res.set("content-type",String(response.headers["content-type"]));
