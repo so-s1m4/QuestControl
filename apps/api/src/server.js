@@ -1905,7 +1905,8 @@ app.all("/vr/sankt-poelten/station/:host/session/:action",requireVrPoeltenAccess
     if(!host&&requestQuery.get("sid")) host=vrPrivateHost(await redis.hget("vr-session-hosts",requestQuery.get("sid")));
   }
   if(!host||!["create","terminate","join","leave","joinsession","changepaidtime"].includes(req.params.action)) return res.status(400).json({error:"INVALID_VR_STATION_ACTION"});
-  const target=new URL(`http://${host}/session/${req.params.action}${new URL(req.originalUrl,"http://local").search}`);
+  const stationPort=vrPoelten.deviceUrl.port||"6101";
+  const target=new URL(`${vrPoelten.deviceUrl.protocol}//${host}:${stationPort}/session/${req.params.action}${new URL(req.originalUrl,"http://local").search}`);
   const headers={accept:req.get("accept")||"application/json"};
   for(const name of ["content-type","vrp_authorization","vrp_user","vrp_session"]) {
     const value=req.get(name)||req.get(name.replaceAll("_","-")); if(value) headers[name]=value;
