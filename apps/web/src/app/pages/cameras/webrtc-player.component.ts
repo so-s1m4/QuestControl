@@ -27,6 +27,8 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private socket?:Socket;private peer?:RTCPeerConnection;private sessionId="";private fallbackSent=false;
   private timeout?:ReturnType<typeof setTimeout>;private disconnectTimeout?:ReturnType<typeof setTimeout>;
   private stream=new MediaStream();
+  private remoteAnswerAccepted=false;
+  private remoteCandidates=new Set<string>();
   private silentContext?:AudioContext;private silentOscillator?:OscillatorNode;private silentTrack?:MediaStreamTrack;
 
   ngAfterViewInit(){
@@ -90,8 +92,16 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private async onSignal(message:SignalMessage){
     if(message.sessionId!==this.sessionId||!this.peer)return;
     try{
-      if(message.type==="answer"){this.diagnostic("camera-answer");await this.peer.setRemoteDescription({type:"answer",sdp:message.payload});}
-      else if(message.type==="candidate"&&message.payload)await this.peer.addIceCandidate({candidate:message.payload,sdpMid:"0",sdpMLineIndex:0});
+      if(message.type==="answer"){
+        if(this.remoteAnswerAccepted||this.peer.signalingState!=="have-local-offer"){this.diagnostic("duplicate-answer",this.peer.signalingState);return}
+        this.remoteAnswerAccepted=true;
+        this.diagnostic("camera-answer");await this.peer.setRemoteDescription({type:"answer",sdp:message.payload});
+      }
+      else if(message.type==="candidate"&&message.payload){
+        if(this.remoteCandidates.has(message.payload))return;
+        this.remoteCandidates.add(message.payload);
+        await this.peer.addIceCandidate({candidate:message.payload,sdpMid:"0",sdpMLineIndex:0});
+      }
       else if(message.type==="disconnect")this.fallback("camera-disconnect");
     }catch(error){this.fallback("signal-error",error instanceof Error?error.message:String(error))}
   }
@@ -119,6 +129,8 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     if(this.sessionId)this.send("disconnect","");
     this.peer?.close();this.socket?.disconnect();
     this.peer=undefined;this.socket=undefined;
+    this.remoteAnswerAccepted=false;
+    this.remoteCandidates.clear();
     this.silentTrack?.stop();this.silentOscillator?.stop();void this.silentContext?.close();
     this.silentTrack=undefined;this.silentOscillator=undefined;this.silentContext=undefined;
     for(const track of this.stream.getTracks())track.stop();
