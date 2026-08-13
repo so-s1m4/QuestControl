@@ -442,7 +442,19 @@ const timeToGrowDataRows = (payload) => Array.isArray(payload?.data)
 const firstText = (...values) => values.find(value => typeof value === "string" && value.trim())?.trim() || null;
 const firstCount = (...values) => {
   const count = values.map(Number).find(value => Number.isInteger(value) && value > 0);
-  return count || 12;
+  return count || null;
+};
+const visitDate = (visit) => {
+  const explicit = firstText(visit.start_datetime, visit.start?.date);
+  if (explicit && /^\d{4}-\d{2}-\d{2}/.test(explicit)) return explicit.slice(0, 10);
+  const raw = Number(visit.timestamp);
+  const milliseconds = Number.isFinite(raw) ? (raw < 10_000_000_000 ? raw * 1000 : raw) : NaN;
+  if (!Number.isFinite(milliseconds)) return null;
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone:"Europe/Vienna", year:"numeric", month:"2-digit", day:"2-digit",
+  }).formatToParts(new Date(milliseconds));
+  const value = Object.fromEntries(parts.map(part => [part.type,part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 };
 const visitTime = (visit) => {
   const explicit = firstText(visit.start?.time, visit.start_time, visit.time);
@@ -481,15 +493,30 @@ app.get("/reception/checkin/visits", rateLimit({ windowMs: 60_000, limit: 60 }),
     const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { upcoming: true }));
     if (!response.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
     const visits = timeToGrowDataRows(await response.json());
+    const dates = [...new Set(visits.map(visitDate).filter(Boolean))];
+    const bookings = (await Promise.all(dates.map(date => fetchTimeToGrowBookings(clubId,date)))).flat();
+    const bookingSizeById = new Map(bookings.map(booking => [booking.id,booking.size]));
+    const data = visits.map(visit => {
+      const bookingId = String(visit.booking_id || visit.booking?.id || "");
+      return {
+        visitId: String(visit.id || ""),
+        bookingId,
+        time: visitTime(visit),
+        room: visitLabel(visit),
+        name: visitCustomer(visit),
+        guests: bookingSizeById.get(bookingId) ?? firstCount(
+          visit.size, visit.guests, visit.players_count, visit.booking_size,
+          visit.number_of_players, visit.booking?.size, visit.booking?.players_count,
+        ),
+      };
+    }).filter(visit => timeToGrowId.safeParse(visit.visitId).success && timeToGrowId.safeParse(visit.bookingId).success);
+    if (data.some(visit => !Number.isInteger(visit.guests) || visit.guests < 1)) {
+      const error = new Error("Time to Grow booking size is unavailable");
+      error.code = "TIME_TO_GROW_BOOKING_SIZE_UNAVAILABLE";
+      throw error;
+    }
     res.set("cache-control", "no-store");
-    res.json({ location, data: visits.map(visit => ({
-      visitId: String(visit.id || ""),
-      bookingId: String(visit.booking_id || visit.booking?.id || ""),
-      time: visitTime(visit),
-      room: visitLabel(visit),
-      name: visitCustomer(visit),
-      guests: firstCount(visit.size, visit.guests, visit.players_count, visit.booking_size, visit.number_of_players, visit.booking?.size, visit.booking?.players_count),
-    })).filter(visit => timeToGrowId.safeParse(visit.visitId).success && timeToGrowId.safeParse(visit.bookingId).success) });
+    res.json({ location, data });
   } catch (error) {
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
