@@ -13,8 +13,10 @@ import { SessionsComponent } from "./pages/sessions/sessions.component";
 import { VrPoeltenComponent } from "./pages/vr-poelten/vr-poelten.component";
 import { VrSessionLogsComponent } from "./pages/vr-session-logs/vr-session-logs.component";
 import { adminGuard } from "./core/admin.guard";
+import { ReceptionCheckinComponent } from "./pages/reception-checkin/reception-checkin.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
+  { path: "reception/checkin", component: ReceptionCheckinComponent },
   { path: "", component: OverviewComponent, canActivate: [authGuard] },
   { path: "cameras", component: CamerasComponent, canActivate: [authGuard] },
   {

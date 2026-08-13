@@ -1,0 +1,43 @@
+<main class="checkin-page">
+  <div class="glow glow-one"></div><div class="glow glow-two"></div>
+  <header class="checkin-header"><div class="wordmark">ESCΛPERS</div><div class="location"><span></span>St. Pölten</div></header>
+  <section class="checkin-content" [class.details-mode]="step()==='details'">
+    @if(step()==='reservation'){<a class="back" routerLink="/">‹&nbsp; {{t().index}}</a>}
+    @if(step()==='guests'){<button class="back" type="button" (click)="step.set('reservation')">‹&nbsp; {{t().title}}</button>}
+    @if(step()==='details'){<button class="back" type="button" (click)="step.set('guests')">‹&nbsp; {{t().participant}}</button>}
+    <p class="eyebrow">{{t().eyebrow}}</p><h1>{{t().title}}</h1>
+
+    @if(step()==='reservation'){
+      <div class="card reservation-card"><div class="card-number">01</div><h2>{{t().select}}</h2>
+        @if(loading()){<div class="state">{{t().loading}}</div>}
+        @else if(loadError()){<div class="state error-state"><span>{{t().loadError}}</span><button type="button" (click)="loadReservations()">{{t().retry}}</button></div>}
+        @else if(!reservations().length){<div class="state">{{t().empty}}</div>}
+        @else{<div class="reservation-list">@for(reservation of reservations();track reservation.visitId){<button type="button" (click)="selectReservation(reservation)"><span class="time">{{reservation.time}}</span><span class="info"><strong>{{reservation.room}}</strong><small>{{reservation.name}} · {{reservation.guests}} {{t().booked}}</small></span><span class="arrow">›</span></button>}</div>}
+      </div>
+    }
+    @if(step()==='guests'&&selected();as reservation){
+      <div class="card guests-card"><div class="card-number">02</div><div class="selected"><span>{{reservation.time}}</span><div><strong>{{reservation.room}}</strong><small>{{reservation.name}}</small></div></div><h2>{{t().guests}}</h2><div class="counter"><button type="button" (click)="decreaseGuests()">−</button><strong>{{guestCount()}}</strong><button type="button" (click)="increaseGuests()">＋</button></div><button class="confirm" type="button" (click)="startDetails()">{{t().confirm}}</button></div>
+    }
+    @if(step()==='details'&&selected();as reservation){
+      <div class="details-layout">
+        <form class="card participant-form" (ngSubmit)="submitParticipant()"><div class="card-number">03</div><div class="form-heading"><div><span>{{t().participant}} {{participantIndex()+1}} / {{guestCount()}}</span><h2>{{t().details}}</h2></div><strong>{{reservation.time}} · {{reservation.room}}</strong></div>
+          <div class="form-grid">
+            <label><span>{{t().firstName}} *</span><input required autofocus name="firstName" [ngModel]="draft().firstName" (ngModelChange)="updateDraft({firstName:$event})" autocomplete="given-name"></label>
+            <label><span>{{t().lastName}} *</span><input required name="lastName" [ngModel]="draft().lastName" (ngModelChange)="updateDraft({lastName:$event})" autocomplete="family-name"></label>
+            <label><span>{{t().email}} *</span><input required type="email" name="email" [ngModel]="draft().email" (ngModelChange)="updateDraft({email:$event})" autocomplete="email"></label>
+            <label><span>{{t().phone}}</span><input type="tel" name="phone" [ngModel]="draft().phone" (ngModelChange)="updateDraft({phone:$event})" autocomplete="tel"></label>
+            <label class="birth"><span>{{t().birthDate}} *</span><input required type="date" name="birthDate" [max]="maxBirthDate" [ngModel]="draft().birthDate" (ngModelChange)="updateDraft({birthDate:$event})"><small>{{t().birthdayHint}}</small></label>
+            <label><span>{{t().gender}} *</span><select required name="gender" [ngModel]="draft().gender" (ngModelChange)="updateDraft({gender:$event})"><option value="">—</option><option value="female">{{t().female}}</option><option value="male">{{t().male}}</option><option value="non-binary">{{t().diverse}}</option></select></label>
+          </div>
+          <label class="consent optional"><input type="checkbox" name="marketing" [ngModel]="draft().allowMarketingMaterials" (ngModelChange)="updateDraft({allowMarketingMaterials:$event})"><span class="toggle"></span><span>{{t().marketing}}</span></label>
+          <label class="consent"><input required type="checkbox" name="waiver" [ngModel]="draft().waiver" (ngModelChange)="updateDraft({waiver:$event})"><span class="toggle"></span><span>{{t().waiver}} <b>{{t().waiverLabel}}</b> *</span></label>
+          <label class="consent"><input required type="checkbox" name="privacy" [ngModel]="draft().privacy" (ngModelChange)="updateDraft({privacy:$event})"><span class="toggle"></span><span>{{t().privacy}} <b>{{t().privacyLabel}}</b> *</span></label>
+          <div class="medical"><strong>△</strong><span>{{t().medical}}</span></div>@if(submitError()){<p class="submit-error">{{t().submitError}}</p>}<button class="confirm" type="submit" [disabled]="submitting()">{{submitLabel()}}</button>
+        </form>
+        <aside class="details-side"><div class="online"><span>{{t().online}}</span>@if(qrDataUrl()){<div class="qr"><img [src]="qrDataUrl()" alt="Online check-in QR code"></div>}<p>{{t().scan}}</p></div><div class="group"><h3>{{t().group}}</h3>@for(participant of participants();track $index){<div class="person" [class.active]="$index===participantIndex()"><span>{{participant.submitted?'✓':$index+1}}</span><div><strong>{{participant.firstName||t().participant+' '+($index+1)}}</strong><small>{{participant.submitted?t().progress:($index+1)+' / '+guestCount()}}</small></div></div>}</div></aside>
+      </div>
+    }
+    @if(step()==='done'){<div class="card success"><div class="card-number">04</div><div class="success-mark">✓</div><h2>{{t().success}}</h2><p>{{submittedCount()}} {{t().participant.toLowerCase()}} · {{t().successNote}}</p><button class="confirm" type="button" (click)="reset()">{{t().another}}</button></div>}
+  </section>
+  <button class="language" type="button" (click)="toggleLanguage()">◎ {{t().language}}</button>
+</main>
