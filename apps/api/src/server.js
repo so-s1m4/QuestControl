@@ -319,8 +319,8 @@ app.post("/bookings/:id/participants", auth, permit("bookings:manage"), async (r
 });
 
 let timeToGrowJwt = env.TIME_TO_GROW_JWT;
-async function timeToGrowLogin(force = false) {
-  if (timeToGrowJwt && !force) return timeToGrowJwt;
+let timeToGrowAccessToken = null;
+async function refreshTimeToGrowSession() {
   if (!env.TIME_TO_GROW_EMAIL || !env.TIME_TO_GROW_PASSWORD) {
     const error = new Error("Time to Grow credentials are not configured");
     error.code = "TIME_TO_GROW_NOT_CONFIGURED";
@@ -338,15 +338,40 @@ async function timeToGrowLogin(force = false) {
     error.upstreamStatus = response.status;
     throw error;
   }
+  const payload = await response.json().catch(() => null);
   const setCookie = response.headers.get("set-cookie") || "";
-  const jwt = setCookie.match(/(?:^|[,;\s])jwt=([^;,\s]+)/)?.[1];
-  if (!jwt) {
+  const jwt = setCookie.match(/(?:^|[,;\s])jwt=([^;,\s]+)/)?.[1] || null;
+  const accessToken = typeof payload?.data?.access_token === "string" ? payload.data.access_token : null;
+  if (!jwt && !accessToken) {
+    const error = new Error("Time to Grow login response has no usable credentials");
+    error.code = "TIME_TO_GROW_INVALID_LOGIN_RESPONSE";
+    throw error;
+  }
+  if (jwt) timeToGrowJwt = jwt;
+  if (accessToken) timeToGrowAccessToken = accessToken;
+  return { jwt, accessToken };
+}
+
+async function timeToGrowLogin(force = false) {
+  if (timeToGrowJwt && !force) return timeToGrowJwt;
+  await refreshTimeToGrowSession();
+  if (!timeToGrowJwt) {
     const error = new Error("Time to Grow login response has no JWT cookie");
     error.code = "TIME_TO_GROW_INVALID_LOGIN_RESPONSE";
     throw error;
   }
-  timeToGrowJwt = jwt;
-  return jwt;
+  return timeToGrowJwt;
+}
+
+async function timeToGrowAppLogin(force = false) {
+  if (timeToGrowAccessToken && !force) return timeToGrowAccessToken;
+  await refreshTimeToGrowSession();
+  if (!timeToGrowAccessToken) {
+    const error = new Error("Time to Grow login response has no app access token");
+    error.code = "TIME_TO_GROW_INVALID_LOGIN_RESPONSE";
+    throw error;
+  }
+  return timeToGrowAccessToken;
 }
 
 async function timeToGrowFetch(path) {
@@ -364,6 +389,147 @@ async function timeToGrowFetch(path) {
   }
   return response;
 }
+
+async function timeToGrowAppFetch(path, init = {}) {
+  let accessToken = await timeToGrowAppLogin();
+  const request = (token) => fetch(`${env.TIME_TO_GROW_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      accept: "application/json",
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...init.headers,
+      authorization: `Bearer ${token}`,
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  let response = await request(accessToken);
+  if (response.status === 401 && env.TIME_TO_GROW_EMAIL && env.TIME_TO_GROW_PASSWORD) {
+    accessToken = await timeToGrowAppLogin(true);
+    response = await request(accessToken);
+  }
+  return response;
+}
+
+const timeToGrowId = z.string().regex(/^[a-z0-9]{26}$/);
+const checkinParticipantInput = z.object({
+  visitId: timeToGrowId,
+  bookingId: timeToGrowId,
+  firstName: z.string().trim().min(1).max(120),
+  lastName: z.string().trim().min(1).max(120),
+  email: z.string().trim().email().max(254),
+  phone: z.string().trim().max(30).default(""),
+  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  gender: z.enum(["male", "female", "non-binary"]),
+  allowMarketingMaterials: z.boolean().default(false),
+  acceptWaiver: z.literal(true),
+  acceptPrivacyPolicy: z.literal(true),
+});
+
+const timeToGrowAppVisitsPath = (clubId, filtering) => {
+  const query = new URLSearchParams({ filtering: JSON.stringify(filtering) });
+  if (filtering.upcoming) query.set("pagination", JSON.stringify({ page: 1, size: 30 }));
+  return `/api/v1/app/clubs/${encodeURIComponent(clubId)}/visits?${query}`;
+};
+
+const timeToGrowDataRows = (payload) => Array.isArray(payload?.data)
+  ? payload.data
+  : (payload?.data && typeof payload.data === "object" ? [payload.data] : []);
+
+const firstText = (...values) => values.find(value => typeof value === "string" && value.trim())?.trim() || null;
+const firstCount = (...values) => {
+  const count = values.map(Number).find(value => Number.isInteger(value) && value > 0);
+  return count || 1;
+};
+const visitTime = (visit) => {
+  const explicit = firstText(visit.start?.time, visit.start_time, visit.time);
+  if (explicit) return explicit.slice(0, 5);
+  const raw = Number(visit.timestamp);
+  const milliseconds = Number.isFinite(raw) ? (raw < 10_000_000_000 ? raw * 1000 : raw) : NaN;
+  if (Number.isFinite(milliseconds)) {
+    return new Intl.DateTimeFormat("de-AT", {
+      timeZone: "Europe/Vienna", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(new Date(milliseconds));
+  }
+  return "—";
+};
+const visitLabel = (visit) => firstText(
+  visit.product?.effective_name,
+  visit.product?.name,
+  visit.booking?.product?.effective_name,
+  visit.resource?.name,
+) || "Escapers";
+const visitCustomer = (visit) => firstText(
+  visit.name,
+  visit.customer?.name,
+  visit.owner?.name,
+  [visit.customer?.first_name, visit.customer?.last_name].filter(Boolean).join(" "),
+  [visit.owner?.first_name, visit.owner?.last_name].filter(Boolean).join(" "),
+) || "Reservierung";
+
+app.get("/reception/checkin/visits", rateLimit({ windowMs: 60_000, limit: 60 }), async (req, res) => {
+  if (!env.TIME_TO_GROW_CLUB_ID) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
+  try {
+    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(env.TIME_TO_GROW_CLUB_ID, { upcoming: true }));
+    if (!response.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
+    const visits = timeToGrowDataRows(await response.json());
+    res.set("cache-control", "no-store");
+    res.json({ data: visits.map(visit => ({
+      visitId: String(visit.id || ""),
+      bookingId: String(visit.booking_id || visit.booking?.id || ""),
+      time: visitTime(visit),
+      room: visitLabel(visit),
+      name: visitCustomer(visit),
+      guests: firstCount(visit.size, visit.guests, visit.players_count, visit.booking_size, visit.number_of_players, visit.booking?.size, visit.booking?.players_count),
+    })).filter(visit => timeToGrowId.safeParse(visit.visitId).success && timeToGrowId.safeParse(visit.bookingId).success) });
+  } catch (error) {
+    const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
+    const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
+    res.status(status).json({ error: code });
+  }
+});
+
+app.post("/reception/checkin/participants", rateLimit({ windowMs: 60_000, limit: 20 }), async (req, res) => {
+  if (!env.TIME_TO_GROW_CLUB_ID) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
+  const parsed = checkinParticipantInput.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
+  const input = parsed.data;
+  try {
+    const visitResponse = await timeToGrowAppFetch(timeToGrowAppVisitsPath(env.TIME_TO_GROW_CLUB_ID, { id: input.visitId }));
+    if (!visitResponse.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
+    const visit = timeToGrowDataRows(await visitResponse.json()).find(item => item?.id === input.visitId);
+    const upstreamBookingId = visit?.booking_id || visit?.booking?.id;
+    if (!visit || upstreamBookingId !== input.bookingId) return res.status(404).json({ error: "VISIT_NOT_FOUND" });
+
+    const response = await timeToGrowAppFetch(
+      `/api/v1/app/clubs/${encodeURIComponent(env.TIME_TO_GROW_CLUB_ID)}/booking-members`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          booking_id: input.bookingId,
+          first_name: input.firstName,
+          last_name: input.lastName,
+          email: input.email,
+          phone: input.phone,
+          birthday: input.birthday,
+          gender: input.gender,
+          allow_marketing_materials: input.allowMarketingMaterials,
+          accept_waiver: input.acceptWaiver,
+          accept_privacy_policy: input.acceptPrivacyPolicy,
+        }),
+      },
+    );
+    if (!response.ok) {
+      const status = response.status === 409 || response.status === 422 ? response.status : 502;
+      return res.status(status).json({ error: "TIME_TO_GROW_SUBMISSION_FAILED" });
+    }
+    const payload = await response.json().catch(() => null);
+    res.status(201).json({ success: true, participantId: payload?.data?.id || null });
+  } catch (error) {
+    const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
+    const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
+    res.status(status).json({ error: code });
+  }
+});
 
 async function fetchTimeToGrowBookings(clubId,date) {
   const query = new URLSearchParams({

@@ -29,6 +29,23 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    if (["/api/reception/checkin/visits", "/api/reception/checkin/participants"].includes(url.pathname)) {
+      const allowedMethod = url.pathname.endsWith("/visits") ? "GET" : "POST";
+      if (request.method !== allowedMethod) return new Response("Method not allowed", { status: 405 });
+      const target = new URL(`/api${url.pathname.slice(4)}${url.search}`, "https://quest.s1m4.com");
+      const headers = new Headers({ accept: "application/json" });
+      const contentType = request.headers.get("content-type");
+      if (contentType) headers.set("content-type", contentType);
+      const response = await fetch(target, {
+        method: request.method,
+        headers,
+        body: request.method === "POST" ? request.body : undefined,
+      });
+      const proxied = new Response(response.body, response);
+      proxied.headers.set("cache-control", "no-store");
+      return proxied;
+    }
+
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
       return handleImageOptimization(request, {
