@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import "@fontsource/poppins/400.css";
+import "@fontsource/poppins/600.css";
+import "@fontsource/poppins/700.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const imageUrl = `${protocol}://${host}/checkin-og.png`;
+  const imageUrl = `${protocol}://${host}/checkin-og-v2.png`;
 
   return {
     title: "Reception Check-in — QuestControl",

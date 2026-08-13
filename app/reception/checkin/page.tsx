@@ -19,7 +19,8 @@ const copy = {
     success: "You’re all checked in!",
     successNote: "Our game master will meet you here shortly.",
     another: "Check in another group",
-    language: "English",
+    language: "Deutsch",
+    eyebrow: "Self check-in · Traisenpark",
   },
   de: {
     welcome: "Willkommen bei",
@@ -32,7 +33,8 @@ const copy = {
     success: "Der Check-in ist erledigt!",
     successNote: "Unser Game Master ist gleich für Sie da.",
     another: "Weitere Gruppe einchecken",
-    language: "Deutsch",
+    language: "English",
+    eyebrow: "Self Check-in · Traisenpark",
   },
 };
 
@@ -43,7 +45,7 @@ const reservations = [
 ];
 
 export default function CheckinPage() {
-  const [language, setLanguage] = useState<Language>("en");
+  const [language, setLanguage] = useState<Language>("de");
   const [step, setStep] = useState<Step>("reservation");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [guestCount, setGuestCount] = useState(1);
@@ -68,17 +70,20 @@ export default function CheckinPage() {
       <div className="checkin-glow glow-two" />
 
       <header className="checkin-welcome">
-        <span>{t.welcome}</span> <strong>Escapers_Peolten</strong>
+        <div className="escapers-wordmark" aria-label="Escapers">ESCΛPERS</div>
+        <div className="checkin-location"><span />St. Pölten</div>
       </header>
 
       <section className="checkin-content" aria-live="polite">
         {step === "reservation" && <Link className="checkin-back" href="/">‹&nbsp; {t.index}</Link>}
         {step === "guests" && <button className="checkin-back" onClick={() => setStep("reservation")}>‹&nbsp; {t.title}</button>}
 
+        <p className="checkin-eyebrow">{t.eyebrow}</p>
         <h1>{t.title}</h1>
 
         {step === "reservation" && (
           <div className="checkin-card reservation-card">
+            <div className="card-number">01</div>
             <h2>{t.select}</h2>
             <div className="reservation-list">
               {reservations.map((reservation) => (
@@ -97,6 +102,7 @@ export default function CheckinPage() {
 
         {step === "guests" && selected && (
           <div className="checkin-card guests-card">
+            <div className="card-number">02</div>
             <div className="selected-reservation">
               <span>{selected.time}</span>
               <div><strong>{selected.room}</strong><small>{selected.name}</small></div>
@@ -113,6 +119,7 @@ export default function CheckinPage() {
 
         {step === "done" && (
           <div className="checkin-card success-card">
+            <div className="card-number">03</div>
             <div className="success-mark">✓</div>
             <h2>{t.success}</h2>
             <p>{t.successNote}</p>
