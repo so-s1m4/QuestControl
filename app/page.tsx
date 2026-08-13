@@ -25,7 +25,7 @@ export default function Home() {
         <div className="brand"><span>Q</span><div>QUEST<span>CONTROL</span></div></div>
         <nav>
           {nav.map((item) => <button key={item} className={active === item ? "active" : ""} onClick={() => setActive(item)}><i />{item}</button>)}
-          <Link href="/reception/checkin"><i />Ресепшен check-in <span>↗</span></Link>
+          <Link className="checkin-nav" href="/reception/checkin"><i />Check-in гостей <span>↗</span></Link>
         </nav>
         <div className="system"><p>Состояние системы</p><div><b /><span>Все сервисы работают<small>Обновлено сейчас</small></span></div></div>
         <div className="profile"><span>AM</span><div>Алексей Морозов<small>Владелец</small></div><b>•••</b></div>
@@ -35,6 +35,16 @@ export default function Home() {
         <header><div><h1>{active}</h1><p>Понедельник, 28 июля · Локация «Центр»</p></div><div className="header-actions"><button className="icon">⌕</button><button className="icon">◴</button><button className="primary" onClick={() => act("Форма бронирования открыта")}>＋ Новое бронирование</button></div></header>
 
         {active === "Обзор" ? <>
+          <Link className="reception-callout" href="/reception/checkin">
+            <span className="reception-mark">R</span>
+            <div>
+              <small>Ресепшен · Escapers St. Pölten</small>
+              <h2>Онлайн check-in гостей</h2>
+              <p>Выбор бронирования, анкеты всех участников и отправка данных в Time to Grow.</p>
+            </div>
+            <strong>Открыть check-in <b>↗</b></strong>
+          </Link>
+
           <div className="metrics">
             <article><div><span>Бронирований сегодня</span><strong>12</strong><small className="up">↑ 20% к прошлому понедельнику</small></div><em>▣</em></article>
             <article><div><span>Выручка сегодня</span><strong>€ 1 840</strong><small>8 из 12 оплачено</small></div><em>€</em></article>
