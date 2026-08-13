@@ -5,6 +5,7 @@ import { RouterLink } from "@angular/router";
 import QRCode from "qrcode";
 
 type Language="de"|"en";
+type CheckinLocation="st-poelten"|"vienna";
 type Step="reservation"|"guests"|"details"|"done";
 type Reservation={visitId:string;bookingId:string;time:string;room:string;name:string;guests:number};
 type Participant={firstName:string;lastName:string;email:string;phone:string;birthDate:string;gender:""|"female"|"male"|"non-binary";allowMarketingMaterials:boolean;waiver:boolean;privacy:boolean;submitted:boolean};
@@ -26,6 +27,8 @@ export class ReceptionCheckinComponent implements OnInit{
   private http=inject(HttpClient);
   language=signal<Language>("de");
   t=computed(()=>copy[this.language()]);
+  clubLocation=signal<CheckinLocation>("st-poelten");
+  locationName=computed(()=>this.clubLocation()==="vienna"?"Wien":"St. Pölten");
   step=signal<Step>("reservation");
   reservations=signal<Reservation[]>([]);
   loading=signal(true);
@@ -40,11 +43,16 @@ export class ReceptionCheckinComponent implements OnInit{
   qrDataUrl=signal("");
   maxBirthDate=new Date().toISOString().slice(0,10);
 
-  ngOnInit(){this.loadReservations()}
+  ngOnInit(){const requested=new URLSearchParams(location.search).get("location");if(requested==="vienna")this.clubLocation.set("vienna");this.loadReservations()}
   toggleLanguage(){this.language.update(value=>value==="de"?"en":"de")}
+  changeLocation(next:CheckinLocation){
+    if(next===this.clubLocation())return;
+    this.clubLocation.set(next);this.selected.set(null);this.guestCount.set(1);this.participants.set([]);this.participantIndex.set(0);this.draft.set(emptyParticipant());this.step.set("reservation");this.qrDataUrl.set("");
+    const url=new URL(location.href);url.search="";url.searchParams.set("location",next);history.replaceState({},"",url);this.loadReservations();
+  }
   loadReservations(){
     this.loading.set(true);this.loadError.set(false);
-    this.http.get<{data:Reservation[]}>("/api/reception/checkin/visits").subscribe({
+    this.http.get<{data:Reservation[]}>(`/api/reception/checkin/visits?location=${this.clubLocation()}`).subscribe({
       next:payload=>{this.reservations.set(Array.isArray(payload.data)?payload.data:[]);this.loading.set(false);this.openFromUrl()},
       error:()=>{this.reservations.set([]);this.loading.set(false);this.loadError.set(true)},
     });
@@ -58,7 +66,7 @@ export class ReceptionCheckinComponent implements OnInit{
     const reservation=this.selected();const draft=this.draft();
     if(!reservation||this.submitting()||draft.submitted)return;
     this.submitting.set(true);this.submitError.set(false);
-    this.http.post("/api/reception/checkin/participants",{visitId:reservation.visitId,bookingId:reservation.bookingId,firstName:draft.firstName,lastName:draft.lastName,email:draft.email,phone:draft.phone,birthday:draft.birthDate,gender:draft.gender,allowMarketingMaterials:draft.allowMarketingMaterials,acceptWaiver:draft.waiver,acceptPrivacyPolicy:draft.privacy}).subscribe({
+    this.http.post("/api/reception/checkin/participants",{location:this.clubLocation(),visitId:reservation.visitId,bookingId:reservation.bookingId,firstName:draft.firstName,lastName:draft.lastName,email:draft.email,phone:draft.phone,birthday:draft.birthDate,gender:draft.gender,allowMarketingMaterials:draft.allowMarketingMaterials,acceptWaiver:draft.waiver,acceptPrivacyPolicy:draft.privacy}).subscribe({
       next:()=>{
         const updated=[...this.participants()];updated[this.participantIndex()]={...draft,submitted:true};this.participants.set(updated);
         const next=updated.findIndex((participant,index)=>index>this.participantIndex()&&!participant.submitted);
@@ -68,7 +76,7 @@ export class ReceptionCheckinComponent implements OnInit{
       error:()=>{this.submitting.set(false);this.submitError.set(true)},
     });
   }
-  reset(){history.replaceState({},"",location.pathname);this.selected.set(null);this.guestCount.set(1);this.participants.set([]);this.participantIndex.set(0);this.draft.set(emptyParticipant());this.step.set("reservation");this.loadReservations()}
+  reset(){const url=new URL(location.href);url.search="";url.searchParams.set("location",this.clubLocation());history.replaceState({},"",url);this.selected.set(null);this.guestCount.set(1);this.participants.set([]);this.participantIndex.set(0);this.draft.set(emptyParticipant());this.step.set("reservation");this.loadReservations()}
   submittedCount(){return this.participants().filter(item=>item.submitted).length}
   submitLabel(){return this.submitting()?this.t().sending:(this.participantIndex()<this.guestCount()-1?this.t().next:this.t().finish)}
   private openFromUrl(){
@@ -79,7 +87,7 @@ export class ReceptionCheckinComponent implements OnInit{
   }
   private async refreshQr(){
     const reservation=this.selected();if(!reservation)return;
-    const url=new URL(location.href);url.search="";url.searchParams.set("visit",reservation.visitId);url.searchParams.set("participants",String(this.guestCount()));url.searchParams.set("participant",String(this.participantIndex()+1));
+    const url=new URL(location.href);url.search="";url.searchParams.set("location",this.clubLocation());url.searchParams.set("visit",reservation.visitId);url.searchParams.set("participants",String(this.guestCount()));url.searchParams.set("participant",String(this.participantIndex()+1));
     this.qrDataUrl.set(await QRCode.toDataURL(url.toString(),{width:420,margin:1,errorCorrectionLevel:"M",color:{dark:"#191919",light:"#ffffff"}}));
   }
 }

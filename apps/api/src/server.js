@@ -33,6 +33,7 @@ const env = z.object({
   TUYA_MESSAGE_URL: z.string().url().default("wss://mqe.tuyaeu.com:8285/"),
   TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
   TIME_TO_GROW_CLUB_ID: z.string().optional(),
+  TIME_TO_GROW_VIENNA_CLUB_ID: z.string().default("01js42s5vwvwrx3fme9zvgdj1v"),
   TIME_TO_GROW_JWT: z.string().optional(),
   TIME_TO_GROW_EMAIL: z.union([z.string().email(), z.literal("")]).optional(),
   TIME_TO_GROW_PASSWORD: z.string().optional(),
@@ -411,7 +412,10 @@ async function timeToGrowAppFetch(path, init = {}) {
 }
 
 const timeToGrowId = z.string().regex(/^[a-z0-9]{26}$/);
+const checkinLocation = z.enum(["st-poelten", "vienna"]);
+const checkinClubId = (location) => location === "vienna" ? env.TIME_TO_GROW_VIENNA_CLUB_ID : env.TIME_TO_GROW_CLUB_ID;
 const checkinParticipantInput = z.object({
+  location: checkinLocation.default("st-poelten"),
   visitId: timeToGrowId,
   bookingId: timeToGrowId,
   firstName: z.string().trim().min(1).max(120),
@@ -438,7 +442,7 @@ const timeToGrowDataRows = (payload) => Array.isArray(payload?.data)
 const firstText = (...values) => values.find(value => typeof value === "string" && value.trim())?.trim() || null;
 const firstCount = (...values) => {
   const count = values.map(Number).find(value => Number.isInteger(value) && value > 0);
-  return count || 1;
+  return count || 12;
 };
 const visitTime = (visit) => {
   const explicit = firstText(visit.start?.time, visit.start_time, visit.time);
@@ -453,6 +457,7 @@ const visitTime = (visit) => {
   return "—";
 };
 const visitLabel = (visit) => firstText(
+  visit.product_name,
   visit.product?.effective_name,
   visit.product?.name,
   visit.booking?.product?.effective_name,
@@ -467,13 +472,17 @@ const visitCustomer = (visit) => firstText(
 ) || "Reservierung";
 
 app.get("/reception/checkin/visits", rateLimit({ windowMs: 60_000, limit: 60 }), async (req, res) => {
-  if (!env.TIME_TO_GROW_CLUB_ID) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
+  const parsed = z.object({ location:checkinLocation.default("st-poelten") }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error:"INVALID_LOCATION" });
+  const location = parsed.data.location;
+  const clubId = checkinClubId(location);
+  if (!clubId) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
   try {
-    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(env.TIME_TO_GROW_CLUB_ID, { upcoming: true }));
+    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { upcoming: true }));
     if (!response.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
     const visits = timeToGrowDataRows(await response.json());
     res.set("cache-control", "no-store");
-    res.json({ data: visits.map(visit => ({
+    res.json({ location, data: visits.map(visit => ({
       visitId: String(visit.id || ""),
       bookingId: String(visit.booking_id || visit.booking?.id || ""),
       time: visitTime(visit),
@@ -489,19 +498,20 @@ app.get("/reception/checkin/visits", rateLimit({ windowMs: 60_000, limit: 60 }),
 });
 
 app.post("/reception/checkin/participants", rateLimit({ windowMs: 60_000, limit: 20 }), async (req, res) => {
-  if (!env.TIME_TO_GROW_CLUB_ID) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
   const parsed = checkinParticipantInput.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
   const input = parsed.data;
+  const clubId = checkinClubId(input.location);
+  if (!clubId) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
   try {
-    const visitResponse = await timeToGrowAppFetch(timeToGrowAppVisitsPath(env.TIME_TO_GROW_CLUB_ID, { id: input.visitId }));
+    const visitResponse = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { id: input.visitId }));
     if (!visitResponse.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
     const visit = timeToGrowDataRows(await visitResponse.json()).find(item => item?.id === input.visitId);
     const upstreamBookingId = visit?.booking_id || visit?.booking?.id;
     if (!visit || upstreamBookingId !== input.bookingId) return res.status(404).json({ error: "VISIT_NOT_FOUND" });
 
     const response = await timeToGrowAppFetch(
-      `/api/v1/app/clubs/${encodeURIComponent(env.TIME_TO_GROW_CLUB_ID)}/booking-members`,
+      `/api/v1/app/clubs/${encodeURIComponent(clubId)}/booking-members`,
       {
         method: "POST",
         body: JSON.stringify({
