@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 const rooms = [
@@ -22,7 +23,10 @@ export default function Home() {
     <main className="shell">
       <aside>
         <div className="brand"><span>Q</span><div>QUEST<span>CONTROL</span></div></div>
-        <nav>{nav.map((item) => <button key={item} className={active === item ? "active" : ""} onClick={() => setActive(item)}><i />{item}</button>)}</nav>
+        <nav>
+          {nav.map((item) => <button key={item} className={active === item ? "active" : ""} onClick={() => setActive(item)}><i />{item}</button>)}
+          <Link href="/reception/checkin"><i />Ресепшен check-in <span>↗</span></Link>
+        </nav>
         <div className="system"><p>Состояние системы</p><div><b /><span>Все сервисы работают<small>Обновлено сейчас</small></span></div></div>
         <div className="profile"><span>AM</span><div>Алексей Морозов<small>Владелец</small></div><b>•••</b></div>
       </aside>

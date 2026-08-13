@@ -1,0 +1,98 @@
+.checkin-page {
+  --kiosk-purple: #7647ff;
+  --kiosk-pink: #d331ed;
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #fff;
+  background:
+    radial-gradient(circle at 14% 86%, rgba(0, 88, 215, .34), transparent 30%),
+    radial-gradient(circle at 87% 42%, rgba(92, 16, 210, .27), transparent 27%),
+    linear-gradient(145deg, #0c082d 0%, #130b39 55%, #12072f 100%);
+  font-family: Arial, Helvetica, sans-serif;
+  isolation: isolate;
+}
+
+.checkin-page button { font: inherit; }
+.checkin-glow { position: absolute; z-index: -1; border-radius: 50%; filter: blur(80px); pointer-events: none; }
+.glow-one { width: 33rem; height: 33rem; right: -14rem; top: 15%; background: rgba(57, 8, 180, .18); }
+.glow-two { width: 24rem; height: 24rem; left: -9rem; bottom: -6rem; background: rgba(0, 73, 194, .2); }
+
+.checkin-welcome {
+  width: calc(100% - 8vw);
+  height: auto;
+  min-height: 106px;
+  margin: 16px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px 36px;
+  border-bottom: 0;
+  border-radius: 28px;
+  background: linear-gradient(105deg, rgba(101, 31, 101, .76), rgba(55, 27, 150, .82));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, .18);
+  font-size: clamp(32px, 3.25vw, 60px);
+  font-weight: 300;
+  letter-spacing: -.035em;
+}
+.checkin-welcome strong { font-weight: 300; margin-left: .22em; }
+
+.checkin-content { width: min(580px, calc(100% - 32px)); display: flex; flex-direction: column; align-items: center; padding: 24px 0 100px; }
+.checkin-back { align-self: center; border: 0; background: transparent; padding: 0; color: var(--kiosk-pink); text-transform: uppercase; font-size: 14px; letter-spacing: .03em; cursor: pointer; text-decoration: none; }
+.checkin-content > h1 { margin: 30px 0 36px; color: var(--kiosk-purple); font-weight: 300; font-size: clamp(42px, 4.2vw, 56px); letter-spacing: -.035em; }
+
+.checkin-card {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, .04);
+  border-radius: 32px;
+  padding: 30px;
+  background: linear-gradient(145deg, rgba(74, 62, 116, .82), rgba(52, 43, 91, .82));
+  box-shadow: 0 24px 65px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .05);
+  backdrop-filter: blur(20px);
+}
+.checkin-card h2 { max-width: 420px; margin: 0 auto 28px; text-align: center; font-size: clamp(27px, 3vw, 39px); line-height: 1.15; font-weight: 400; letter-spacing: -.02em; }
+
+.reservation-list { display: flex; flex-direction: column; gap: 10px; }
+.reservation-list button { min-height: 68px; display: flex; align-items: center; gap: 16px; width: 100%; padding: 10px 18px; border: 1px solid rgba(255,255,255,.78); border-radius: 20px; background: rgba(11, 8, 40, .1); color: #fff; text-align: left; cursor: pointer; transition: background .18s, border-color .18s, transform .18s; }
+.reservation-list button:hover,.reservation-list button:focus-visible { outline: none; border-color: #fff; background: rgba(118, 71, 255, .24); transform: translateY(-1px); }
+.reservation-time { min-width: 58px; font-size: 20px; font-weight: 700; }
+.reservation-info { flex: 1; }
+.reservation-info strong,.reservation-info small { display: block; }
+.reservation-info strong { margin-bottom: 4px; font-size: 16px; }
+.reservation-info small { color: rgba(255,255,255,.68); font-size: 12px; }
+.reservation-arrow { font-size: 32px; font-weight: 200; }
+
+.guests-card { text-align: center; }
+.selected-reservation { display: flex; align-items: center; gap: 14px; margin: -8px auto 28px; padding: 14px 18px; border-radius: 18px; background: rgba(8, 5, 33, .22); text-align: left; }
+.selected-reservation > span { color: #c5aeff; font-size: 20px; font-weight: 700; }
+.selected-reservation strong,.selected-reservation small { display: block; }
+.selected-reservation small { margin-top: 3px; color: rgba(255,255,255,.62); }
+.counter { display: flex; align-items: center; justify-content: center; gap: 28px; margin: 8px 0 28px; }
+.counter button { width: 52px; height: 52px; border: 1px solid rgba(255,255,255,.82); border-radius: 50%; background: transparent; color: #fff; font-size: 29px; cursor: pointer; }
+.counter strong { min-width: 58px; font-size: 54px; font-weight: 300; }
+.confirm-button { width: 100%; min-height: 48px; border: 1px solid rgba(255,255,255,.9); border-radius: 24px; background: transparent; color: #fff; text-transform: uppercase; font-size: 14px; cursor: pointer; transition: background .18s, color .18s; }
+.confirm-button:hover,.confirm-button:focus-visible { outline: none; background: #fff; color: #24114d; }
+
+.success-card { text-align: center; padding-top: 38px; }
+.success-mark { width: 78px; height: 78px; display: grid; place-items: center; margin: 0 auto 24px; border-radius: 50%; background: linear-gradient(135deg, #7c4dff, #d332ed); font-size: 38px; box-shadow: 0 12px 34px rgba(126, 65, 255, .38); }
+.success-card h2 { margin-bottom: 12px; }
+.success-card p { margin: 0 auto 30px; color: rgba(255,255,255,.72); line-height: 1.55; }
+
+.language-switcher { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); min-width: 122px; min-height: 39px; border: 1px solid rgba(255,255,255,.8); border-radius: 22px; background: rgba(14, 9, 43, .25); color: #fff; text-transform: uppercase; font-size: 13px; cursor: pointer; }
+.language-switcher span { margin-right: 6px; font-size: 17px; vertical-align: -1px; }
+
+@media (max-width: 640px) {
+  .checkin-welcome { width: calc(100% - 20px); min-height: 80px; margin-top: 10px; padding: 18px; border-radius: 22px; font-size: 27px; }
+  .checkin-content { padding-top: 20px; }
+  .checkin-content > h1 { margin: 22px 0 24px; }
+  .checkin-card { padding: 24px 18px; border-radius: 26px; }
+  .reservation-list button { min-height: 66px; padding-inline: 14px; }
+  .reservation-info small { max-width: 190px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checkin-page *, .checkin-page *::before, .checkin-page *::after { scroll-behavior: auto !important; transition: none !important; }
+}

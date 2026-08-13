@@ -7,6 +7,9 @@ dist/
 .wrangler/
 .vinext/
 build/
+!build/
+build/*
+!build/sites-vite-plugin.ts
 *.log
 certbot/
 work/
