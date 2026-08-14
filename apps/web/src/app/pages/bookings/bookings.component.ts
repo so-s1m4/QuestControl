@@ -710,6 +710,10 @@ type ExternalClub = {
         margin-top: 12px;
         margin-bottom: 28px;
       }
+      .schedule.external article {
+        min-width: 0;
+        overflow: hidden;
+      }
       .schedule article {
         display: grid;
         grid-template-columns: 80px 1fr auto auto;
@@ -908,8 +912,12 @@ type ExternalClub = {
         padding-top: 18px;
         border-top: 1px solid var(--line);
       }
-      .booking-details section {
+      .booking-details > section {
         min-width: 0;
+        width: auto;
+        max-width: none;
+        margin: 0;
+        padding: 0;
       }
       .booking-details h4 {
         margin: 0 0 12px;
@@ -935,7 +943,7 @@ type ExternalClub = {
         overflow-wrap: anywhere;
       }
       .booking-controls {
-        padding-left: 24px;
+        padding-left: 24px !important;
         border-left: 1px solid var(--line);
       }
       .control-group {
@@ -1058,7 +1066,7 @@ type ExternalClub = {
           grid-template-columns: 1fr;
         }
         .booking-controls {
-          padding: 18px 0 0;
+          padding: 18px 0 0 !important;
           border-top: 1px solid var(--line);
           border-left: 0;
         }
