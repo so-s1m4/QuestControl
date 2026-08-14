@@ -17,6 +17,7 @@ import { z } from "zod";
 import { TuyaCloud } from "./tuya.js";
 import { TuyaMessageConsumer } from "./tuya-messages.js";
 import { TuyaWebRTCManager } from "./tuya-webrtc.js";
+import { checkinTokenMatches, createCheckinToken, isCheckinToken } from "./checkin-links.js";
 
 const env = z.object({
   PORT: z.coerce.number().default(3000),
@@ -412,12 +413,7 @@ async function timeToGrowAppFetch(path, init = {}) {
 }
 
 const timeToGrowId = z.string().regex(/^[a-z0-9]{26}$/);
-const checkinLocation = z.enum(["st-poelten", "vienna"]);
-const checkinClubId = (location) => location === "vienna" ? env.TIME_TO_GROW_VIENNA_CLUB_ID : env.TIME_TO_GROW_CLUB_ID;
 const checkinParticipantInput = z.object({
-  location: checkinLocation.default("st-poelten"),
-  visitId: timeToGrowId,
-  bookingId: timeToGrowId,
   firstName: z.string().trim().min(1).max(120),
   lastName: z.string().trim().min(1).max(120),
   email: z.string().trim().email().max(254),
@@ -483,66 +479,86 @@ const visitCustomer = (visit) => firstText(
   [visit.owner?.first_name, visit.owner?.last_name].filter(Boolean).join(" "),
 ) || "Reservierung";
 
-app.get("/reception/checkin/visits", rateLimit({ windowMs: 60_000, limit: 60 }), async (req, res) => {
-  const parsed = z.object({ location:checkinLocation.default("st-poelten") }).safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error:"INVALID_LOCATION" });
-  const location = parsed.data.location;
-  const clubId = checkinClubId(location);
-  if (!clubId) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
-  try {
-    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { upcoming: true }));
-    if (!response.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
-    const visits = timeToGrowDataRows(await response.json());
-    const dates = [...new Set(visits.map(visitDate).filter(Boolean))];
-    const bookings = (await Promise.all(dates.map(date => fetchTimeToGrowBookings(clubId,date)))).flat();
-    const bookingSizeById = new Map(bookings.map(booking => [booking.id,booking.size]));
-    const data = visits.map(visit => {
-      const bookingId = String(visit.booking_id || visit.booking?.id || "");
-      return {
-        visitId: String(visit.id || ""),
-        bookingId,
-        time: visitTime(visit),
-        room: visitLabel(visit),
-        name: visitCustomer(visit),
-        guests: bookingSizeById.get(bookingId) ?? firstCount(
-          visit.size, visit.guests, visit.players_count, visit.booking_size,
-          visit.number_of_players, visit.booking?.size, visit.booking?.players_count,
-        ),
-      };
-    }).filter(visit => timeToGrowId.safeParse(visit.visitId).success && timeToGrowId.safeParse(visit.bookingId).success);
-    if (data.some(visit => !Number.isInteger(visit.guests) || visit.guests < 1)) {
-      const error = new Error("Time to Grow booking size is unavailable");
-      error.code = "TIME_TO_GROW_BOOKING_SIZE_UNAVAILABLE";
+const configuredCheckinLocations = () => [
+  { location:"st-poelten", clubId:env.TIME_TO_GROW_CLUB_ID },
+  { location:"vienna", clubId:env.TIME_TO_GROW_VIENNA_CLUB_ID },
+].filter(item => item.clubId);
+
+async function resolveCheckinToken(token) {
+  if (!isCheckinToken(token)) return null;
+  const results = await Promise.all(configuredCheckinLocations().map(async ({ location,clubId }) => {
+    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { upcoming:true }));
+    if (!response.ok) {
+      const error = new Error("Time to Grow visits request failed");
+      error.code = "TIME_TO_GROW_REQUEST_FAILED";
       throw error;
     }
+    const visits = timeToGrowDataRows(await response.json());
+    const visit = visits.find(item => {
+      const bookingId = String(item?.booking_id || item?.booking?.id || "");
+      return timeToGrowId.safeParse(bookingId).success
+        && checkinTokenMatches(token, env.JWT_ACCESS_SECRET, clubId, bookingId);
+    });
+    return visit ? { location,clubId,visit } : null;
+  }));
+  return results.find(Boolean) || null;
+}
+
+async function checkinReservationFromToken(token) {
+  const resolved = await resolveCheckinToken(token);
+  if (!resolved) return null;
+  const { location,clubId,visit } = resolved;
+  const visitId = String(visit.id || "");
+  const bookingId = String(visit.booking_id || visit.booking?.id || "");
+  if (!timeToGrowId.safeParse(visitId).success || !timeToGrowId.safeParse(bookingId).success) return null;
+  const date = visitDate(visit);
+  const bookings = date ? await fetchTimeToGrowBookings(clubId,date) : [];
+  const booking = bookings.find(item => item.id === bookingId);
+  const guests = booking?.size ?? firstCount(
+    visit.size, visit.guests, visit.players_count, visit.booking_size,
+    visit.number_of_players, visit.booking?.size, visit.booking?.players_count,
+  );
+  if (!Number.isInteger(guests) || guests < 1) {
+    const error = new Error("Time to Grow booking size is unavailable");
+    error.code = "TIME_TO_GROW_BOOKING_SIZE_UNAVAILABLE";
+    throw error;
+  }
+  return {
+    location,
+    clubId,
+    visit,
+    reservation:{ visitId,bookingId,time:visitTime(visit),room:visitLabel(visit),name:visitCustomer(visit),guests },
+  };
+}
+
+app.get("/reception/checkin/:token", rateLimit({ windowMs: 60_000, limit: 60 }), async (req, res) => {
+  try {
+    const resolved = await checkinReservationFromToken(req.params.token);
     res.set("cache-control", "no-store");
-    res.json({ location, data });
+    if (!resolved) return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
+    res.json({ location:resolved.location, data:resolved.reservation });
   } catch (error) {
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
-    res.status(status).json({ error: code });
+    res.status(status).json({ error:code });
   }
 });
 
-app.post("/reception/checkin/participants", rateLimit({ windowMs: 60_000, limit: 20 }), async (req, res) => {
+app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000, limit: 20 }), async (req, res) => {
   const parsed = checkinParticipantInput.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
   const input = parsed.data;
-  const clubId = checkinClubId(input.location);
-  if (!clubId) return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
   try {
-    const visitResponse = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { id: input.visitId }));
-    if (!visitResponse.ok) return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED" });
-    const visit = timeToGrowDataRows(await visitResponse.json()).find(item => item?.id === input.visitId);
-    const upstreamBookingId = visit?.booking_id || visit?.booking?.id;
-    if (!visit || upstreamBookingId !== input.bookingId) return res.status(404).json({ error: "VISIT_NOT_FOUND" });
+    const resolved = await checkinReservationFromToken(req.params.token);
+    if (!resolved) return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
+    const { clubId,reservation } = resolved;
 
     const response = await timeToGrowAppFetch(
       `/api/v1/app/clubs/${encodeURIComponent(clubId)}/booking-members`,
       {
         method: "POST",
         body: JSON.stringify({
-          booking_id: input.bookingId,
+          booking_id: reservation.bookingId,
           first_name: input.firstName,
           last_name: input.lastName,
           email: input.email,
@@ -884,6 +900,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         paymentStatusDisplay: booking.order.payment_status_display,
         checkedIn: booking.check_in_status?.checked_in ?? 0,
         checkInTotal: booking.check_in_status?.total ?? booking.size,
+        checkInPath: `/reception/checkin/${createCheckinToken(env.JWT_ACCESS_SECRET,clubId,booking.id)}`,
         checkedInPlayers: (booking.players || []).map(player => {
           const age = playerAgeAtBooking(player.birthday, booking.start.date);
           return {

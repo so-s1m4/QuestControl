@@ -16,6 +16,7 @@ import { adminGuard } from "./core/admin.guard";
 import { ReceptionCheckinComponent } from "./pages/reception-checkin/reception-checkin.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
+  { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
   { path: "reception/checkin", component: ReceptionCheckinComponent },
   { path: "", component: OverviewComponent, canActivate: [authGuard] },
   { path: "cameras", component: CamerasComponent, canActivate: [authGuard] },

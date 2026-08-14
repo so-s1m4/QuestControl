@@ -62,6 +62,7 @@ type ExternalBooking = {
   paymentStatusDisplay: string;
   checkedIn: number;
   checkInTotal: number;
+  checkInPath: string;
   checkedInPlayers: CheckedInPlayer[];
 };
 type ExternalClub = {
@@ -310,6 +311,10 @@ type ExternalClub = {
                 <button class="details-button" (click)="toggleExternal(b.id)">
                   {{ expandedExternalId() === b.id ? "Скрыть" : "Подробнее" }}
                 </button>
+                <button class="checkin-link-button" (click)="copyCheckInLink(b)">
+                  {{ copiedCheckinId() === b.id ? "Ссылка скопирована ✓" : "Ссылка check-in" }}
+                </button>
+                <a class="open-checkin" [href]="b.checkInPath" target="_blank" rel="noopener" title="Открыть check-in">↗</a>
               </div>
               @if (expandedExternalId() === b.id) {
                 <div class="booking-details">
@@ -771,6 +776,24 @@ type ExternalClub = {
         color: #344054;
         box-shadow: none;
       }
+      .checkin-link-button {
+        background: #fff0e9;
+        color: #c43f08;
+        box-shadow: none;
+        white-space: nowrap;
+      }
+      .open-checkin {
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        border: 1px solid #ffd0bb;
+        border-radius: 9px;
+        background: #fff8f4;
+        color: #c43f08;
+        text-decoration: none;
+        font-weight: 800;
+      }
       .booking-details {
         grid-column: 1/-1;
         display: grid;
@@ -911,6 +934,7 @@ export class BookingsComponent {
   externalLoading = signal(false);
   externalError = signal("");
   expandedExternalId = signal<string | null>(null);
+  copiedCheckinId = signal<string | null>(null);
   importingId = signal<string | null>(null);
   externalDate = this.localDate(new Date());
   games = signal<Game[]>([]);
@@ -1098,6 +1122,18 @@ export class BookingsComponent {
   }
   toggleExternal(id: string) {
     this.expandedExternalId.update((current) => (current === id ? null : id));
+  }
+  async copyCheckInLink(booking: ExternalBooking) {
+    const link = new URL(booking.checkInPath, location.origin).toString();
+    try {
+      await navigator.clipboard.writeText(link);
+      this.copiedCheckinId.set(booking.id);
+      window.setTimeout(() => {
+        if (this.copiedCheckinId() === booking.id) this.copiedCheckinId.set(null);
+      }, 2500);
+    } catch {
+      this.externalError.set("Не удалось скопировать ссылку. Откройте её кнопкой ↗.");
+    }
   }
   ageLabel(age: number) {
     const mod10 = age % 10,

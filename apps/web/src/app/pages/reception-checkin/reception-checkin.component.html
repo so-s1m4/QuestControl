@@ -1,18 +1,14 @@
 <main class="checkin-page">
   <div class="glow glow-one"></div><div class="glow glow-two"></div>
-  <header class="checkin-header"><div class="wordmark">ESCΛPERS</div><div class="header-tools"><div class="location-switch" aria-label="Location"><span></span><button type="button" [class.active]="clubLocation()==='st-poelten'" (click)="changeLocation('st-poelten')">St. Pölten</button><button type="button" [class.active]="clubLocation()==='vienna'" (click)="changeLocation('vienna')">Wien</button></div><button class="language" type="button" [attr.aria-label]="t().language" [title]="t().language" (click)="toggleLanguage()">{{language()==='de'?'EN':'DE'}}</button></div></header>
+  <header class="checkin-header"><div class="wordmark">ESCΛPERS</div><div class="header-tools">@if(selected()){<div class="location"><span></span>{{locationName()}}</div>}<button class="language" type="button" [attr.aria-label]="t().language" [title]="t().language" (click)="toggleLanguage()">{{language()==='de'?'EN':'DE'}}</button></div></header>
   <section class="checkin-content" [class.details-mode]="step()==='details'">
-    @if(step()==='reservation'){<a class="back" routerLink="/">‹&nbsp; {{t().index}}</a>}
-    @if(step()==='guests'){<button class="back" type="button" (click)="step.set('reservation')">‹&nbsp; {{t().title}}</button>}
     @if(step()==='details'){<button class="back" type="button" (click)="step.set('guests')">‹&nbsp; {{t().participant}}</button>}
     <p class="eyebrow">Self Check-in · {{locationName()}}</p><h1>{{t().title}}</h1>
 
     @if(step()==='reservation'){
       <div class="card reservation-card"><div class="card-number">01</div><h2>{{t().select}}</h2>
         @if(loading()){<div class="state">{{t().loading}}</div>}
-        @else if(loadError()){<div class="state error-state"><span>{{t().loadError}}</span><button type="button" (click)="loadReservations()">{{t().retry}}</button></div>}
-        @else if(!reservations().length){<div class="state">{{t().empty}}</div>}
-        @else{<div class="reservation-list">@for(reservation of reservations();track reservation.visitId){<button type="button" (click)="selectReservation(reservation)"><span class="time">{{reservation.time}}</span><span class="info"><strong>{{reservation.room}}</strong><small>{{reservation.name}} · {{reservation.guests}} {{t().booked}}</small></span><span class="arrow">›</span></button>}</div>}
+        @else if(loadError()){<div class="state error-state"><span>{{t().loadError}}</span><button type="button" (click)="loadReservation()">{{t().retry}}</button></div>}
       </div>
     }
     @if(step()==='guests'&&selected();as reservation){
@@ -37,6 +33,6 @@
         <aside class="details-side"><div class="online"><span>{{t().online}}</span>@if(qrDataUrl()){<div class="qr"><img [src]="qrDataUrl()" alt="Online check-in QR code"></div>}<p>{{t().scan}}</p></div><div class="group"><h3>{{t().group}}</h3>@for(participant of participants();track $index){<div class="person" [class.active]="$index===participantIndex()"><span>{{participant.submitted?'✓':$index+1}}</span><div><strong>{{participant.firstName||t().participant+' '+($index+1)}}</strong><small>{{participant.submitted?t().progress:($index+1)+' / '+guestCount()}}</small></div></div>}</div></aside>
       </div>
     }
-    @if(step()==='done'){<div class="card success"><div class="card-number">04</div><div class="success-mark">✓</div><h2>{{t().success}}</h2><p>{{submittedCount()}} {{t().participant.toLowerCase()}} · {{t().successNote}}</p><button class="confirm" type="button" (click)="reset()">{{t().another}}</button></div>}
+    @if(step()==='done'){<div class="card success"><div class="card-number">04</div><div class="success-mark">✓</div><h2>{{t().success}}</h2><p>{{submittedCount()}} {{t().participant.toLowerCase()}} · {{t().successNote}}</p></div>}
   </section>
 </main>
