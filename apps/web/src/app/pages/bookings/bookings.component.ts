@@ -257,69 +257,10 @@ type ExternalClub = {
               <span class="pill" [class.paid]="b.paymentStatus === 'paid'">{{
                 b.paymentStatusDisplay
               }}</span>
-              <div class="external-actions">
-                @if (b.sessionId) {
-                  <span class="pill live">{{
-                    sessionStatusLabel(b.sessionStatus)
-                  }}</span>
-                  @if (b.sessionStatus === "RUNNING") {
-                    <button class="ghost" (click)="sessionExternal(b, 'PAUSE')">
-                      Пауза
-                    </button>
-                  }
-                  @if (b.sessionStatus === "PAUSED") {
-                    <button
-                      class="ghost"
-                      (click)="sessionExternal(b, 'RESUME')"
-                    >
-                      Продолжить
-                    </button>
-                  }
-                  @if (
-                    b.sessionStatus !== "FINISHED" &&
-                    b.sessionStatus !== "CANCELLED"
-                  ) {
-                    <button
-                      class="danger"
-                      (click)="sessionExternal(b, 'FINISH')"
-                    >
-                      Завершить
-                    </button>
-                  }
-                } @else {
-                  <select class="game-select" [(ngModel)]="selectedGames[b.id]">
-                    <option value="">
-                      {{
-                        b.requiresGameSelection
-                          ? "Выберите игру"
-                          : "Оставить выбранную игру"
-                      }}
-                    </option>
-                    @for (game of gamesForZone(b.zoneName); track game.id) {
-                      <option [value]="game.id">{{ game.name }}</option>
-                    }
-                  </select>
-                  <button
-                    class="start-icon"
-                    [disabled]="importingId() === b.id"
-                    (click)="startExternal(b)"
-                    aria-label="Начать игру"
-                    title="Начать игру"
-                  >
-                    {{ importingId() === b.id ? "⋯" : "▶" }}
-                  </button>
-                }
-                <button class="details-button" (click)="toggleExternal(b.id)">
-                  {{ expandedExternalId() === b.id ? "Скрыть" : "Подробнее" }}
-                </button>
-                <button class="checkin-link-button" (click)="copyCheckInLink(b)">
-                  {{ copiedCheckinId() === b.id ? "Ссылка скопирована ✓" : "Ссылка check-in" }}
-                </button>
-                <button class="checkin-qr-button" (click)="openCheckInQr(b)">
-                  QR-код
-                </button>
-                <a class="open-checkin" [href]="b.checkInPath" target="_blank" rel="noopener" title="Открыть check-in">↗</a>
-              </div>
+              <button class="booking-expand" (click)="toggleExternal(b.id)" [attr.aria-expanded]="expandedExternalId() === b.id">
+                <span>{{ expandedExternalId() === b.id ? "Свернуть" : "Открыть" }}</span>
+                <b>⌄</b>
+              </button>
               @if (expandedExternalId() === b.id) {
                 <div class="booking-details">
                   <section>
@@ -385,6 +326,38 @@ type ExternalClub = {
                         <p class="muted">
                           Персональные данные check-in пока отсутствуют.
                         </p>
+                      }
+                    </div>
+                  </section>
+                  <section class="booking-controls">
+                    <h4>Управление бронью</h4>
+                    <div class="control-group">
+                      <span>Check-in гостей</span>
+                      <button class="checkin-qr-button" (click)="openCheckInQr(b)">Показать QR-код</button>
+                      <button class="checkin-link-button" (click)="copyCheckInLink(b)">{{ copiedCheckinId() === b.id ? "Ссылка скопирована ✓" : "Скопировать ссылку" }}</button>
+                      <a class="control-link" [href]="b.checkInPath" target="_blank" rel="noopener">Открыть check-in ↗</a>
+                    </div>
+                    <div class="control-group">
+                      <span>Игровая сессия</span>
+                      @if (b.sessionId) {
+                        <div class="session-state"><span class="pill live">{{ sessionStatusLabel(b.sessionStatus) }}</span></div>
+                        @if (b.sessionStatus === "RUNNING") {
+                          <button class="ghost" (click)="sessionExternal(b, 'PAUSE')">Поставить на паузу</button>
+                        }
+                        @if (b.sessionStatus === "PAUSED") {
+                          <button class="ghost" (click)="sessionExternal(b, 'RESUME')">Продолжить сессию</button>
+                        }
+                        @if (b.sessionStatus !== "FINISHED" && b.sessionStatus !== "CANCELLED") {
+                          <button class="danger" (click)="sessionExternal(b, 'FINISH')">Завершить сессию</button>
+                        }
+                      } @else {
+                        <select class="game-select" [(ngModel)]="selectedGames[b.id]">
+                          <option value="">{{ b.requiresGameSelection ? "Выберите игру" : "Оставить выбранную игру" }}</option>
+                          @for (game of gamesForZone(b.zoneName); track game.id) {
+                            <option [value]="game.id">{{ game.name }}</option>
+                          }
+                        </select>
+                        <button class="start-session" [disabled]="importingId() === b.id" (click)="startExternal(b)">{{ importingId() === b.id ? "Запускаем…" : "Запустить сессию" }}</button>
                       }
                     </div>
                   </section>
@@ -783,11 +756,23 @@ type ExternalClub = {
         background: #eef4ff;
         color: #3448a5;
       }
-      .external-actions {
+      .booking-expand {
         display: flex;
-        gap: 8px;
         align-items: center;
-        flex-wrap: wrap;
+        gap: 9px;
+        padding: 8px 10px;
+        background: transparent;
+        color: #667085;
+        box-shadow: none;
+        font-size: 11px;
+      }
+      .booking-expand b {
+        font-size: 17px;
+        line-height: 1;
+        transition: transform 0.18s ease;
+      }
+      article.open .booking-expand b {
+        transform: rotate(180deg);
       }
       .start-icon {
         display: grid;
@@ -800,11 +785,6 @@ type ExternalClub = {
       .game-select {
         min-width: 180px;
       }
-      .details-button {
-        background: #eef1f6;
-        color: #344054;
-        box-shadow: none;
-      }
       .checkin-link-button {
         background: #fff0e9;
         color: #c43f08;
@@ -816,18 +796,6 @@ type ExternalClub = {
         color: #fff;
         box-shadow: none;
         white-space: nowrap;
-      }
-      .open-checkin {
-        display: grid;
-        place-items: center;
-        width: 40px;
-        height: 40px;
-        border: 1px solid #ffd0bb;
-        border-radius: 9px;
-        background: #fff8f4;
-        color: #c43f08;
-        text-decoration: none;
-        font-weight: 800;
       }
       .qr-backdrop {
         position: fixed;
@@ -935,7 +903,7 @@ type ExternalClub = {
       .booking-details {
         grid-column: 1/-1;
         display: grid;
-        grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr);
+        grid-template-columns: minmax(210px, 0.75fr) minmax(300px, 1.15fr) minmax(220px, 0.75fr);
         gap: 24px;
         padding-top: 18px;
         border-top: 1px solid var(--line);
@@ -965,6 +933,52 @@ type ExternalClub = {
       .booking-details dd {
         margin: 0;
         overflow-wrap: anywhere;
+      }
+      .booking-controls {
+        padding-left: 24px;
+        border-left: 1px solid var(--line);
+      }
+      .control-group {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+        padding: 13px;
+        border: 1px solid #e7eaf0;
+        border-radius: 11px;
+        background: #f8f9fb;
+      }
+      .control-group > span {
+        margin-bottom: 2px;
+        color: #667085;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .control-group button,
+      .control-link,
+      .control-group select {
+        width: 100%;
+        min-height: 38px;
+      }
+      .control-link {
+        display: grid;
+        place-items: center;
+        border: 1px solid #d9deea;
+        border-radius: 8px;
+        background: #fff;
+        color: #344054;
+        font-size: 11px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .start-session {
+        background: #465eea;
+        color: #fff;
+        box-shadow: none;
+      }
+      .session-state {
+        display: flex;
       }
       .players {
         display: grid;
@@ -1034,7 +1048,6 @@ type ExternalClub = {
         }
         .schedule > article > button,
         .schedule > article > .pill,
-        .external-actions,
         .session-actions {
           grid-column: 2;
           justify-self: start;
@@ -1043,6 +1056,11 @@ type ExternalClub = {
         .booking-details {
           grid-column: 1/-1;
           grid-template-columns: 1fr;
+        }
+        .booking-controls {
+          padding: 18px 0 0;
+          border-top: 1px solid var(--line);
+          border-left: 0;
         }
         .players {
           grid-template-columns: 1fr;
