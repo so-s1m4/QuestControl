@@ -4,6 +4,7 @@ import { FormsModule } from "@angular/forms";
 import { HttpClient } from "@angular/common/http";
 import { RouterLink } from "@angular/router";
 import { catchError, forkJoin, of } from "rxjs";
+import QRCode from "qrcode";
 
 type Booking = {
   id: string;
@@ -314,6 +315,9 @@ type ExternalClub = {
                 <button class="checkin-link-button" (click)="copyCheckInLink(b)">
                   {{ copiedCheckinId() === b.id ? "Ссылка скопирована ✓" : "Ссылка check-in" }}
                 </button>
+                <button class="checkin-qr-button" (click)="openCheckInQr(b)">
+                  QR-код
+                </button>
                 <a class="open-checkin" [href]="b.checkInPath" target="_blank" rel="noopener" title="Открыть check-in">↗</a>
               </div>
               @if (expandedExternalId() === b.id) {
@@ -448,7 +452,31 @@ type ExternalClub = {
         }
       </div>
     </section>
-  </main>`,
+  </main>
+  @if (qrBooking(); as booking) {
+    <div class="qr-backdrop" (click)="closeCheckInQr()">
+      <div class="qr-dialog" role="dialog" aria-modal="true" aria-labelledby="checkin-qr-title" (click)="$event.stopPropagation()">
+        <button class="qr-close" type="button" aria-label="Закрыть" (click)="closeCheckInQr()">×</button>
+        <span class="qr-kicker">Персональный check-in</span>
+        <h3 id="checkin-qr-title">{{ booking.customerName }}</h3>
+        <p>{{ booking.date }} · {{ booking.startsAt }} · {{ booking.productName }}</p>
+        <div class="qr-image-wrap">
+          @if (qrLoading()) {
+            <span>Создаём QR-код…</span>
+          } @else if (checkInQrDataUrl()) {
+            <img [src]="checkInQrDataUrl()" alt="QR-код защищённой ссылки check-in" />
+          }
+        </div>
+        <strong class="qr-hint">Наведите камеру телефона — откроется check-in только этой брони</strong>
+        <div class="qr-actions">
+          <button type="button" (click)="copyCheckInLink(booking)">{{ copiedCheckinId() === booking.id ? "Ссылка скопирована ✓" : "Скопировать ссылку" }}</button>
+          @if (checkInQrDataUrl()) {
+            <a [href]="checkInQrDataUrl()" [download]="checkInQrFilename(booking)">Скачать PNG</a>
+          }
+        </div>
+      </div>
+    </div>
+  }`,
   styles: [
     `
       .view-switch {
@@ -759,6 +787,7 @@ type ExternalClub = {
         display: flex;
         gap: 8px;
         align-items: center;
+        flex-wrap: wrap;
       }
       .start-icon {
         display: grid;
@@ -782,6 +811,12 @@ type ExternalClub = {
         box-shadow: none;
         white-space: nowrap;
       }
+      .checkin-qr-button {
+        background: #18243d;
+        color: #fff;
+        box-shadow: none;
+        white-space: nowrap;
+      }
       .open-checkin {
         display: grid;
         place-items: center;
@@ -793,6 +828,109 @@ type ExternalClub = {
         color: #c43f08;
         text-decoration: none;
         font-weight: 800;
+      }
+      .qr-backdrop {
+        position: fixed;
+        z-index: 1000;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: rgba(10, 16, 28, 0.72);
+        backdrop-filter: blur(8px);
+      }
+      .qr-dialog {
+        position: relative;
+        width: min(440px, 100%);
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        padding: 30px;
+        border-radius: 22px;
+        background: #fff;
+        box-shadow: 0 28px 90px rgba(10, 20, 40, 0.35);
+        text-align: center;
+      }
+      .qr-close {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        background: #eef1f6;
+        color: #344054;
+        box-shadow: none;
+        font-size: 22px;
+      }
+      .qr-kicker {
+        color: #df4d12;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .qr-dialog h3 {
+        margin: 7px 34px 4px;
+        color: #101828;
+        font-size: 25px;
+      }
+      .qr-dialog > p {
+        margin: 0 0 20px;
+        color: #667085;
+        font-size: 12px;
+      }
+      .qr-image-wrap {
+        display: grid;
+        place-items: center;
+        width: min(310px, 100%);
+        aspect-ratio: 1;
+        margin: 0 auto;
+        padding: 14px;
+        border: 1px solid #e3e7ef;
+        border-radius: 18px;
+        background: #fff;
+      }
+      .qr-image-wrap img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .qr-image-wrap span {
+        color: #667085;
+        font-size: 12px;
+      }
+      .qr-hint {
+        display: block;
+        max-width: 320px;
+        margin: 16px auto 20px;
+        color: #475467;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .qr-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .qr-actions button,
+      .qr-actions a {
+        display: grid;
+        place-items: center;
+        min-height: 42px;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 9px;
+        background: #465eea;
+        color: #fff;
+        box-shadow: none;
+        font-size: 11px;
+        font-weight: 800;
+        text-decoration: none;
+      }
+      .qr-actions a {
+        background: #fff0e9;
+        color: #c43f08;
       }
       .booking-details {
         grid-column: 1/-1;
@@ -920,6 +1058,12 @@ type ExternalClub = {
         .view-switch button {
           flex: 1;
         }
+        .qr-dialog {
+          padding: 26px 18px 20px;
+        }
+        .qr-actions {
+          grid-template-columns: 1fr;
+        }
       }
     `,
   ],
@@ -935,6 +1079,9 @@ export class BookingsComponent {
   externalError = signal("");
   expandedExternalId = signal<string | null>(null);
   copiedCheckinId = signal<string | null>(null);
+  qrBooking = signal<ExternalBooking | null>(null);
+  checkInQrDataUrl = signal("");
+  qrLoading = signal(false);
   importingId = signal<string | null>(null);
   externalDate = this.localDate(new Date());
   games = signal<Game[]>([]);
@@ -1134,6 +1281,35 @@ export class BookingsComponent {
     } catch {
       this.externalError.set("Не удалось скопировать ссылку. Откройте её кнопкой ↗.");
     }
+  }
+  async openCheckInQr(booking: ExternalBooking) {
+    this.qrBooking.set(booking);
+    this.checkInQrDataUrl.set("");
+    this.qrLoading.set(true);
+    const link = new URL(booking.checkInPath, location.origin).toString();
+    try {
+      const dataUrl = await QRCode.toDataURL(link, {
+        width: 720,
+        margin: 2,
+        errorCorrectionLevel: "H",
+        color: { dark: "#101828", light: "#ffffff" },
+      });
+      if (this.qrBooking()?.id === booking.id) this.checkInQrDataUrl.set(dataUrl);
+    } catch {
+      this.externalError.set("Не удалось создать QR-код.");
+      this.closeCheckInQr();
+    } finally {
+      if (this.qrBooking()?.id === booking.id) this.qrLoading.set(false);
+    }
+  }
+  closeCheckInQr() {
+    this.qrBooking.set(null);
+    this.checkInQrDataUrl.set("");
+    this.qrLoading.set(false);
+  }
+  checkInQrFilename(booking: ExternalBooking) {
+    const customer = booking.customerName.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, "-").replace(/^-|-$/g, "");
+    return `check-in-${booking.date}-${booking.startsAt.replace(":", "-")}-${customer || "guest"}.png`;
   }
   ageLabel(age: number) {
     const mod10 = age % 10,
