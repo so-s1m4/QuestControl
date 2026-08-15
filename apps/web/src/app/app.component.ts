@@ -48,6 +48,7 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
               <a routerLink="/users" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Пользователи</b><span>Доступ команды</span></a>
               @if (isAdmin()) {
                 <a routerLink="/camera-settings" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Настройки камер</b><span>Планы и привязка камер</span></a>
+                <a routerLink="/bookings" [queryParams]="{ history: '1' }" (click)="mobileMenuOpen.set(false)"><b>Импорт истории</b><span>Служебная загрузка старых броней</span></a>
               }
             </div>
             <div class="mobile-account-actions">
@@ -104,7 +105,8 @@ export class AppComponent {
   closeMobileMenu() { this.mobileMenuOpen.set(false); }
 
   moreActive() {
-    return !["/", "/bookings", "/cameras"].includes(this.currentUrl().split("?")[0]);
+    const [path, query = ""] = this.currentUrl().split("?");
+    return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/cameras"].includes(path);
   }
 
   logout() {

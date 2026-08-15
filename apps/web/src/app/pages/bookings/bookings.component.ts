@@ -2,7 +2,7 @@ import { Component, inject, signal } from "@angular/core";
 import { DatePipe } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import { HttpClient } from "@angular/common/http";
-import { RouterLink } from "@angular/router";
+import { ActivatedRoute, Router, RouterLink } from "@angular/router";
 import { catchError, forkJoin, of } from "rxjs";
 import QRCode from "qrcode";
 
@@ -110,8 +110,9 @@ type ExternalClub = {
         </div>
       </header>
       @if (isManagement()) {
-        <div class="archive-import">
-          <strong>Импорт истории</strong
+        <div class="archive-import" [class.mobile-open]="showArchiveImport()">
+          <strong>Импорт истории</strong>
+          <button class="archive-close" type="button" aria-label="Закрыть импорт истории" (click)="closeArchiveImport()">×</button
           ><label>С<input type="date" [(ngModel)]="archiveFrom" /></label
           ><label>По<input type="date" [(ngModel)]="archiveTo" /></label
           ><button [disabled]="archiveLoading()" (click)="importArchive()">
@@ -489,6 +490,7 @@ type ExternalClub = {
         align-self: center;
         color: var(--muted);
       }
+      .archive-close { display: none; }
       .external-toolbar {
         display: flex;
         justify-content: space-between;
@@ -1074,12 +1076,41 @@ type ExternalClub = {
           grid-template-columns: 1fr;
         }
       }
-      @media (max-width: 700px) {
+      @media (max-width: 760px) {
         header {
           flex-direction: column;
         }
         .view-switch {
           width: 100%;
+        }
+        .archive-import {
+          display: none;
+        }
+        .archive-import.mobile-open {
+          position: relative;
+          display: flex;
+          margin-top: 16px;
+          padding-top: 48px;
+        }
+        .archive-import.mobile-open strong {
+          position: absolute;
+          top: 18px;
+          left: 16px;
+        }
+        .archive-import.mobile-open .archive-close {
+          position: absolute;
+          top: 9px;
+          right: 9px;
+          display: grid;
+          width: 36px;
+          min-height: 36px;
+          padding: 0;
+          place-items: center;
+          border-radius: 50%;
+          background: #eef1f6;
+          box-shadow: none;
+          color: #344054;
+          font-size: 21px;
         }
         .view-switch button {
           flex: 1;
@@ -1163,6 +1194,8 @@ type ExternalClub = {
 })
 export class BookingsComponent {
   private http = inject(HttpClient);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
   bookings = signal<Booking[]>([]);
   error = signal("");
   externalClubs = signal<ExternalClub[]>([]);
@@ -1183,6 +1216,7 @@ export class BookingsComponent {
   archiveTo = this.localDate(new Date());
   archiveLoading = signal(false);
   archiveNotice = signal("");
+  showArchiveImport = signal(false);
   viewMode = signal<"calendar" | "list">(
     typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches
       ? "list"
@@ -1195,11 +1229,16 @@ export class BookingsComponent {
   calendarLoading = signal(false);
   weekDays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
   constructor() {
+    this.route.queryParamMap.subscribe((params) => this.showArchiveImport.set(params.get("history") === "1"));
     this.load();
     this.loadExternalClubs();
     this.http
       .get<Game[]>("/api/games")
       .subscribe({ next: (games) => this.games.set(games) });
+  }
+  closeArchiveImport() {
+    this.showArchiveImport.set(false);
+    void this.router.navigate([], { relativeTo: this.route, queryParams: { history: null }, queryParamsHandling: "merge", replaceUrl: true });
   }
   private localDate(date: Date) {
     const offset = date.getTimezoneOffset() * 60_000;
