@@ -131,7 +131,7 @@ app.post("/auth/login", rateLimit({ windowMs: 15 * 60_000, limit: 10 }), async (
 app.post("/auth/refresh", async (req, res) => {
   try {
     const { payload } = await jwtVerify(req.body.refreshToken, key(env.JWT_REFRESH_SECRET));
-    const { rows } = await db.query("SELECT u.*,r.name role,r.permissions FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1", [payload.sub]);
+    const { rows } = await db.query("SELECT u.*,r.name role,r.permissions FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1 AND u.is_active=true", [payload.sub]);
     const user = rows[0];
     if (!user || !user.refresh_token_hash || !(await argon2.verify(user.refresh_token_hash, req.body.refreshToken))) throw new Error();
     res.json({ accessToken: await sign(user, env.JWT_ACCESS_SECRET, "15m") });
