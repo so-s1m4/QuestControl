@@ -90,6 +90,14 @@ type ExternalClub = {
       </nav>
     </aside>
     <section>
+      <div class="mobile-booking-controls">
+        <label>Клуб<select [(ngModel)]="externalClubId" (ngModelChange)="clubChanged()">
+          @for (club of externalClubs(); track club.id) {
+            <option [value]="club.id">{{ club.name }}</option>
+          }
+        </select></label>
+        <label>Дата<input type="date" [(ngModel)]="externalDate" (ngModelChange)="loadExternal()" /></label>
+      </div>
       <header>
         <div>
           <h2>Бронирования</h2>
@@ -459,6 +467,7 @@ type ExternalClub = {
         background: #e9edf5;
         border-radius: 11px;
       }
+      .mobile-booking-controls { display: none; }
       .view-switch button {
         padding: 8px 14px;
         background: transparent;
@@ -1077,12 +1086,27 @@ type ExternalClub = {
         }
       }
       @media (max-width: 760px) {
-        header {
-          flex-direction: column;
+        main > section > header,
+        .external-toolbar,
+        .day-page-head { display: none; }
+        .mobile-booking-controls {
+          position: sticky;
+          z-index: 15;
+          top: 0;
+          display: grid;
+          grid-template-columns: minmax(0, 1.15fr) minmax(130px, .85fr);
+          gap: 8px;
+          margin: -4px -2px 12px;
+          padding: 10px;
+          border: 1px solid #e1e5ed;
+          border-radius: 14px;
+          background: #f4f6faed;
+          box-shadow: 0 8px 24px #19213a0d;
+          backdrop-filter: blur(14px);
         }
-        .view-switch {
-          width: 100%;
-        }
+        .mobile-booking-controls label { min-width: 0; gap: 5px; color: #788295; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+        .mobile-booking-controls input,
+        .mobile-booking-controls select { min-width: 0; min-height: 42px; padding: 9px 10px; border-color: #d8dde7; background: #fff; font-size: 12px; text-transform: none; letter-spacing: 0; }
         .archive-import {
           display: none;
         }
@@ -1111,9 +1135,6 @@ type ExternalClub = {
           box-shadow: none;
           color: #344054;
           font-size: 21px;
-        }
-        .view-switch button {
-          flex: 1;
         }
         .qr-dialog {
           padding: 26px 18px 20px;
