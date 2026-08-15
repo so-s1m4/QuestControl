@@ -1715,6 +1715,43 @@ app.get("/inventory", auth, async (req,res) => {
   res.json(rows);
 });
 
+app.get("/inventory-export", auth, async (req,res) => {
+  const input=z.object({locationId:z.string().uuid().optional()}).parse(req.query);
+  if(input.locationId&&!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows:items}=await db.query(`
+    SELECT i.*,l.name AS location_name,
+           i.quantity-COALESCE((SELECT sum(m.delta) FROM inventory_movements m WHERE m.item_id=i.id),0) AS initial_quantity,
+           (i.quantity<=i.minimum_quantity) AS low_stock
+    FROM inventory_items i
+    JOIN locations l ON l.id=i.location_id
+    WHERE i.is_active=true
+      AND ($1::uuid IS NULL OR i.location_id=$1)
+      AND ($2::boolean OR EXISTS(
+        SELECT 1 FROM user_locations ul WHERE ul.user_id=$3 AND ul.location_id=i.location_id
+      ))
+    ORDER BY l.name,lower(i.category),lower(i.name)
+  `,[input.locationId||null,isOwner(req),req.user.sub]);
+  const itemIds=items.map(item=>item.id);
+  const {rows:movements}=itemIds.length ? await db.query(`
+    SELECT m.id,m.item_id,m.delta,m.quantity_after,m.reason,m.operation_count,m.created_at,m.last_event_at,
+           COALESCE(u.display_name,'Сотрудник') AS created_by_name
+    FROM inventory_movements m
+    LEFT JOIN users u ON u.id=m.created_by
+    WHERE m.item_id=ANY($1::uuid[])
+    ORDER BY m.item_id,m.created_at,m.id
+  `,[itemIds]) : {rows:[]};
+  const movementsByItem=new Map();
+  for(const movement of movements) {
+    const list=movementsByItem.get(movement.item_id)||[];
+    list.push(movement);
+    movementsByItem.set(movement.item_id,list);
+  }
+  res.set("cache-control","no-store").json({
+    generatedAt:new Date().toISOString(),
+    items:items.map(item=>({...item,movements:movementsByItem.get(item.id)||[]})),
+  });
+});
+
 app.post("/inventory", auth, async (req,res) => {
   const input=inventoryItemInput.parse(req.body);
   if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});

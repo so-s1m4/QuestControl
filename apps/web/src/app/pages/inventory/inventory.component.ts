@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
 import { FormsModule } from "@angular/forms";
 import { RouterLink } from "@angular/router";
+import { buildInventoryPdf, type InventoryPdfItem } from "./inventory-pdf";
 
 type Location = { id: string; name: string };
 type InventoryItem = {
@@ -66,6 +67,7 @@ type InventoryHistoryItem = {
             </select>
           </label>
           <button type="button" class="secondary" (click)="load()" [disabled]="loading()">{{ loading() ? "Обновляем…" : "↻ Обновить" }}</button>
+          <button type="button" class="export" (click)="exportPdf()" [disabled]="exportingPdf() || loading() || !items().length">{{ exportingPdf() ? "Готовим PDF…" : "↓ Экспорт PDF" }}</button>
         </div>
 
         @if (formOpen()) {
@@ -178,7 +180,7 @@ type InventoryHistoryItem = {
     </main>
   `,
   styles: [`
-    .toolbar{display:flex;align-items:end;gap:10px;margin:22px 0 0}.toolbar label{width:min(360px,100%)}.secondary{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}
+    .toolbar{display:flex;align-items:end;gap:10px;margin:22px 0 0}.toolbar label{width:min(360px,100%)}.secondary{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.export{margin-left:auto;background:#101828}
     .new-item{grid-template-columns:repeat(3,minmax(0,1fr))!important}.form-heading{grid-column:1/-1;display:grid;gap:4px}.form-heading b{font-size:18px}.form-heading span{color:var(--muted);font-size:12px}.notes{grid-column:span 2}.save{min-height:42px;align-self:end}
     .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:20px 0}.summary article{padding:17px 19px;border:1px solid var(--line);border-radius:14px;background:#fff}.summary span{display:block;color:var(--muted);font-size:11px}.summary b{display:block;margin-top:6px;font-size:25px}.summary .warning{border-color:#f4c7a4;background:#fff8f1}.summary .warning b{color:#c04f18}
     .inventory-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.inventory-list>article{padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 24px #19213a08}.inventory-list>article.low{border-color:#f1bc93;box-shadow:0 8px 24px #d3601710}
@@ -199,6 +201,7 @@ export class InventoryComponent {
   locationId = signal("");
   formOpen = signal(false);
   loading = signal(false);
+  exportingPdf = signal(false);
   saving = signal(false);
   busyId = signal("");
   historyItemId = signal("");
@@ -241,6 +244,39 @@ export class InventoryComponent {
     this.http.get<InventoryItem[]>(`/api/inventory${query}`).subscribe({
       next: (items) => { this.items.set(items); this.loading.set(false); },
       error: () => { this.loading.set(false); this.error.set("Не удалось загрузить инвентарь."); },
+    });
+  }
+
+  exportPdf() {
+    if (this.exportingPdf() || !this.items().length) return;
+    this.exportingPdf.set(true);
+    this.error.set("");
+    const query = this.locationId() ? `?locationId=${encodeURIComponent(this.locationId())}` : "";
+    this.http.get<{ generatedAt: string; items: InventoryPdfItem[] }>(`/api/inventory-export${query}`).subscribe({
+      next: async (response) => {
+        try {
+          const [pdfMake, fontModule] = await Promise.all([
+            import("pdfmake/build/pdfmake"),
+            import("pdfmake/build/vfs_fonts"),
+          ]);
+          const fonts = ((fontModule as unknown as { default?: Record<string, string> }).default || fontModule) as Record<string, string>;
+          const scope = this.locationId()
+            ? this.locations().find(location => location.id === this.locationId())?.name || "Выбранный клуб"
+            : "Все доступные клубы";
+          const definition = buildInventoryPdf({ ...response, scope });
+          pdfMake.createPdf(definition, undefined, undefined, fonts).download(
+            `questcontrol-inventory-${response.generatedAt.slice(0, 10)}.pdf`,
+            () => this.exportingPdf.set(false),
+          );
+        } catch {
+          this.exportingPdf.set(false);
+          this.error.set("Не удалось сформировать PDF.");
+        }
+      },
+      error: () => {
+        this.exportingPdf.set(false);
+        this.error.set("Не удалось загрузить данные для PDF.");
+      },
     });
   }
 
