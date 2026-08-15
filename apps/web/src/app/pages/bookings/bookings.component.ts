@@ -247,10 +247,22 @@ type ExternalClub = {
         }
         <div class="schedule external">
           @for (b of externalBookings(); track b.id) {
-            <article [class.open]="expandedExternalId() === b.id">
+            <article
+              class="booking-card"
+              [class.open]="expandedExternalId() === b.id"
+              role="button"
+              tabindex="0"
+              [attr.aria-expanded]="expandedExternalId() === b.id"
+              (click)="toggleExternalFromCard($event, b.id)"
+              (keydown.enter)="toggleExternalFromCard($event, b.id)"
+              (keydown.space)="toggleExternalFromCard($event, b.id)"
+            >
               <div class="date">
                 <b>{{ b.startsAt }}</b
                 ><span>{{ b.endsAt }}</span>
+                <span class="pill payment-pill" [class.paid]="b.paymentStatus === 'paid'" [class.unpaid]="b.paymentStatus !== 'paid'">
+                  {{ b.paymentStatus === "paid" ? "Paid" : "Нужно оплатить" }}
+                </span>
               </div>
               <div class="booking-main">
                 <strong>{{ b.customerName }}</strong
@@ -264,13 +276,7 @@ type ExternalClub = {
                     "Игра выбирается на месте"
                 }}</small>
               </div>
-              <span class="pill" [class.paid]="b.paymentStatus === 'paid'">{{
-                b.paymentStatusDisplay
-              }}</span>
-              <button class="booking-expand" (click)="toggleExternal(b.id)" [attr.aria-expanded]="expandedExternalId() === b.id">
-                <span>{{ expandedExternalId() === b.id ? "Свернуть" : "Открыть" }}</span>
-                <b>⌄</b>
-              </button>
+              <span class="card-chevron" aria-hidden="true">⌄</span>
               @if (expandedExternalId() === b.id) {
                 <div class="booking-details">
                   <section>
@@ -736,9 +742,24 @@ type ExternalClub = {
         border: 1px solid var(--line);
         border-radius: 14px;
       }
+      .schedule.external article {
+        grid-template-columns: 80px 1fr auto;
+      }
       .schedule article.open {
         border-color: #b9c5ee;
         box-shadow: 0 8px 28px rgba(52, 72, 165, 0.08);
+      }
+      .schedule.external .booking-card {
+        cursor: pointer;
+        transition: border-color .18s, box-shadow .18s, background .18s;
+      }
+      .schedule.external .booking-card:hover {
+        border-color: #cbd3e7;
+        background: #fcfcfe;
+      }
+      .schedule.external .booking-card:focus-visible {
+        outline: 3px solid #7c83ff38;
+        outline-offset: 2px;
       }
       .date b,
       .date span,
@@ -772,22 +793,39 @@ type ExternalClub = {
         background: #eef4ff;
         color: #3448a5;
       }
-      .booking-expand {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        padding: 8px 10px;
-        background: transparent;
-        color: #667085;
-        box-shadow: none;
-        font-size: 11px;
-      }
-      .booking-expand b {
-        font-size: 17px;
+      .date .payment-pill {
+        display: inline-flex;
+        width: fit-content;
+        margin-top: 9px;
+        padding: 5px 7px;
+        color: #087443;
+        font-size: 8px;
+        font-weight: 900;
         line-height: 1;
-        transition: transform 0.18s ease;
+        text-transform: uppercase;
+        white-space: nowrap;
       }
-      article.open .booking-expand b {
+      .date .payment-pill.unpaid {
+        border: 1px solid #e6a900;
+        background: #ffd84d;
+        box-shadow: 0 3px 9px #d99b0030;
+        color: #5b3a00;
+      }
+      .card-chevron {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background: #f0f2f6;
+        color: #667085;
+        font-size: 20px;
+        line-height: 1;
+        transition: transform .18s, background .18s;
+      }
+      article.open .card-chevron {
+        background: #e9ecff;
+        color: var(--primary);
         transform: rotate(180deg);
       }
       .start-icon {
@@ -1066,6 +1104,9 @@ type ExternalClub = {
         .schedule article {
           grid-template-columns: 64px 1fr;
         }
+        .schedule.external article {
+          grid-template-columns: 64px minmax(0, 1fr) 34px;
+        }
         .schedule > article > button,
         .schedule > article > .pill,
         .session-actions {
@@ -1095,7 +1136,10 @@ type ExternalClub = {
           z-index: 15;
           top: 0;
           display: grid;
-          grid-template-columns: minmax(0, 1.15fr) minmax(130px, .85fr);
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          width: 100%;
+          max-width: 100%;
+          overflow: hidden;
           gap: 8px;
           margin: -4px -2px 12px;
           padding: 10px;
@@ -1105,9 +1149,11 @@ type ExternalClub = {
           box-shadow: 0 8px 24px #19213a0d;
           backdrop-filter: blur(14px);
         }
-        .mobile-booking-controls label { min-width: 0; gap: 5px; color: #788295; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+        .mobile-booking-controls label { min-width: 0; max-width: 100%; overflow: hidden; gap: 5px; color: #788295; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
         .mobile-booking-controls input,
-        .mobile-booking-controls select { min-width: 0; min-height: 42px; padding: 9px 10px; border-color: #d8dde7; background: #fff; font-size: 12px; text-transform: none; letter-spacing: 0; }
+        .mobile-booking-controls select { display: block; min-width: 0; max-width: 100%; min-height: 42px; padding: 9px 10px; border-color: #d8dde7; background: #fff; font-size: 14px !important; text-transform: none; letter-spacing: 0; }
+        .mobile-booking-controls input[type="date"] { width: 100%; appearance: none; -webkit-appearance: none; }
+        .mobile-booking-controls input[type="date"]::-webkit-date-and-time-value { min-width: 0; text-align: left; }
         .archive-import {
           display: none;
         }
@@ -1186,6 +1232,12 @@ type ExternalClub = {
           grid-template-columns: 58px minmax(0, 1fr);
           padding: 15px 13px;
         }
+        .schedule.external article {
+          grid-template-columns: 66px minmax(0, 1fr) 34px;
+        }
+        .schedule.external .booking-card { align-items: start; }
+        .schedule.external .booking-main { padding-top: 1px; }
+        .schedule.external .card-chevron { align-self: start; }
         .booking-main span,
         .booking-main small,
         .booking-details dd {
@@ -1198,6 +1250,7 @@ type ExternalClub = {
           justify-content: center;
         }
         .booking-details {
+          grid-column: 1/-1;
           gap: 18px;
           padding-top: 18px;
         }
@@ -1427,6 +1480,14 @@ export class BookingsComponent {
   }
   toggleExternal(id: string) {
     this.expandedExternalId.update((current) => (current === id ? null : id));
+  }
+
+  toggleExternalFromCard(event: Event, id: string) {
+    const target = event.target as HTMLElement;
+    const currentTarget = event.currentTarget as HTMLElement;
+    if (target !== currentTarget && target.closest("button,a,input,select,textarea,label")) return;
+    if (event instanceof KeyboardEvent) event.preventDefault();
+    this.toggleExternal(id);
   }
   async copyCheckInLink(booking: ExternalBooking) {
     const link = new URL(booking.checkInPath, location.origin).toString();
