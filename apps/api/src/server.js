@@ -1658,6 +1658,28 @@ app.post("/inventory", auth, async (req,res) => {
   res.status(201).json(rows[0]);
 });
 
+app.patch("/inventory/:id", auth, async (req,res) => {
+  const input=z.object({minimumQuantity:z.coerce.number().finite().min(0).max(1_000_000)}).parse(req.body);
+  const before=(await db.query("SELECT * FROM inventory_items WHERE id=$1 AND is_active=true",[req.params.id])).rows[0];
+  if(!before) return res.status(404).json({error:"INVENTORY_ITEM_NOT_FOUND"});
+  if(!(await locationAllowed(req,before.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const item=(await db.query(`
+    UPDATE inventory_items SET minimum_quantity=$1,updated_by=$2,updated_at=now()
+    WHERE id=$3 RETURNING *,(quantity<=minimum_quantity) AS low_stock
+  `,[input.minimumQuantity,req.user.sub,before.id])).rows[0];
+  await audit(req,"inventory.item.update","inventory_item",before.id,before,item);
+  res.json(item);
+});
+
+app.delete("/inventory/:id", auth, async (req,res) => {
+  const before=(await db.query("SELECT * FROM inventory_items WHERE id=$1 AND is_active=true",[req.params.id])).rows[0];
+  if(!before) return res.status(404).json({error:"INVENTORY_ITEM_NOT_FOUND"});
+  if(!(await locationAllowed(req,before.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  await db.query("UPDATE inventory_items SET is_active=false,updated_by=$1,updated_at=now() WHERE id=$2",[req.user.sub,before.id]);
+  await audit(req,"inventory.item.archive","inventory_item",before.id,before,{...before,is_active:false});
+  res.status(204).end();
+});
+
 app.get("/inventory/:id/movements", auth, async (req,res) => {
   const item=(await db.query(`
     SELECT i.id,i.location_id,i.name,i.unit,i.quantity,i.created_at,

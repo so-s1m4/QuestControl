@@ -127,6 +127,10 @@ type InventoryHistoryItem = {
                 <button type="button" class="quick plus" (click)="adjust(item, 1, 'Быстрый приход')" [disabled]="busyId() === item.id">+ 1</button>
                 <button type="button" (click)="customAdjust(item, 1)" [disabled]="busyId() === item.id">Приход</button>
               </div>
+              <div class="item-management">
+                <button type="button" class="minimum-edit" (click)="changeMinimum(item)" [disabled]="busyId() === item.id">Изменить минимум</button>
+                <button type="button" class="remove-item" (click)="removeItem(item)" [disabled]="busyId() === item.id">Удалить позицию</button>
+              </div>
               <button type="button" class="history-toggle" [class.open]="historyItemId() === item.id" (click)="toggleHistory(item)">
                 <span>История прихода и списаний</span><b>{{ historyItemId() === item.id ? "⌃" : "⌄" }}</b>
               </button>
@@ -181,9 +185,10 @@ type InventoryHistoryItem = {
     .item-main{display:flex;align-items:start;justify-content:space-between;gap:14px}.category{color:var(--primary);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.item-title h3{margin:5px 0 4px;font-size:18px}.item-title p{margin:0;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.added-at{display:block;margin-top:6px;color:#98a2b3;font-size:9px}.status{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:#fff0e5;color:#b54708;font-size:9px;font-weight:800}.status.ok{background:#eaf8f1;color:#087443}
     .stock{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:17px 0;padding:14px;border-radius:12px;background:#f5f7fa}.stock small{display:block;color:var(--muted);font-size:10px}.stock strong{display:block;margin-top:4px;font-size:25px}.stock strong.minimum{color:#667085}.stock em{font-size:11px;font-style:normal;font-weight:700}
     .item-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.item-actions button{min-width:0;padding:10px 6px;font-size:11px}.quick{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.quick.minus{color:#b42336}.quick.plus{color:#087443}
+    .item-management{display:flex;justify-content:flex-end;gap:12px;margin-top:11px}.item-management button{padding:3px 0;border:0;background:transparent;box-shadow:none;color:#667085;font-size:10px}.item-management button:hover{box-shadow:none;transform:none;color:#344054}.item-management .remove-item{color:#b42336}.item-management .remove-item:hover{color:#8f1425}
     .history-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 12px;border:1px solid #e0e4eb;background:#f7f8fa;box-shadow:none;color:#344054;font-size:11px}.history-toggle:hover{transform:none;box-shadow:none}.history-toggle.open{border-color:#c7cdf9;background:#f0f2ff;color:#3f46b5}.history-toggle b{font-size:15px}.history-panel{margin-top:8px;padding:4px 12px;border:1px solid #e0e4eb;border-radius:12px;background:#fbfcfe}.history-state{margin:0;padding:18px 4px;color:var(--muted);text-align:center}.movement-list{display:grid}.movement{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px 0;border-bottom:1px solid #e8ebf0}.movement:last-child{border-bottom:0}.movement>i{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#eef1f6;color:#667085;font-style:normal;font-weight:900}.movement.incoming>i{background:#dcfae6;color:#087443}.movement.outgoing>i{background:#fff0e5;color:#b54708}.movement strong,.movement span,.movement small{display:block}.movement strong{font-size:11px}.movement span{margin-top:4px;color:#7a8495;font-size:9px}.movement small{margin-top:5px;color:#9a6700;font-size:8px}.movement-amount{text-align:right}.movement-amount b{font-size:12px;white-space:nowrap}.incoming .movement-amount b{color:#087443}.outgoing .movement-amount b{color:#b54708}.movement.created>i{background:#eef0ff;color:#4f46e5;font-size:9px}
     @media(max-width:1100px){.inventory-list{grid-template-columns:1fr}.new-item{grid-template-columns:repeat(2,minmax(0,1fr))!important}.notes{grid-column:1/-1}}
-    @media(max-width:760px){section{padding-bottom:105px!important}.toolbar{align-items:stretch;flex-direction:column}.toolbar label{width:100%}.toolbar button{width:100%}.new-item{grid-template-columns:1fr!important;padding:16px!important}.new-item>*{grid-column:1!important}.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.summary article{padding:12px 10px}.summary b{font-size:20px}.inventory-list>article{padding:16px}.item-main{display:grid}.status{justify-self:start}.item-actions{grid-template-columns:1fr 1fr}.item-actions button{min-height:44px;font-size:12px}.history-toggle{min-height:44px}.history-panel{padding-inline:10px}.movement{grid-template-columns:28px minmax(0,1fr)}.movement-amount{grid-column:2;text-align:left}.movement-amount span{display:inline;margin-left:6px}}
+    @media(max-width:760px){section{padding-bottom:105px!important}.toolbar{align-items:stretch;flex-direction:column}.toolbar label{width:100%}.toolbar button{width:100%}.new-item{grid-template-columns:1fr!important;padding:16px!important}.new-item>*{grid-column:1!important}.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.summary article{padding:12px 10px}.summary b{font-size:20px}.inventory-list>article{padding:16px}.item-main{display:grid}.status{justify-self:start}.item-actions{grid-template-columns:1fr 1fr}.item-actions button{min-height:44px;font-size:12px}.item-management{justify-content:space-between}.item-management button{min-height:36px;font-size:11px}.history-toggle{min-height:44px}.history-panel{padding-inline:10px}.movement{grid-template-columns:28px minmax(0,1fr)}.movement-amount{grid-column:2;text-align:left}.movement-amount span{display:inline;margin-left:6px}}
     @media(max-width:390px){.summary{grid-template-columns:1fr}.summary article{display:flex;align-items:center;justify-content:space-between}.summary b{margin:0}}
   `],
 })
@@ -275,6 +280,33 @@ export class InventoryComponent {
     const reason = prompt(direction > 0 ? "Причина прихода:" : "Причина списания:", direction > 0 ? "Поставка" : "Использовано")?.trim();
     if (!reason) return;
     this.adjust(item, amount * direction, reason);
+  }
+
+  changeMinimum(item: InventoryItem) {
+    const raw = prompt(`Минимальный остаток для «${item.name}»:`, String(this.number(item.minimum_quantity)));
+    if (raw === null) return;
+    const minimumQuantity = Number(raw.replace(",", "."));
+    if (!Number.isFinite(minimumQuantity) || minimumQuantity < 0) { alert("Введите число не меньше нуля."); return; }
+    this.busyId.set(item.id);
+    this.error.set("");
+    this.http.patch(`/api/inventory/${item.id}`, { minimumQuantity }).subscribe({
+      next: () => { this.busyId.set(""); this.load(); },
+      error: () => { this.busyId.set(""); this.error.set("Не удалось изменить минимальный остаток."); },
+    });
+  }
+
+  removeItem(item: InventoryItem) {
+    if (!confirm(`Удалить позицию «${item.name}»? Она исчезнет из инвентаря, но история операций сохранится.`)) return;
+    this.busyId.set(item.id);
+    this.error.set("");
+    this.http.delete(`/api/inventory/${item.id}`).subscribe({
+      next: () => {
+        this.busyId.set("");
+        if (this.historyItemId() === item.id) this.historyItemId.set("");
+        this.load();
+      },
+      error: () => { this.busyId.set(""); this.error.set("Не удалось удалить позицию."); },
+    });
   }
 
   toggleHistory(item: InventoryItem) {
