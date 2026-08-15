@@ -1658,6 +1658,27 @@ app.post("/inventory", auth, async (req,res) => {
   res.status(201).json(rows[0]);
 });
 
+app.get("/inventory/:id/movements", auth, async (req,res) => {
+  const item=(await db.query(`
+    SELECT i.id,i.location_id,i.name,i.unit,i.quantity,i.created_at,
+           i.quantity-COALESCE((SELECT sum(m.delta) FROM inventory_movements m WHERE m.item_id=i.id),0) AS initial_quantity
+    FROM inventory_items i
+    WHERE i.id=$1 AND i.is_active=true
+  `,[req.params.id])).rows[0];
+  if(!item) return res.status(404).json({error:"INVENTORY_ITEM_NOT_FOUND"});
+  if(!(await locationAllowed(req,item.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`
+    SELECT m.id,m.delta,m.quantity_after,m.reason,m.operation_count,m.created_at,m.last_event_at,
+           COALESCE(u.display_name,'Сотрудник') AS created_by_name
+    FROM inventory_movements m
+    LEFT JOIN users u ON u.id=m.created_by
+    WHERE m.item_id=$1
+    ORDER BY m.last_event_at DESC
+    LIMIT 200
+  `,[item.id]);
+  res.json({item,movements:rows});
+});
+
 app.post("/inventory/:id/adjust", auth, async (req,res) => {
   const input=z.object({
     delta:z.coerce.number().finite().min(-1_000_000).max(1_000_000).refine(value=>value!==0),
@@ -1675,10 +1696,25 @@ app.post("/inventory/:id/adjust", auth, async (req,res) => {
       UPDATE inventory_items SET quantity=$1,updated_by=$2,updated_at=now()
       WHERE id=$3 RETURNING *,(quantity<=minimum_quantity) AS low_stock
     `,[nextQuantity,req.user.sub,before.id])).rows[0];
-    await client.query(`
-      INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by)
-      VALUES($1,$2,$3,$4,$5)
-    `,[before.id,input.delta,nextQuantity,input.reason,req.user.sub]);
+    const recentMovement=(await client.query(`
+      SELECT id FROM inventory_movements
+      WHERE item_id=$1 AND created_by=$2 AND reason=$3
+        AND sign(delta)=sign($4::numeric)
+        AND last_event_at>=now()-interval '5 minutes'
+      ORDER BY last_event_at DESC LIMIT 1 FOR UPDATE
+    `,[before.id,req.user.sub,input.reason,input.delta])).rows[0];
+    if(recentMovement) {
+      await client.query(`
+        UPDATE inventory_movements
+        SET delta=delta+$1,quantity_after=$2,operation_count=operation_count+1,last_event_at=now()
+        WHERE id=$3
+      `,[input.delta,nextQuantity,recentMovement.id]);
+    } else {
+      await client.query(`
+        INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by)
+        VALUES($1,$2,$3,$4,$5)
+      `,[before.id,input.delta,nextQuantity,input.reason,req.user.sub]);
+    }
     await client.query("COMMIT");
     await audit(req,"inventory.stock.adjust","inventory_item",before.id,before,{quantity:nextQuantity,delta:input.delta,reason:input.reason});
     res.json(item);
@@ -2721,9 +2757,17 @@ await db.query(`CREATE TABLE IF NOT EXISTS inventory_movements(
   quantity_after numeric(12,2) NOT NULL CHECK(quantity_after>=0),
   reason text NOT NULL,
   created_by uuid REFERENCES users(id) ON DELETE SET NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
+  operation_count integer NOT NULL DEFAULT 1 CHECK(operation_count>0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_event_at timestamptz NOT NULL DEFAULT now()
 )`);
+await db.query("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS operation_count integer NOT NULL DEFAULT 1");
+await db.query("ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS last_event_at timestamptz");
+await db.query("UPDATE inventory_movements SET last_event_at=created_at WHERE last_event_at IS NULL");
+await db.query("ALTER TABLE inventory_movements ALTER COLUMN last_event_at SET DEFAULT now()");
+await db.query("ALTER TABLE inventory_movements ALTER COLUMN last_event_at SET NOT NULL");
 await db.query("CREATE INDEX IF NOT EXISTS inventory_movements_item_created_idx ON inventory_movements(item_id,created_at DESC)");
+await db.query("CREATE INDEX IF NOT EXISTS inventory_movements_item_last_event_idx ON inventory_movements(item_id,last_event_at DESC)");
 
 const tuyaEventSignals = (value, signals=[], depth=0) => {
   if(depth>5||signals.length>=40||value==null) return signals;

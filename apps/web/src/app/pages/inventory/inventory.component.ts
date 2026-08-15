@@ -15,7 +15,25 @@ type InventoryItem = {
   minimum_quantity: number | string;
   notes: string | null;
   low_stock: boolean;
+  created_at: string;
   updated_at: string;
+};
+type InventoryMovement = {
+  id: string;
+  delta: number | string;
+  quantity_after: number | string;
+  reason: string;
+  operation_count: number;
+  created_at: string;
+  last_event_at: string;
+  created_by_name: string;
+};
+type InventoryHistoryItem = {
+  id: string;
+  name: string;
+  unit: string;
+  created_at: string;
+  initial_quantity: number | string;
 };
 
 @Component({
@@ -93,6 +111,7 @@ type InventoryItem = {
                   <span class="category">{{ item.category }}</span>
                   <h3>{{ item.name }}</h3>
                   <p>{{ item.location_name }}@if (item.notes) { · {{ item.notes }} }</p>
+                  <small class="added-at">Добавлено {{ formatDate(item.created_at) }}</small>
                 </div>
                 <span class="status" [class.ok]="!item.low_stock">{{ item.low_stock ? "Нужно пополнить" : "В наличии" }}</span>
               </div>
@@ -108,6 +127,44 @@ type InventoryItem = {
                 <button type="button" class="quick plus" (click)="adjust(item, 1, 'Быстрый приход')" [disabled]="busyId() === item.id">+ 1</button>
                 <button type="button" (click)="customAdjust(item, 1)" [disabled]="busyId() === item.id">Приход</button>
               </div>
+              <button type="button" class="history-toggle" [class.open]="historyItemId() === item.id" (click)="toggleHistory(item)">
+                <span>История прихода и списаний</span><b>{{ historyItemId() === item.id ? "⌃" : "⌄" }}</b>
+              </button>
+              @if (historyItemId() === item.id) {
+                <div class="history-panel">
+                  @if (historyLoading()) {
+                    <p class="history-state">Загружаем историю…</p>
+                  } @else if (historyError()) {
+                    <p class="history-state error">{{ historyError() }}</p>
+                  } @else {
+                    <div class="movement-list">
+                      @for (movement of historyMovements(); track movement.id) {
+                        <div class="movement" [class.incoming]="number(movement.delta) > 0" [class.outgoing]="number(movement.delta) < 0">
+                          <i>{{ number(movement.delta) > 0 ? "+" : "−" }}</i>
+                          <div>
+                            <strong>{{ number(movement.delta) > 0 ? "Приход" : "Списание" }} · {{ movement.reason }}</strong>
+                            <span>{{ formatDateTime(movement.last_event_at) }} · {{ movement.created_by_name }}</span>
+                            @if (movement.operation_count > 1) {
+                              <small>{{ movement.operation_count }} действия объединены в одну запись</small>
+                            }
+                          </div>
+                          <div class="movement-amount">
+                            <b>{{ number(movement.delta) > 0 ? "+" : "−" }}{{ displayNumber(abs(movement.delta)) }} {{ item.unit }}</b>
+                            <span>остаток {{ displayNumber(movement.quantity_after) }}</span>
+                          </div>
+                        </div>
+                      }
+                      @if (historyItem(); as createdItem) {
+                        <div class="movement created">
+                          <i>●</i>
+                          <div><strong>Позиция добавлена</strong><span>{{ formatDateTime(createdItem.created_at) }}</span></div>
+                          <div class="movement-amount"><b>+{{ displayNumber(createdItem.initial_quantity) }} {{ createdItem.unit }}</b><span>начальный остаток</span></div>
+                        </div>
+                      }
+                    </div>
+                  }
+                </div>
+              }
             </article>
           } @empty {
             @if (!loading()) { <div class="empty"><b>Инвентарь пока пуст</b><span>Добавьте магниты или расходники для нужного клуба.</span></div> }
@@ -121,11 +178,12 @@ type InventoryItem = {
     .new-item{grid-template-columns:repeat(3,minmax(0,1fr))!important}.form-heading{grid-column:1/-1;display:grid;gap:4px}.form-heading b{font-size:18px}.form-heading span{color:var(--muted);font-size:12px}.notes{grid-column:span 2}.save{min-height:42px;align-self:end}
     .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:20px 0}.summary article{padding:17px 19px;border:1px solid var(--line);border-radius:14px;background:#fff}.summary span{display:block;color:var(--muted);font-size:11px}.summary b{display:block;margin-top:6px;font-size:25px}.summary .warning{border-color:#f4c7a4;background:#fff8f1}.summary .warning b{color:#c04f18}
     .inventory-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.inventory-list>article{padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 24px #19213a08}.inventory-list>article.low{border-color:#f1bc93;box-shadow:0 8px 24px #d3601710}
-    .item-main{display:flex;align-items:start;justify-content:space-between;gap:14px}.category{color:var(--primary);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.item-title h3{margin:5px 0 4px;font-size:18px}.item-title p{margin:0;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.status{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:#fff0e5;color:#b54708;font-size:9px;font-weight:800}.status.ok{background:#eaf8f1;color:#087443}
+    .item-main{display:flex;align-items:start;justify-content:space-between;gap:14px}.category{color:var(--primary);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.item-title h3{margin:5px 0 4px;font-size:18px}.item-title p{margin:0;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.added-at{display:block;margin-top:6px;color:#98a2b3;font-size:9px}.status{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:#fff0e5;color:#b54708;font-size:9px;font-weight:800}.status.ok{background:#eaf8f1;color:#087443}
     .stock{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:17px 0;padding:14px;border-radius:12px;background:#f5f7fa}.stock small{display:block;color:var(--muted);font-size:10px}.stock strong{display:block;margin-top:4px;font-size:25px}.stock strong.minimum{color:#667085}.stock em{font-size:11px;font-style:normal;font-weight:700}
     .item-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.item-actions button{min-width:0;padding:10px 6px;font-size:11px}.quick{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.quick.minus{color:#b42336}.quick.plus{color:#087443}
+    .history-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 12px;border:1px solid #e0e4eb;background:#f7f8fa;box-shadow:none;color:#344054;font-size:11px}.history-toggle:hover{transform:none;box-shadow:none}.history-toggle.open{border-color:#c7cdf9;background:#f0f2ff;color:#3f46b5}.history-toggle b{font-size:15px}.history-panel{margin-top:8px;padding:4px 12px;border:1px solid #e0e4eb;border-radius:12px;background:#fbfcfe}.history-state{margin:0;padding:18px 4px;color:var(--muted);text-align:center}.movement-list{display:grid}.movement{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px 0;border-bottom:1px solid #e8ebf0}.movement:last-child{border-bottom:0}.movement>i{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#eef1f6;color:#667085;font-style:normal;font-weight:900}.movement.incoming>i{background:#dcfae6;color:#087443}.movement.outgoing>i{background:#fff0e5;color:#b54708}.movement strong,.movement span,.movement small{display:block}.movement strong{font-size:11px}.movement span{margin-top:4px;color:#7a8495;font-size:9px}.movement small{margin-top:5px;color:#9a6700;font-size:8px}.movement-amount{text-align:right}.movement-amount b{font-size:12px;white-space:nowrap}.incoming .movement-amount b{color:#087443}.outgoing .movement-amount b{color:#b54708}.movement.created>i{background:#eef0ff;color:#4f46e5;font-size:9px}
     @media(max-width:1100px){.inventory-list{grid-template-columns:1fr}.new-item{grid-template-columns:repeat(2,minmax(0,1fr))!important}.notes{grid-column:1/-1}}
-    @media(max-width:760px){section{padding-bottom:105px!important}.toolbar{align-items:stretch;flex-direction:column}.toolbar label{width:100%}.toolbar button{width:100%}.new-item{grid-template-columns:1fr!important;padding:16px!important}.new-item>*{grid-column:1!important}.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.summary article{padding:12px 10px}.summary b{font-size:20px}.inventory-list>article{padding:16px}.item-main{display:grid}.status{justify-self:start}.item-actions{grid-template-columns:1fr 1fr}.item-actions button{min-height:44px;font-size:12px}}
+    @media(max-width:760px){section{padding-bottom:105px!important}.toolbar{align-items:stretch;flex-direction:column}.toolbar label{width:100%}.toolbar button{width:100%}.new-item{grid-template-columns:1fr!important;padding:16px!important}.new-item>*{grid-column:1!important}.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.summary article{padding:12px 10px}.summary b{font-size:20px}.inventory-list>article{padding:16px}.item-main{display:grid}.status{justify-self:start}.item-actions{grid-template-columns:1fr 1fr}.item-actions button{min-height:44px;font-size:12px}.history-toggle{min-height:44px}.history-panel{padding-inline:10px}.movement{grid-template-columns:28px minmax(0,1fr)}.movement-amount{grid-column:2;text-align:left}.movement-amount span{display:inline;margin-left:6px}}
     @media(max-width:390px){.summary{grid-template-columns:1fr}.summary article{display:flex;align-items:center;justify-content:space-between}.summary b{margin:0}}
   `],
 })
@@ -138,6 +196,11 @@ export class InventoryComponent {
   loading = signal(false);
   saving = signal(false);
   busyId = signal("");
+  historyItemId = signal("");
+  historyLoading = signal(false);
+  historyError = signal("");
+  historyMovements = signal<InventoryMovement[]>([]);
+  historyItem = signal<InventoryHistoryItem | null>(null);
   error = signal("");
   categories = ["Магниты", "Батарейки", "Крепёж", "Электроника", "Одноразовые расходники", "Другое"];
   units = ["шт.", "уп.", "м", "л", "кг"];
@@ -155,7 +218,10 @@ export class InventoryComponent {
   }
 
   number(value: number | string) { return Number(value) || 0; }
+  abs(value: number | string) { return Math.abs(this.number(value)); }
   displayNumber(value: number | string) { return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(this.number(value)); }
+  formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value)); }
+  formatDateTime(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 
   changeLocation(value: string) {
     this.locationId.set(value);
@@ -193,7 +259,7 @@ export class InventoryComponent {
     this.busyId.set(item.id);
     this.error.set("");
     this.http.post(`/api/inventory/${item.id}/adjust`, { delta, reason }).subscribe({
-      next: () => { this.busyId.set(""); this.load(); },
+      next: () => { this.busyId.set(""); this.load(); if (this.historyItemId() === item.id) this.loadHistory(item); },
       error: ({ error }) => {
         this.busyId.set("");
         this.error.set(error?.error === "INSUFFICIENT_STOCK" ? "Нельзя списать больше, чем есть в наличии." : "Не удалось изменить остаток.");
@@ -209,5 +275,30 @@ export class InventoryComponent {
     const reason = prompt(direction > 0 ? "Причина прихода:" : "Причина списания:", direction > 0 ? "Поставка" : "Использовано")?.trim();
     if (!reason) return;
     this.adjust(item, amount * direction, reason);
+  }
+
+  toggleHistory(item: InventoryItem) {
+    if (this.historyItemId() === item.id) {
+      this.historyItemId.set("");
+      return;
+    }
+    this.historyItemId.set(item.id);
+    this.loadHistory(item);
+  }
+
+  loadHistory(item: InventoryItem) {
+    this.historyLoading.set(true);
+    this.historyError.set("");
+    this.http.get<{ item: InventoryHistoryItem; movements: InventoryMovement[] }>(`/api/inventory/${item.id}/movements`).subscribe({
+      next: (response) => {
+        this.historyItem.set(response.item);
+        this.historyMovements.set(response.movements);
+        this.historyLoading.set(false);
+      },
+      error: () => {
+        this.historyLoading.set(false);
+        this.historyError.set("Не удалось загрузить историю операций.");
+      },
+    });
   }
 }
