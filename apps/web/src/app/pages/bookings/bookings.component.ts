@@ -355,9 +355,9 @@ type ExternalClub = {
                     </div>
                     <div class="control-group extra-guests-control">
                       <span>Больше гостей</span>
-                      <p>В брони: {{ b.players }}. Разрешите итоговое количество от {{ b.players + 1 }} до {{ b.players + 20 }}.</p>
+                      <p>В брони: {{ b.players }}. Укажите итоговое количество пришедших гостей.</p>
                       <label>Всего гостей
-                        <input type="number" [min]="b.players + 1" [max]="b.players + 20" step="1" [(ngModel)]="extraGuestTotals[b.id]" [disabled]="extraGuestBusyId() === b.id" />
+                        <input type="number" [min]="b.players + 1" step="1" [(ngModel)]="extraGuestTotals[b.id]" [disabled]="extraGuestBusyId() === b.id" />
                       </label>
                       <button class="extra-guests-button" type="button" (click)="authorizeExtraGuests(b)" [disabled]="extraGuestBusyId() === b.id">
                         {{ extraGuestBusyId() === b.id ? "Разрешаем…" : "Разрешить check-in" }}
@@ -1566,9 +1566,8 @@ export class BookingsComponent {
   extraGuestError(bookingId: string) { return this.extraGuestMessages()[bookingId]?.error || false; }
   authorizeExtraGuests(booking: ExternalBooking) {
     const totalGuests = Number(this.extraGuestTotals[booking.id] ?? booking.players + 1);
-    const maxGuests = booking.players + 20;
-    if (!Number.isInteger(totalGuests) || totalGuests <= booking.players || totalGuests > maxGuests) {
-      this.extraGuestMessages.update(messages => ({ ...messages, [booking.id]: { text: `Укажите число от ${booking.players + 1} до ${maxGuests}.`, error: true } }));
+    if (!Number.isInteger(totalGuests) || totalGuests <= booking.players) {
+      this.extraGuestMessages.update(messages => ({ ...messages, [booking.id]: { text: `Укажите целое число больше ${booking.players}.`, error: true } }));
       return;
     }
     this.extraGuestBusyId.set(booking.id);

@@ -420,6 +420,7 @@ async function timeToGrowAppFetch(path, init = {}) {
 }
 
 const timeToGrowId = z.string().regex(/^[a-z0-9]{26}$/);
+const CHECKIN_MAX_TOTAL_GUESTS = 10_000;
 const checkinParticipantInput = z.object({
   firstName: z.string().trim().min(1).max(120),
   lastName: z.string().trim().min(1).max(120),
@@ -430,11 +431,10 @@ const checkinParticipantInput = z.object({
   allowMarketingMaterials: z.boolean().default(false),
   acceptWaiver: z.literal(true),
   acceptPrivacyPolicy: z.literal(true),
-  participantNumber: z.coerce.number().int().min(1).max(100).optional(),
-  totalGuests: z.coerce.number().int().min(1).max(100).optional(),
+  participantNumber: z.coerce.number().int().min(1).max(CHECKIN_MAX_TOTAL_GUESTS).optional(),
+  totalGuests: z.coerce.number().int().min(1).max(CHECKIN_MAX_TOTAL_GUESTS).optional(),
   extraAuthorization: z.string().max(300).optional().default(""),
 });
-const CHECKIN_MAX_EXTRA_GUESTS = 20;
 
 const timeToGrowAppVisitsPath = (clubId, filtering) => {
   const query = new URLSearchParams({ filtering: JSON.stringify(filtering) });
@@ -602,7 +602,7 @@ app.get("/reception/checkin/:token", rateLimit({ windowMs: 60_000, limit: 60 }),
 });
 
 app.post("/reception/checkin/:token/extra-guests", auth, rateLimit({ windowMs: 60_000, limit: 15 }), async (req,res) => {
-  const parsed=z.object({totalGuests:z.coerce.number().int().min(1).max(100)}).safeParse(req.body);
+  const parsed=z.object({totalGuests:z.coerce.number().int().min(1).max(CHECKIN_MAX_TOTAL_GUESTS)}).safeParse(req.body);
   if(!parsed.success) return res.status(400).json({error:"INVALID_INPUT"});
   try {
     const resolved=await checkinReservationFromToken(req.params.token);
@@ -615,9 +615,8 @@ app.post("/reception/checkin/:token/extra-guests", auth, rateLimit({ windowMs: 6
       `,[req.user.sub,resolved.clubId]);
       if(!allowed.rowCount) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
     }
-    const maxAllowed=resolved.reservation.guests+CHECKIN_MAX_EXTRA_GUESTS;
-    if(parsed.data.totalGuests<=resolved.reservation.guests || parsed.data.totalGuests>maxAllowed) {
-      return res.status(400).json({error:"EXTRA_GUEST_LIMIT_INVALID",maxAllowed});
+    if(parsed.data.totalGuests<=resolved.reservation.guests) {
+      return res.status(400).json({error:"EXTRA_GUEST_LIMIT_INVALID"});
     }
     const extraAuthorization=createExtraGuestAuthorization(
       env.JWT_ACCESS_SECRET,
