@@ -17,7 +17,7 @@ import { z } from "zod";
 import { TuyaCloud } from "./tuya.js";
 import { TuyaMessageConsumer } from "./tuya-messages.js";
 import { TuyaWebRTCManager } from "./tuya-webrtc.js";
-import { checkinTokenMatches, createCheckinToken, isCheckinToken } from "./checkin-links.js";
+import { checkinTokenMatches, createCheckinToken, isCheckinToken, readCheckinToken } from "./checkin-links.js";
 
 const env = z.object({
   PORT: z.coerce.number().default(3000),
@@ -486,6 +486,20 @@ const configuredCheckinLocations = () => [
 
 async function resolveCheckinToken(token) {
   if (!isCheckinToken(token)) return null;
+  const signed = readCheckinToken(token,env.JWT_ACCESS_SECRET);
+  if (signed) {
+    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(signed.clubId,{ upcoming:true }));
+    if (!response.ok) {
+      const error = new Error("Time to Grow visits request failed");
+      error.code = "TIME_TO_GROW_REQUEST_FAILED";
+      throw error;
+    }
+    const visits = timeToGrowDataRows(await response.json());
+    const visit = visits.find(item => String(item?.booking_id || item?.booking?.id || "") === signed.bookingId);
+    if (!visit) return null;
+    const viennaClubIds = new Set([env.TIME_TO_GROW_VIENNA_CLUB_ID,"01js42s5vwvwrx3fme9zvgdj1v"]);
+    return { location:viennaClubIds.has(signed.clubId) ? "vienna" : "st-poelten",clubId:signed.clubId,visit };
+  }
   const results = await Promise.all(configuredCheckinLocations().map(async ({ location,clubId }) => {
     const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { upcoming:true }));
     if (!response.ok) {
