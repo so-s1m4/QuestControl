@@ -434,7 +434,7 @@ const checkinParticipantInput = z.object({
   totalGuests: z.coerce.number().int().min(1).max(100).optional(),
   extraAuthorization: z.string().max(300).optional().default(""),
 });
-const CHECKIN_MAX_EXTRA_GUESTS = 10;
+const CHECKIN_MAX_EXTRA_GUESTS = 20;
 
 const timeToGrowAppVisitsPath = (clubId, filtering) => {
   const query = new URLSearchParams({ filtering: JSON.stringify(filtering) });

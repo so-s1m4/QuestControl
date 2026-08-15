@@ -351,7 +351,18 @@ type ExternalClub = {
                       <span>Check-in гостей</span>
                       <button class="checkin-qr-button" (click)="openCheckInQr(b)">Показать QR-код</button>
                       <button class="checkin-link-button" (click)="copyCheckInLink(b)">{{ copiedCheckinId() === b.id ? "Ссылка скопирована ✓" : "Скопировать ссылку" }}</button>
-                      <a class="control-link" [href]="b.checkInPath" target="_blank" rel="noopener">Открыть check-in ↗</a>
+                      <a class="control-link" [href]="checkInUrl(b)" target="_blank" rel="noopener">Открыть check-in ↗</a>
+                    </div>
+                    <div class="control-group extra-guests-control">
+                      <span>Больше гостей</span>
+                      <p>В брони: {{ b.players }}. Разрешите итоговое количество от {{ b.players + 1 }} до {{ b.players + 20 }}.</p>
+                      <label>Всего гостей
+                        <input type="number" [min]="b.players + 1" [max]="b.players + 20" step="1" [(ngModel)]="extraGuestTotals[b.id]" [disabled]="extraGuestBusyId() === b.id" />
+                      </label>
+                      <button class="extra-guests-button" type="button" (click)="authorizeExtraGuests(b)" [disabled]="extraGuestBusyId() === b.id">
+                        {{ extraGuestBusyId() === b.id ? "Разрешаем…" : "Разрешить check-in" }}
+                      </button>
+                      @if (extraGuestMessage(b.id); as message) { <small [class.error-text]="extraGuestError(b.id)">{{ message }}</small> }
                     </div>
                     <div class="control-group">
                       <span>Игровая сессия</span>
@@ -855,6 +866,13 @@ type ExternalClub = {
         box-shadow: none;
         white-space: nowrap;
       }
+      .extra-guests-control { background: #fff9ed; border-color: #f1d3a6; }
+      .extra-guests-control p { margin: 0; color: #795619; font-size: 11px; line-height: 1.4; }
+      .extra-guests-control label { display: grid; gap: 5px; color: #795619; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+      .extra-guests-control input { width: 100%; min-height: 38px; box-sizing: border-box; border: 1px solid #e3bd80; border-radius: 8px; background: #fff; padding: 8px 10px; color: #344054; font-size: 14px; font-weight: 700; }
+      .extra-guests-button { background: #b54708; color: #fff; box-shadow: none; }
+      .extra-guests-control small { color: #087443; font-size: 10px; line-height: 1.4; }
+      .extra-guests-control small.error-text { color: #b42318; }
       .qr-backdrop {
         position: fixed;
         z-index: 1000;
@@ -1287,6 +1305,10 @@ export class BookingsComponent {
   qrBooking = signal<ExternalBooking | null>(null);
   checkInQrDataUrl = signal("");
   qrLoading = signal(false);
+  extraGuestTotals: Record<string, number | null> = {};
+  extraGuestAuthorizations = signal<Record<string, string>>({});
+  extraGuestMessages = signal<Record<string, { text: string; error: boolean }>>({});
+  extraGuestBusyId = signal<string | null>(null);
   importingId = signal<string | null>(null);
   externalDate = this.localDate(new Date());
   games = signal<Game[]>([]);
@@ -1494,7 +1516,7 @@ export class BookingsComponent {
     this.toggleExternal(id);
   }
   async copyCheckInLink(booking: ExternalBooking) {
-    const link = new URL(booking.checkInPath, location.origin).toString();
+    const link = this.checkInUrl(booking);
     try {
       await navigator.clipboard.writeText(link);
       this.copiedCheckinId.set(booking.id);
@@ -1509,7 +1531,7 @@ export class BookingsComponent {
     this.qrBooking.set(booking);
     this.checkInQrDataUrl.set("");
     this.qrLoading.set(true);
-    const link = new URL(booking.checkInPath, location.origin).toString();
+    const link = this.checkInUrl(booking);
     try {
       const dataUrl = await QRCode.toDataURL(link, {
         width: 720,
@@ -1533,6 +1555,37 @@ export class BookingsComponent {
   checkInQrFilename(booking: ExternalBooking) {
     const customer = booking.customerName.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, "-").replace(/^-|-$/g, "");
     return `check-in-${booking.date}-${booking.startsAt.replace(":", "-")}-${customer || "guest"}.png`;
+  }
+  checkInUrl(booking: ExternalBooking) {
+    const url = new URL(booking.checkInPath, location.origin);
+    const authorization = this.extraGuestAuthorizations()[booking.id];
+    if (authorization) url.searchParams.set("extraAuthorization", authorization);
+    return url.toString();
+  }
+  extraGuestMessage(bookingId: string) { return this.extraGuestMessages()[bookingId]?.text || ""; }
+  extraGuestError(bookingId: string) { return this.extraGuestMessages()[bookingId]?.error || false; }
+  authorizeExtraGuests(booking: ExternalBooking) {
+    const totalGuests = Number(this.extraGuestTotals[booking.id] ?? booking.players + 1);
+    const maxGuests = booking.players + 20;
+    if (!Number.isInteger(totalGuests) || totalGuests <= booking.players || totalGuests > maxGuests) {
+      this.extraGuestMessages.update(messages => ({ ...messages, [booking.id]: { text: `Укажите число от ${booking.players + 1} до ${maxGuests}.`, error: true } }));
+      return;
+    }
+    this.extraGuestBusyId.set(booking.id);
+    this.extraGuestMessages.update(messages => ({ ...messages, [booking.id]: { text: "", error: false } }));
+    this.http.post<{ extraAuthorization: string; maxGuests: number }>(`/api${booking.checkInPath}/extra-guests`, { totalGuests }).subscribe({
+      next: ({ extraAuthorization, maxGuests: approvedTotal }) => {
+        this.extraGuestTotals[booking.id] = approvedTotal;
+        this.extraGuestAuthorizations.update(authorizations => ({ ...authorizations, [booking.id]: extraAuthorization }));
+        this.extraGuestMessages.update(messages => ({ ...messages, [booking.id]: { text: `Разрешено до ${approvedTotal} гостей. QR-код и ссылка обновлены.`, error: false } }));
+        this.extraGuestBusyId.set(null);
+      },
+      error: ({ error }) => {
+        const text = error?.error === "LOCATION_FORBIDDEN" ? "У вас нет доступа к этому клубу." : "Не удалось выдать разрешение. Попробуйте ещё раз.";
+        this.extraGuestMessages.update(messages => ({ ...messages, [booking.id]: { text, error: true } }));
+        this.extraGuestBusyId.set(null);
+      },
+    });
   }
   ageLabel(age: number) {
     const mod10 = age % 10,
