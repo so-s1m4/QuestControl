@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   checkinTokenMatches,
   createCheckinToken,
+  createExtraGuestAuthorization,
   isCheckinToken,
   readCheckinToken,
+  readExtraGuestAuthorization,
 } from "../src/checkin-links.js";
 
 const secret = "a-secret-that-is-long-enough-for-production-tests";
@@ -32,4 +34,14 @@ test("legacy check-in links remain valid", () => {
   assert.equal(isCheckinToken(legacy),true);
   assert.equal(checkinTokenMatches(legacy,secret,clubId,bookingId),true);
   assert.equal(checkinTokenMatches(legacy,secret,"01js4ahx79xbw5gd05jy1mmsdw",bookingId),false);
+});
+
+test("extra guest authorization is booking-link specific and expires", () => {
+  const token=createCheckinToken(secret,clubId,bookingId);
+  const anotherToken=createCheckinToken(secret,clubId,`${bookingId.slice(0,-1)}x`);
+  const authorization=createExtraGuestAuthorization(secret,token,7,2_000);
+  assert.deepEqual(readExtraGuestAuthorization(authorization,secret,token,1_000),{maxGuests:7,expiresAt:2_000});
+  assert.equal(readExtraGuestAuthorization(authorization,secret,anotherToken,1_000),null);
+  assert.equal(readExtraGuestAuthorization(authorization,secret,token,2_000),null);
+  assert.equal(readExtraGuestAuthorization(`${authorization.slice(0,-1)}A`,secret,token,1_000),null);
 });

@@ -7,7 +7,7 @@ import QRCode from "qrcode";
 type Language="de"|"en";
 type CheckinLocation="st-poelten"|"vienna";
 type Step="reservation"|"guests"|"details"|"done";
-type Reservation={visitId:string;bookingId:string;time:string;room:string;name:string;guests:number};
+type Reservation={visitId:string;bookingId:string;time:string;room:string;name:string;guests:number;maxGuests:number};
 type CheckinDocuments={waiver:Partial<Record<Language,string>>;privacy:Partial<Record<Language,string>>};
 type Participant={firstName:string;lastName:string;email:string;phone:string;birthDate:string;gender:""|"female"|"male"|"non-binary";allowMarketingMaterials:boolean;waiver:boolean;privacy:boolean;submitted:boolean};
 
@@ -47,27 +47,42 @@ export class ReceptionCheckinComponent implements OnInit{
   submitting=signal(false);
   submitError=signal(false);
   qrDataUrl=signal("");
+  extraAuthorization=signal("");
+  extraError=signal(false);
+  authorizingExtra=signal(false);
+  hasStaffSession=Boolean(sessionStorage.getItem("access_token"));
   maxBirthDate=new Date().toISOString().slice(0,10);
 
-  ngOnInit(){this.checkinToken=this.route.snapshot.paramMap.get("token")||"";this.loadReservation()}
+  ngOnInit(){this.checkinToken=this.route.snapshot.paramMap.get("token")||"";this.extraAuthorization.set(new URLSearchParams(location.search).get("extraAuthorization")||"");this.loadReservation()}
   toggleLanguage(){this.language.update(value=>value==="de"?"en":"de")}
   loadReservation(){
     this.loading.set(true);this.loadError.set(false);
     if(!this.checkinToken){this.loading.set(false);this.loadError.set(true);return}
-    this.http.get<{location:CheckinLocation;data:Reservation;documents:CheckinDocuments}>(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}`).subscribe({
+    const extraQuery=this.extraAuthorization()?`?extraAuthorization=${encodeURIComponent(this.extraAuthorization())}`:"";
+    this.http.get<{location:CheckinLocation;data:Reservation;documents:CheckinDocuments}>(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}${extraQuery}`).subscribe({
       next:payload=>{this.clubLocation.set(payload.location);this.reservations.set([payload.data]);this.documents.set(payload.documents||{waiver:{},privacy:{}});this.selected.set(payload.data);this.guestCount.set(payload.data.guests);this.loading.set(false);this.step.set("guests");this.openFromUrl()},
       error:()=>{this.reservations.set([]);this.documents.set({waiver:{},privacy:{}});this.loading.set(false);this.loadError.set(true)},
     });
   }
-  decreaseGuests(){this.guestCount.update(value=>Math.max(1,value-1))}
-  increaseGuests(){const max=this.selected()?.guests||1;this.guestCount.update(value=>Math.min(max,value+1))}
+  decreaseGuests(){this.extraError.set(false);this.guestCount.update(value=>Math.max(1,value-1))}
+  increaseGuests(){
+    const reservation=this.selected();if(!reservation||this.authorizingExtra())return;
+    const next=this.guestCount()+1;
+    if(next<=reservation.maxGuests){this.guestCount.set(next);this.extraError.set(false);return}
+    if(!this.hasStaffSession){this.extraError.set(true);return}
+    this.authorizingExtra.set(true);this.extraError.set(false);
+    this.http.post<{extraAuthorization:string;maxGuests:number}>(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}/extra-guests`,{totalGuests:next}).subscribe({
+      next:payload=>{this.extraAuthorization.set(payload.extraAuthorization);this.selected.update(value=>value?{...value,maxGuests:payload.maxGuests}:value);this.guestCount.set(payload.maxGuests);this.authorizingExtra.set(false)},
+      error:()=>{this.authorizingExtra.set(false);this.extraError.set(true)},
+    });
+  }
   startDetails(){this.participants.set(Array.from({length:this.guestCount()},emptyParticipant));this.participantIndex.set(0);this.draft.set(emptyParticipant());this.submitError.set(false);this.step.set("details");void this.refreshQr()}
   updateDraft(patch:Partial<Participant>){this.draft.update(value=>({...value,...patch}));this.submitError.set(false)}
   async submitParticipant(){
     const reservation=this.selected();const draft=this.draft();
     if(!reservation||this.submitting()||draft.submitted)return;
     this.submitting.set(true);this.submitError.set(false);
-    this.http.post(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}/participants`,{firstName:draft.firstName,lastName:draft.lastName,email:draft.email,phone:draft.phone,birthday:draft.birthDate,gender:draft.gender,allowMarketingMaterials:draft.allowMarketingMaterials,acceptWaiver:draft.waiver,acceptPrivacyPolicy:draft.privacy}).subscribe({
+    this.http.post(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}/participants`,{firstName:draft.firstName,lastName:draft.lastName,email:draft.email,phone:draft.phone,birthday:draft.birthDate,gender:draft.gender,allowMarketingMaterials:draft.allowMarketingMaterials,acceptWaiver:draft.waiver,acceptPrivacyPolicy:draft.privacy,participantNumber:this.participantIndex()+1,totalGuests:this.guestCount(),extraAuthorization:this.extraAuthorization()}).subscribe({
       next:()=>{
         const updated=[...this.participants()];updated[this.participantIndex()]={...draft,submitted:true};this.participants.set(updated);
         const next=updated.findIndex((participant,index)=>index>this.participantIndex()&&!participant.submitted);
@@ -77,18 +92,24 @@ export class ReceptionCheckinComponent implements OnInit{
       error:()=>{this.submitting.set(false);this.submitError.set(true)},
     });
   }
-  reset(){const url=new URL(location.href);url.search="";history.replaceState({},"",url);this.participants.set([]);this.participantIndex.set(0);this.draft.set(emptyParticipant());this.qrDataUrl.set("");this.loadReservation()}
+  reset(){const url=new URL(location.href);url.search="";history.replaceState({},"",url);this.participants.set([]);this.participantIndex.set(0);this.draft.set(emptyParticipant());this.qrDataUrl.set("");this.extraAuthorization.set("");this.loadReservation()}
   submittedCount(){return this.participants().filter(item=>item.submitted).length}
   submitLabel(){return this.submitting()?this.t().sending:(this.participantIndex()<this.guestCount()-1?this.t().next:this.t().finish)}
   private openFromUrl(){
     const params=new URLSearchParams(location.search);const total=Number(params.get("participants"));const slot=Number(params.get("participant"));
     const reservation=this.selected();
-    if(!reservation||!Number.isInteger(total)||total<1||total>reservation.guests)return;
+    if(!reservation||!Number.isInteger(total)||total<1||total>reservation.maxGuests)return;
     this.selected.set(reservation);this.guestCount.set(total);this.participants.set(Array.from({length:total},emptyParticipant));this.participantIndex.set(Number.isInteger(slot)?Math.min(Math.max(slot,1),total)-1:0);this.draft.set(emptyParticipant());this.step.set("details");void this.refreshQr();
   }
   private async refreshQr(){
     const reservation=this.selected();if(!reservation)return;
-    const url=new URL(location.href);url.search="";url.searchParams.set("participants",String(this.guestCount()));url.searchParams.set("participant",String(this.participantIndex()+1));
+    const url=new URL(location.href);url.search="";url.searchParams.set("participants",String(this.guestCount()));url.searchParams.set("participant",String(this.participantIndex()+1));if(this.extraAuthorization())url.searchParams.set("extraAuthorization",this.extraAuthorization());
     this.qrDataUrl.set(await QRCode.toDataURL(url.toString(),{width:420,margin:1,errorCorrectionLevel:"M",color:{dark:"#191919",light:"#ffffff"}}));
+  }
+  isExtraParticipant(index=this.participantIndex()){return index>=(this.selected()?.guests||Number.MAX_SAFE_INTEGER)}
+  extraText(kind:"extra"|"approval"|"authorizing"){
+    const de={extra:"zusätzlich",approval:"Weitere Gäste müssen von einem Mitarbeiter freigegeben werden.",authorizing:"Wird freigegeben…"};
+    const en={extra:"additional",approval:"Additional guests must be approved by a staff member.",authorizing:"Approving…"};
+    return (this.language()==="de"?de:en)[kind];
   }
 }

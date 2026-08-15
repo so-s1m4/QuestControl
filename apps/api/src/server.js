@@ -17,7 +17,14 @@ import { z } from "zod";
 import { TuyaCloud } from "./tuya.js";
 import { TuyaMessageConsumer } from "./tuya-messages.js";
 import { TuyaWebRTCManager } from "./tuya-webrtc.js";
-import { checkinTokenMatches, createCheckinToken, isCheckinToken, readCheckinToken } from "./checkin-links.js";
+import {
+  checkinTokenMatches,
+  createCheckinToken,
+  createExtraGuestAuthorization,
+  isCheckinToken,
+  readCheckinToken,
+  readExtraGuestAuthorization,
+} from "./checkin-links.js";
 
 const env = z.object({
   PORT: z.coerce.number().default(3000),
@@ -423,7 +430,11 @@ const checkinParticipantInput = z.object({
   allowMarketingMaterials: z.boolean().default(false),
   acceptWaiver: z.literal(true),
   acceptPrivacyPolicy: z.literal(true),
+  participantNumber: z.coerce.number().int().min(1).max(100).optional(),
+  totalGuests: z.coerce.number().int().min(1).max(100).optional(),
+  extraAuthorization: z.string().max(300).optional().default(""),
 });
+const CHECKIN_MAX_EXTRA_GUESTS = 10;
 
 const timeToGrowAppVisitsPath = (clubId, filtering) => {
   const query = new URLSearchParams({ filtering: JSON.stringify(filtering) });
@@ -564,17 +575,25 @@ async function checkinReservationFromToken(token) {
     location,
     clubId,
     visit,
+    booking,
     documents,
     reservation:{ visitId,bookingId,time:visitTime(visit),room:visitLabel(visit),name:visitCustomer(visit),guests },
   };
 }
+
+const checkinGuestLimit = (token,reservation,extraAuthorization) => {
+  const grant = readExtraGuestAuthorization(extraAuthorization,env.JWT_ACCESS_SECRET,token);
+  return Math.max(reservation.guests,grant?.maxGuests || 0);
+};
 
 app.get("/reception/checkin/:token", rateLimit({ windowMs: 60_000, limit: 60 }), async (req, res) => {
   try {
     const resolved = await checkinReservationFromToken(req.params.token);
     res.set("cache-control", "no-store");
     if (!resolved) return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
-    res.json({ location:resolved.location, data:resolved.reservation, documents:resolved.documents });
+    const extraAuthorization=z.string().max(300).optional().catch(undefined).parse(req.query.extraAuthorization);
+    const maxGuests=checkinGuestLimit(req.params.token,resolved.reservation,extraAuthorization);
+    res.json({ location:resolved.location, data:{...resolved.reservation,maxGuests}, documents:resolved.documents });
   } catch (error) {
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
@@ -582,14 +601,62 @@ app.get("/reception/checkin/:token", rateLimit({ windowMs: 60_000, limit: 60 }),
   }
 });
 
+app.post("/reception/checkin/:token/extra-guests", auth, rateLimit({ windowMs: 60_000, limit: 15 }), async (req,res) => {
+  const parsed=z.object({totalGuests:z.coerce.number().int().min(1).max(100)}).safeParse(req.body);
+  if(!parsed.success) return res.status(400).json({error:"INVALID_INPUT"});
+  try {
+    const resolved=await checkinReservationFromToken(req.params.token);
+    if(!resolved) return res.status(404).json({error:"CHECKIN_LINK_INVALID"});
+    if(!isOwner(req)) {
+      const allowed=await db.query(`
+        SELECT 1 FROM user_locations ul
+        JOIN locations l ON l.id=ul.location_id
+        WHERE ul.user_id=$1 AND l.external_id=$2
+      `,[req.user.sub,resolved.clubId]);
+      if(!allowed.rowCount) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+    }
+    const maxAllowed=resolved.reservation.guests+CHECKIN_MAX_EXTRA_GUESTS;
+    if(parsed.data.totalGuests<=resolved.reservation.guests || parsed.data.totalGuests>maxAllowed) {
+      return res.status(400).json({error:"EXTRA_GUEST_LIMIT_INVALID",maxAllowed});
+    }
+    const extraAuthorization=createExtraGuestAuthorization(
+      env.JWT_ACCESS_SECRET,
+      req.params.token,
+      parsed.data.totalGuests,
+    );
+    await audit(req,"checkin.extra_guests.authorize","booking",null,null,{
+      clubId:resolved.clubId,
+      bookingId:resolved.reservation.bookingId,
+      bookedGuests:resolved.reservation.guests,
+      totalGuests:parsed.data.totalGuests,
+    });
+    res.json({extraAuthorization,maxGuests:parsed.data.totalGuests});
+  } catch(error) {
+    const status=error?.code==="TIME_TO_GROW_NOT_CONFIGURED"?503:502;
+    const code=error?.name==="TimeoutError"?"TIME_TO_GROW_TIMEOUT":(error?.code||"TIME_TO_GROW_INVALID_RESPONSE");
+    res.status(status).json({error:code});
+  }
+});
+
 app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000, limit: 20 }), async (req, res) => {
   const parsed = checkinParticipantInput.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
   const input = parsed.data;
+  let submissionKey=null;
   try {
     const resolved = await checkinReservationFromToken(req.params.token);
     if (!resolved) return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
     const { clubId,reservation } = resolved;
+    const guestLimit=checkinGuestLimit(req.params.token,reservation,input.extraAuthorization);
+    const participantNumber=input.participantNumber || (resolved.booking?.players?.length || 0)+1;
+    const totalGuests=input.totalGuests || reservation.guests;
+    if(totalGuests>guestLimit || participantNumber>totalGuests) {
+      return res.status(403).json({error:"EXTRA_GUEST_AUTHORIZATION_REQUIRED"});
+    }
+    const tokenHash=crypto.createHash("sha256").update(req.params.token,"utf8").digest("hex");
+    submissionKey=`checkin-submission:${tokenHash}:${participantNumber}`;
+    const claimed=await redis.set(submissionKey,req.requestId,"EX",48*60*60,"NX");
+    if(claimed!=="OK") return res.status(409).json({error:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED"});
 
     const response = await timeToGrowAppFetch(
       `/api/v1/app/clubs/${encodeURIComponent(clubId)}/booking-members`,
@@ -610,12 +677,14 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
       },
     );
     if (!response.ok) {
+      await redis.del(submissionKey);
       const status = response.status === 409 || response.status === 422 ? response.status : 502;
       return res.status(status).json({ error: "TIME_TO_GROW_SUBMISSION_FAILED" });
     }
     const payload = await response.json().catch(() => null);
     res.status(201).json({ success: true, participantId: payload?.data?.id || null });
   } catch (error) {
+    if(submissionKey) await redis.del(submissionKey).catch(()=>{});
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
     res.status(status).json({ error: code });
