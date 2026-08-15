@@ -11,3 +11,13 @@ if ("serviceWorker" in navigator) {
     void navigator.serviceWorker.register("/sw.js");
   });
 }
+
+const preventManagementZoom = (event: Event) => {
+  if (document.body.classList.contains("management-shell")) event.preventDefault();
+};
+for (const eventName of ["gesturestart", "gesturechange", "gestureend"]) {
+  document.addEventListener(eventName, preventManagementZoom, { passive: false });
+}
+document.addEventListener("touchmove", (event) => {
+  if (document.body.classList.contains("management-shell") && event.touches.length > 1) event.preventDefault();
+}, { passive: false });

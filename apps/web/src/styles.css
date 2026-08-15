@@ -14,7 +14,11 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--canvas); }
+html {
+  background: var(--canvas);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 body {
   margin: 0;
   background: radial-gradient(circle at 75% 0, #eef0ff 0, transparent 30%), var(--canvas);
@@ -196,6 +200,8 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: pan-x pan-y;
   }
   body.management-shell app-root {
     position: relative;
@@ -221,7 +227,7 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
     width: 100%;
     max-width: none;
     margin: 0;
-    padding: 18px 14px 88px;
+    padding: calc(24px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-right, 0px)) 88px calc(20px + env(safe-area-inset-left, 0px));
     padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   }
   body.management-shell main:not(.checkin-page) > section {
@@ -231,6 +237,13 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
   }
+  body.management-shell button,
+  body.management-shell a,
+  body.management-shell input,
+  body.management-shell select { touch-action: manipulation; }
+  body.management-shell input,
+  body.management-shell select,
+  body.management-shell textarea { font-size: 16px !important; }
   main:not(.checkin-page) > section > header {
     align-items: stretch;
     flex-direction: column;
@@ -267,5 +280,8 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
 }
 
 @media (max-width: 390px) {
-  main:not(.checkin-page) > section { padding-inline: 11px; }
+  main:not(.checkin-page) > section {
+    padding-right: calc(16px + env(safe-area-inset-right, 0px));
+    padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  }
 }

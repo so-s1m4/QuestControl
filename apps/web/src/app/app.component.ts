@@ -78,8 +78,8 @@ type InstallPromptEvent = Event & {
     .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}
-      .mobile-nav-layer{position:absolute!important;z-index:950;inset:auto 0 0;display:flex;justify-content:center;padding:0 10px 8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));pointer-events:none;isolation:isolate}
-      .mobile-nav{position:relative!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);pointer-events:auto}
+      .mobile-nav-layer{position:absolute!important;z-index:950;inset:auto 0 0;display:flex;justify-content:center;padding:0 12px;pointer-events:none;isolation:isolate}
+      .mobile-nav{position:relative!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:430px;gap:4px;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));border:1px solid #ffffff1c;border-bottom:0;border-radius:20px 20px 0 0;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);pointer-events:auto}
       .mobile-nav a,.mobile-nav>button{position:relative;display:grid;min-width:0;min-height:56px;place-items:center;align-content:center;gap:4px;padding:5px 3px;border:0;border-radius:14px;background:transparent;box-shadow:none;color:#8f9db3;text-decoration:none;transform:none;transition:background .18s,color .18s,transform .15s,box-shadow .18s}
       .mobile-nav a:hover,.mobile-nav>button:hover:not(:disabled){background:#ffffff0a;box-shadow:none;transform:none}
       .mobile-nav a:active,.mobile-nav>button:active{transform:scale(.96)}
