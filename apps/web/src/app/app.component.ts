@@ -18,16 +18,16 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
 
       <nav class="mobile-nav" aria-label="Основная навигация">
         <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
-          <b>⌂</b><span>Обзор</span>
+          <i class="mobile-tab-icon home-icon" aria-hidden="true"></i><span>Обзор</span>
         </a>
         <a routerLink="/bookings" routerLinkActive="active">
-          <b>▣</b><span>Брони</span>
+          <i class="mobile-tab-icon bookings-icon" aria-hidden="true"></i><span>Брони</span>
         </a>
         <a routerLink="/cameras" routerLinkActive="active">
-          <b>◉</b><span>Камеры</span>
+          <i class="mobile-tab-icon cameras-icon" aria-hidden="true"></i><span>Камеры</span>
         </a>
         <button type="button" [class.active]="moreActive() || mobileMenuOpen()" [attr.aria-expanded]="mobileMenuOpen()" (click)="mobileMenuOpen.set(true)">
-          <b>•••</b><span>Ещё</span>
+          <i class="mobile-tab-icon more-icon" aria-hidden="true"></i><span>Ещё</span>
         </button>
       </nav>
 
@@ -67,10 +67,22 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
     .mobile-nav,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}
-      .mobile-nav{position:fixed;z-index:950;inset:auto 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:7px 8px calc(7px + env(safe-area-inset-bottom));border-top:1px solid #ffffff1a;background:#101827f7;box-shadow:0 -12px 32px #10182724;backdrop-filter:blur(14px)}
-      .mobile-nav a,.mobile-nav>button{display:grid;min-width:0;min-height:52px;place-items:center;align-content:center;gap:3px;padding:5px 3px;border:0;border-radius:10px;background:transparent;box-shadow:none;color:#aeb8ca;text-decoration:none;transform:none}
-      .mobile-nav a.active,.mobile-nav>button.active{background:#6674ef24;color:#fff;box-shadow:inset 0 -2px #7c83ff}
-      .mobile-nav b{font-size:17px;line-height:1}.mobile-nav span{font-size:10px;font-weight:700;line-height:1.1}
+      .mobile-nav{position:fixed;z-index:950;left:50%;right:auto;bottom:calc(8px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:calc(100% - 20px);max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);transform:translateX(-50%)}
+      .mobile-nav a,.mobile-nav>button{position:relative;display:grid;min-width:0;min-height:56px;place-items:center;align-content:center;gap:4px;padding:5px 3px;border:0;border-radius:14px;background:transparent;box-shadow:none;color:#8f9db3;text-decoration:none;transform:none;transition:background .18s,color .18s,transform .15s,box-shadow .18s}
+      .mobile-nav a:hover,.mobile-nav>button:hover:not(:disabled){background:#ffffff0a;box-shadow:none;transform:none}
+      .mobile-nav a:active,.mobile-nav>button:active{transform:scale(.96)}
+      .mobile-nav a.active,.mobile-nav>button.active{background:linear-gradient(145deg,#6574ef,#5257d7);box-shadow:0 7px 18px #3f46c94d,0 1px 0 #ffffff30 inset;color:#fff}
+      .mobile-nav a.active:after,.mobile-nav>button.active:after{position:absolute;top:4px;left:50%;width:14px;height:2px;border-radius:99px;background:#cfd4ff;box-shadow:0 0 9px #aeb7ff;content:"";transform:translateX(-50%)}
+      .mobile-nav span{font-size:10px;font-weight:700;letter-spacing:.01em;line-height:1.1}
+      .mobile-tab-icon{position:relative;display:block;width:28px;height:28px;border:1px solid #ffffff0a;border-radius:9px;background:#ffffff08;color:currentColor}
+      .mobile-nav .active .mobile-tab-icon{border-color:#ffffff18;background:#ffffff14}
+      .home-icon:before{position:absolute;top:6px;left:8px;width:10px;height:10px;border-top:2px solid currentColor;border-left:2px solid currentColor;content:"";transform:rotate(45deg)}
+      .home-icon:after{position:absolute;left:8px;bottom:5px;width:10px;height:9px;border:2px solid currentColor;border-top:0;border-radius:0 0 2px 2px;content:""}
+      .bookings-icon:before{position:absolute;inset:6px 5px 5px;border:2px solid currentColor;border-radius:4px;content:""}
+      .bookings-icon:after{position:absolute;top:10px;left:9px;width:3px;height:3px;border-radius:1px;background:currentColor;box-shadow:6px 0 currentColor,0 6px currentColor,6px 6px currentColor;content:""}
+      .cameras-icon:before{position:absolute;inset:7px 4px;border:2px solid currentColor;border-radius:5px;content:""}
+      .cameras-icon:after{position:absolute;top:11px;left:11px;width:6px;height:6px;border:2px solid currentColor;border-radius:50%;content:""}
+      .more-icon:before{position:absolute;top:12px;left:6px;width:4px;height:4px;border-radius:50%;background:currentColor;box-shadow:6px 0 currentColor,12px 0 currentColor;content:""}
       .mobile-menu-backdrop{position:fixed;z-index:980;inset:0;display:flex;align-items:flex-end;padding-top:60px;background:#10182780;backdrop-filter:blur(4px)}
       .mobile-menu-sheet{width:100%;max-height:calc(100dvh - 54px);overflow:auto;margin:0;padding:8px 16px calc(18px + env(safe-area-inset-bottom));border-radius:22px 22px 0 0;background:#f7f8fb;box-shadow:0 -24px 60px #10182738;animation:sheet-in .18s ease-out}
       .sheet-handle{width:42px;height:4px;margin:2px auto 15px;border-radius:999px;background:#c7ccd6}
