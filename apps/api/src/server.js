@@ -1618,6 +1618,76 @@ app.get("/locations", auth, permit("locations:read"), async (req,res) => {
   res.json(rows);
 });
 
+const inventoryItemInput = z.object({
+  locationId: z.string().uuid(),
+  name: z.string().trim().min(2).max(120),
+  category: z.string().trim().min(2).max(80),
+  unit: z.string().trim().min(1).max(30),
+  quantity: z.coerce.number().finite().min(0).max(1_000_000),
+  minimumQuantity: z.coerce.number().finite().min(0).max(1_000_000),
+  notes: z.string().trim().max(500).default(""),
+});
+
+app.get("/inventory", auth, async (req,res) => {
+  const input=z.object({locationId:z.string().uuid().optional()}).parse(req.query);
+  if(input.locationId&&!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`
+    SELECT i.*,l.name AS location_name,
+           (i.quantity<=i.minimum_quantity) AS low_stock
+    FROM inventory_items i
+    JOIN locations l ON l.id=i.location_id
+    WHERE i.is_active=true
+      AND ($1::uuid IS NULL OR i.location_id=$1)
+      AND ($2::boolean OR EXISTS(
+        SELECT 1 FROM user_locations ul WHERE ul.user_id=$3 AND ul.location_id=i.location_id
+      ))
+    ORDER BY (i.quantity<=i.minimum_quantity) DESC,l.name,lower(i.category),lower(i.name)
+  `,[input.locationId||null,isOwner(req),req.user.sub]);
+  res.json(rows);
+});
+
+app.post("/inventory", auth, async (req,res) => {
+  const input=inventoryItemInput.parse(req.body);
+  if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`
+    INSERT INTO inventory_items(location_id,name,category,unit,quantity,minimum_quantity,notes,updated_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+    RETURNING *
+  `,[input.locationId,input.name,input.category,input.unit,input.quantity,input.minimumQuantity,input.notes||null,req.user.sub]);
+  await audit(req,"inventory.item.create","inventory_item",rows[0].id,null,rows[0]);
+  res.status(201).json(rows[0]);
+});
+
+app.post("/inventory/:id/adjust", auth, async (req,res) => {
+  const input=z.object({
+    delta:z.coerce.number().finite().min(-1_000_000).max(1_000_000).refine(value=>value!==0),
+    reason:z.string().trim().min(2).max(240),
+  }).parse(req.body);
+  const client=await db.connect();
+  try {
+    await client.query("BEGIN");
+    const before=(await client.query("SELECT * FROM inventory_items WHERE id=$1 AND is_active=true FOR UPDATE",[req.params.id])).rows[0];
+    if(!before){await client.query("ROLLBACK");return res.status(404).json({error:"INVENTORY_ITEM_NOT_FOUND"});}
+    if(!(await locationAllowed(req,before.location_id))){await client.query("ROLLBACK");return res.status(403).json({error:"LOCATION_FORBIDDEN"});}
+    const nextQuantity=Number(before.quantity)+input.delta;
+    if(nextQuantity<0){await client.query("ROLLBACK");return res.status(409).json({error:"INSUFFICIENT_STOCK"});}
+    const item=(await client.query(`
+      UPDATE inventory_items SET quantity=$1,updated_by=$2,updated_at=now()
+      WHERE id=$3 RETURNING *,(quantity<=minimum_quantity) AS low_stock
+    `,[nextQuantity,req.user.sub,before.id])).rows[0];
+    await client.query(`
+      INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by)
+      VALUES($1,$2,$3,$4,$5)
+    `,[before.id,input.delta,nextQuantity,input.reason,req.user.sub]);
+    await client.query("COMMIT");
+    await audit(req,"inventory.stock.adjust","inventory_item",before.id,before,{quantity:nextQuantity,delta:input.delta,reason:input.reason});
+    res.json(item);
+  } catch(error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
+});
+
 app.get("/rooms", auth, permit("rooms:read"), async (req,res) => {
   const { rows } = isOwner(req)
     ? await db.query("SELECT r.*,l.name location_name FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY l.name,r.name")
@@ -2629,6 +2699,31 @@ await db.query(`CREATE TABLE IF NOT EXISTS doorbell_calls(
   acknowledged_by uuid REFERENCES users(id) ON DELETE SET NULL
 )`);
 await db.query("CREATE INDEX IF NOT EXISTS doorbell_calls_room_rang_idx ON doorbell_calls(room_id,rang_at DESC)");
+await db.query(`CREATE TABLE IF NOT EXISTS inventory_items(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  category text NOT NULL,
+  unit text NOT NULL DEFAULT 'шт.',
+  quantity numeric(12,2) NOT NULL DEFAULT 0 CHECK(quantity>=0),
+  minimum_quantity numeric(12,2) NOT NULL DEFAULT 0 CHECK(minimum_quantity>=0),
+  notes text,
+  is_active boolean NOT NULL DEFAULT true,
+  updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+)`);
+await db.query("CREATE INDEX IF NOT EXISTS inventory_items_location_idx ON inventory_items(location_id,is_active)");
+await db.query(`CREATE TABLE IF NOT EXISTS inventory_movements(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id uuid NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  delta numeric(12,2) NOT NULL CHECK(delta<>0),
+  quantity_after numeric(12,2) NOT NULL CHECK(quantity_after>=0),
+  reason text NOT NULL,
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+)`);
+await db.query("CREATE INDEX IF NOT EXISTS inventory_movements_item_created_idx ON inventory_movements(item_id,created_at DESC)");
 
 const tuyaEventSignals = (value, signals=[], depth=0) => {
   if(depth>5||signals.length>=40||value==null) return signals;

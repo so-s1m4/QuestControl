@@ -9,27 +9,28 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
   standalone: true,
   imports: [RouterOutlet, RouterLink, RouterLinkActive, CameraOverlayComponent],
   template: `
-    <router-outlet />
     @if (showLogout()) {
       <div class="account-actions">
         <button class="password" (click)="changePassword()">Сменить пароль</button>
         <button class="logout" (click)="logout()">Выйти</button>
       </div>
 
-      <nav class="mobile-nav" aria-label="Основная навигация">
-        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
-          <i class="mobile-tab-icon home-icon" aria-hidden="true"></i><span>Обзор</span>
-        </a>
-        <a routerLink="/bookings" routerLinkActive="active">
-          <i class="mobile-tab-icon bookings-icon" aria-hidden="true"></i><span>Брони</span>
-        </a>
-        <a routerLink="/cameras" routerLinkActive="active">
-          <i class="mobile-tab-icon cameras-icon" aria-hidden="true"></i><span>Камеры</span>
-        </a>
-        <button type="button" [class.active]="moreActive() || mobileMenuOpen()" [attr.aria-expanded]="mobileMenuOpen()" (click)="mobileMenuOpen.set(true)">
-          <i class="mobile-tab-icon more-icon" aria-hidden="true"></i><span>Ещё</span>
-        </button>
-      </nav>
+      <div class="mobile-nav-layer">
+        <nav class="mobile-nav" aria-label="Основная навигация">
+          <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
+            <i class="mobile-tab-icon home-icon" aria-hidden="true"></i><span>Обзор</span>
+          </a>
+          <a routerLink="/bookings" routerLinkActive="active">
+            <i class="mobile-tab-icon bookings-icon" aria-hidden="true"></i><span>Брони</span>
+          </a>
+          <a routerLink="/cameras" routerLinkActive="active">
+            <i class="mobile-tab-icon cameras-icon" aria-hidden="true"></i><span>Камеры</span>
+          </a>
+          <button type="button" [class.active]="moreActive() || mobileMenuOpen()" [attr.aria-expanded]="mobileMenuOpen()" (click)="mobileMenuOpen.set(true)">
+            <i class="mobile-tab-icon more-icon" aria-hidden="true"></i><span>Ещё</span>
+          </button>
+        </nav>
+      </div>
 
       @if (mobileMenuOpen()) {
         <div class="mobile-menu-backdrop" role="presentation" (click)="mobileMenuOpen.set(false)">
@@ -45,6 +46,7 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
               }
               <a routerLink="/locations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Локации</b><span>Площадки и контакты</span></a>
               <a routerLink="/rooms" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Комнаты</b><span>Зоны, игры и устройства</span></a>
+              <a routerLink="/inventory" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Инвентарь</b><span>Магниты и расходники</span></a>
               <a routerLink="/users" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Пользователи</b><span>Доступ команды</span></a>
               @if (isAdmin()) {
                 <a routerLink="/camera-settings" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Настройки камер</b><span>Планы и привязка камер</span></a>
@@ -61,13 +63,15 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
 
       <app-camera-overlay />
     }
+    <router-outlet />
   `,
   styles: [`
     .account-actions{position:fixed;z-index:1000;left:24px;bottom:24px;display:grid;width:150px;gap:7px}.account-actions button{width:100%;padding:10px 12px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}
-    .mobile-nav,.mobile-menu-backdrop{display:none}
+    .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}
-      .mobile-nav{position:fixed!important;z-index:950;left:50%;right:auto;bottom:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:calc(100% - 20px);max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);transform:translate3d(-50%,0,0);will-change:transform}
+      .mobile-nav-layer{position:fixed!important;z-index:950;inset:auto 0 0;display:flex;justify-content:center;padding:0 10px 8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));pointer-events:none;isolation:isolate}
+      .mobile-nav{position:relative!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);pointer-events:auto}
       .mobile-nav a,.mobile-nav>button{position:relative;display:grid;min-width:0;min-height:56px;place-items:center;align-content:center;gap:4px;padding:5px 3px;border:0;border-radius:14px;background:transparent;box-shadow:none;color:#8f9db3;text-decoration:none;transform:none;transition:background .18s,color .18s,transform .15s,box-shadow .18s}
       .mobile-nav a:hover,.mobile-nav>button:hover:not(:disabled){background:#ffffff0a;box-shadow:none;transform:none}
       .mobile-nav a:active,.mobile-nav>button:active{transform:scale(.96)}

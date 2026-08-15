@@ -41,6 +41,7 @@ type VrStatus = {
         ><a routerLink="/locations">Локации</a
         ><a class="active" routerLink="/rooms">Комнаты</a
         ><a routerLink="/cameras">Камеры</a
+        ><a routerLink="/inventory">Инвентарь</a
         ><a routerLink="/users">Пользователи</a>
       </nav>
     </aside>
