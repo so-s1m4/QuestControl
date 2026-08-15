@@ -67,7 +67,7 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
     .mobile-nav,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}
-      .mobile-nav{position:fixed;z-index:950;left:50%;right:auto;bottom:calc(8px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:calc(100% - 20px);max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);transform:translateX(-50%)}
+      .mobile-nav{position:fixed!important;z-index:950;left:50%;right:auto;bottom:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:calc(100% - 20px);max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);transform:translate3d(-50%,0,0);will-change:transform}
       .mobile-nav a,.mobile-nav>button{position:relative;display:grid;min-width:0;min-height:56px;place-items:center;align-content:center;gap:4px;padding:5px 3px;border:0;border-radius:14px;background:transparent;box-shadow:none;color:#8f9db3;text-decoration:none;transform:none;transition:background .18s,color .18s,transform .15s,box-shadow .18s}
       .mobile-nav a:hover,.mobile-nav>button:hover:not(:disabled){background:#ffffff0a;box-shadow:none;transform:none}
       .mobile-nav a:active,.mobile-nav>button:active{transform:scale(.96)}
@@ -84,7 +84,7 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
       .cameras-icon:after{position:absolute;top:11px;left:11px;width:6px;height:6px;border:2px solid currentColor;border-radius:50%;content:""}
       .more-icon:before{position:absolute;top:12px;left:6px;width:4px;height:4px;border-radius:50%;background:currentColor;box-shadow:6px 0 currentColor,12px 0 currentColor;content:""}
       .mobile-menu-backdrop{position:fixed;z-index:980;inset:0;display:flex;align-items:flex-end;padding-top:60px;background:#10182780;backdrop-filter:blur(4px)}
-      .mobile-menu-sheet{width:100%;max-height:calc(100dvh - 54px);overflow:auto;margin:0;padding:8px 16px calc(18px + env(safe-area-inset-bottom));border-radius:22px 22px 0 0;background:#f7f8fb;box-shadow:0 -24px 60px #10182738;animation:sheet-in .18s ease-out}
+      .mobile-menu-sheet{width:100%;max-height:calc(100vh - 54px);max-height:calc(100dvh - 54px);overflow:auto;margin:0;padding:8px 16px 18px;padding-bottom:calc(18px + env(safe-area-inset-bottom,0px));border-radius:22px 22px 0 0;background:#f7f8fb;box-shadow:0 -24px 60px #10182738;animation:sheet-in .18s ease-out}
       .sheet-handle{width:42px;height:4px;margin:2px auto 15px;border-radius:999px;background:#c7ccd6}
       .mobile-menu-sheet>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
       .mobile-menu-sheet header small{color:#667085;font-size:9px;font-weight:800;letter-spacing:.13em}.mobile-menu-sheet h2{margin:3px 0 0;font-size:26px}.mobile-menu-sheet header button{display:grid;width:42px;height:42px;padding:0;place-items:center;border-radius:50%;background:#e9ecf2;box-shadow:none;color:#344054;font-size:24px}

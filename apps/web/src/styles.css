@@ -200,7 +200,8 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
     width: 100%;
     max-width: none;
     margin: 0;
-    padding: 18px 14px calc(88px + env(safe-area-inset-bottom));
+    padding: 18px 14px 88px;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   }
   main:not(.checkin-page) > section > header {
     align-items: stretch;
