@@ -1090,6 +1090,73 @@ type ExternalClub = {
         .qr-actions {
           grid-template-columns: 1fr;
         }
+        .archive-import,
+        .external-toolbar,
+        .external-filters {
+          width: 100%;
+        }
+        .archive-import button,
+        .external-filters label,
+        .external-filters input,
+        .external-filters select {
+          width: 100%;
+        }
+        .calendar-head {
+          display: grid;
+          grid-template-columns: 42px minmax(0, 1fr) 42px;
+          padding: 14px 10px;
+        }
+        .calendar-head > div {
+          grid-column: 2;
+          grid-row: 1;
+          min-width: 0;
+          text-align: center;
+        }
+        .calendar-head .today-button {
+          grid-column: 1/-1;
+          grid-row: 2;
+          width: 100%;
+        }
+        .calendar-head .month-arrow:last-child {
+          grid-column: 3;
+          grid-row: 1;
+        }
+        .day-page-head {
+          display: grid;
+          align-items: stretch;
+          grid-template-columns: 1fr;
+        }
+        .day-total {
+          justify-self: start;
+        }
+        .schedule article {
+          grid-template-columns: 58px minmax(0, 1fr);
+          padding: 15px 13px;
+        }
+        .booking-main span,
+        .booking-main small,
+        .booking-details dd {
+          overflow-wrap: anywhere;
+        }
+        .schedule > article > button,
+        .schedule > article > .pill,
+        .session-actions {
+          width: 100%;
+          justify-content: center;
+        }
+        .booking-details {
+          gap: 18px;
+          padding-top: 18px;
+        }
+        .booking-details > section {
+          min-width: 0;
+        }
+        .booking-controls button,
+        .booking-controls .control-link,
+        .booking-controls select {
+          width: 100%;
+          min-height: 44px;
+        }
       }
     `,
   ],
@@ -1116,7 +1183,11 @@ export class BookingsComponent {
   archiveTo = this.localDate(new Date());
   archiveLoading = signal(false);
   archiveNotice = signal("");
-  viewMode = signal<"calendar" | "list">("calendar");
+  viewMode = signal<"calendar" | "list">(
+    typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches
+      ? "list"
+      : "calendar",
+  );
   calendarMonth = signal(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );

@@ -43,7 +43,7 @@ type Location={
     .timezone{padding:7px 9px;border-radius:999px;background:#eef4ff;color:#3448a5;font-size:10px;font-weight:800}
     dl{display:grid;gap:12px;margin:0}dl div{display:grid;grid-template-columns:75px 1fr;gap:12px}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}dd a{color:var(--ink);text-decoration:none}dd a:hover{color:var(--primary)}
     .bookings-link{display:block;margin-top:20px;color:var(--primary);text-decoration:none;font-weight:700}.empty{grid-column:1/-1}
-    @media(max-width:900px){.location-grid{grid-template-columns:1fr}}
+    @media(max-width:900px){.location-grid{grid-template-columns:1fr}}@media(max-width:600px){.location-grid article{padding:17px}.location-head{align-items:flex-start;flex-direction:column}.location-head h3{margin-bottom:8px}dl div{grid-template-columns:1fr;gap:3px}.bookings-link{min-height:44px;padding:11px 0}}
   `]
 })
 export class LocationsComponent{

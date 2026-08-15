@@ -359,6 +359,16 @@ type VrStatus = {
           grid-template-columns: 1fr;
         }
       }
+      @media (max-width: 600px) {
+        .room-grid > article { padding: 16px; }
+        .room-head { align-items: stretch; flex-direction: column; }
+        .room-actions { display: grid; grid-template-columns: 1fr 1fr; }
+        .room-actions .dot { grid-column: 1/-1; text-align: center; }
+        .room-actions button { width: 100%; min-height: 40px; }
+        .devices > div { gap: 12px; flex-direction: column; }
+        .devices > div > span:last-child { text-align: left; }
+        .room-link { min-height: 44px; padding: 11px 0; }
+      }
     `,
   ],
 })

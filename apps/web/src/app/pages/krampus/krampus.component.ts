@@ -144,7 +144,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
   @media(max-width:800px){.help-button-settings{grid-template-columns:1fr}.help-button-settings button{width:100%}}
   @media(max-width:700px){.help-call{grid-template-columns:1fr}.help-call-actions{align-items:stretch;flex-direction:column}.doorbell-video{height:62vw}}
-  @media(max-width:600px){.summary{grid-template-columns:1fr}.connections{justify-content:flex-start}.terminal div{grid-template-columns:60px 45px 1fr}}
+  @media(max-width:600px){.summary{grid-template-columns:1fr}.connections{justify-content:flex-start}.krampus-actions{display:grid;grid-template-columns:1fr 1fr}.krampus-actions button{width:100%;min-width:0;min-height:48px}.button-grid{display:grid;grid-template-columns:1fr 1fr}.button-grid button{min-height:44px}.hint-upload{grid-template-columns:1fr}.hint-row{align-items:stretch;flex-direction:column}.hint-row>div{display:grid;grid-template-columns:repeat(3,1fr)}.terminal div{grid-template-columns:50px 38px minmax(0,1fr);gap:5px}.control-card{padding:15px}}
   `]
 })
 export class KrampusComponent implements OnDestroy {
