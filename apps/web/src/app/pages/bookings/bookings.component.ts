@@ -261,7 +261,7 @@ type ExternalClub = {
                 <b>{{ b.startsAt }}</b
                 ><span>{{ b.endsAt }}</span>
                 <span class="pill payment-pill" [class.paid]="b.paymentStatus === 'paid'" [class.unpaid]="b.paymentStatus !== 'paid'">
-                  {{ b.paymentStatus === "paid" ? "Paid" : "Нужно оплатить" }}
+                  {{ b.paymentStatus === "paid" ? "Paid" : "Not Paid" }}
                 </span>
               </div>
               <div class="booking-main">
@@ -805,10 +805,14 @@ type ExternalClub = {
         text-transform: uppercase;
         white-space: nowrap;
       }
+      .date .payment-pill.paid {
+        border: 1px solid #a6dfbf;
+        background: #e8f8ef;
+      }
       .date .payment-pill.unpaid {
-        border: 1px solid #e6a900;
-        background: #ffd84d;
-        box-shadow: 0 3px 9px #d99b0030;
+        border: 1px solid #e8ad00;
+        background: #ffe052;
+        box-shadow: 0 0 0 2px #ffd4262b, 0 3px 9px #d99b0030;
         color: #5b3a00;
       }
       .card-chevron {
