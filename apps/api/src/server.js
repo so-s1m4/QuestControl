@@ -478,6 +478,16 @@ const visitCustomer = (visit) => firstText(
   [visit.customer?.first_name, visit.customer?.last_name].filter(Boolean).join(" "),
   [visit.owner?.first_name, visit.owner?.last_name].filter(Boolean).join(" "),
 ) || "Reservierung";
+const checkinDocumentTranslations = (value) => Object.fromEntries(["de","en"].flatMap(language => {
+  const raw = value?.[language];
+  if (typeof raw !== "string") return [];
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" ? [[language,url.toString()]] : [];
+  } catch {
+    return [];
+  }
+}));
 
 const configuredCheckinLocations = () => [
   { location:"st-poelten", clubId:env.TIME_TO_GROW_CLUB_ID },
@@ -526,7 +536,20 @@ async function checkinReservationFromToken(token) {
   const bookingId = String(visit.booking_id || visit.booking?.id || "");
   if (!timeToGrowId.safeParse(visitId).success || !timeToGrowId.safeParse(bookingId).success) return null;
   const date = visitDate(visit);
-  const bookings = date ? await fetchTimeToGrowBookings(clubId,date) : [];
+  const [bookings,clubResponse] = await Promise.all([
+    date ? fetchTimeToGrowBookings(clubId,date) : [],
+    timeToGrowAppFetch(`/api/v1/app/clubs/${encodeURIComponent(clubId)}`),
+  ]);
+  if (!clubResponse.ok) {
+    const error = new Error("Time to Grow club request failed");
+    error.code = "TIME_TO_GROW_REQUEST_FAILED";
+    throw error;
+  }
+  const club = (await clubResponse.json().catch(() => null))?.data;
+  const documents = {
+    waiver:checkinDocumentTranslations(club?.documents?.info_url_translations),
+    privacy:checkinDocumentTranslations(club?.documents?.privacy_url_translations),
+  };
   const booking = bookings.find(item => item.id === bookingId);
   const guests = booking?.size ?? firstCount(
     visit.size, visit.guests, visit.players_count, visit.booking_size,
@@ -541,6 +564,7 @@ async function checkinReservationFromToken(token) {
     location,
     clubId,
     visit,
+    documents,
     reservation:{ visitId,bookingId,time:visitTime(visit),room:visitLabel(visit),name:visitCustomer(visit),guests },
   };
 }
@@ -550,7 +574,7 @@ app.get("/reception/checkin/:token", rateLimit({ windowMs: 60_000, limit: 60 }),
     const resolved = await checkinReservationFromToken(req.params.token);
     res.set("cache-control", "no-store");
     if (!resolved) return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
-    res.json({ location:resolved.location, data:resolved.reservation });
+    res.json({ location:resolved.location, data:resolved.reservation, documents:resolved.documents });
   } catch (error) {
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");

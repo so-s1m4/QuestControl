@@ -8,6 +8,7 @@ type Language="de"|"en";
 type CheckinLocation="st-poelten"|"vienna";
 type Step="reservation"|"guests"|"details"|"done";
 type Reservation={visitId:string;bookingId:string;time:string;room:string;name:string;guests:number};
+type CheckinDocuments={waiver:Partial<Record<Language,string>>;privacy:Partial<Record<Language,string>>};
 type Participant={firstName:string;lastName:string;email:string;phone:string;birthDate:string;gender:""|"female"|"male"|"non-binary";allowMarketingMaterials:boolean;waiver:boolean;privacy:boolean;submitted:boolean};
 
 const emptyParticipant=():Participant=>({firstName:"",lastName:"",email:"",phone:"+43 ",birthDate:"",gender:"",allowMarketingMaterials:false,waiver:false,privacy:false,submitted:false});
@@ -33,6 +34,9 @@ export class ReceptionCheckinComponent implements OnInit{
   locationName=computed(()=>this.clubLocation()==="vienna"?"Wien":"St. Pölten");
   step=signal<Step>("reservation");
   reservations=signal<Reservation[]>([]);
+  documents=signal<CheckinDocuments>({waiver:{},privacy:{}});
+  waiverUrl=computed(()=>this.documents().waiver[this.language()]||this.documents().waiver.de||this.documents().waiver.en||"");
+  privacyUrl=computed(()=>this.documents().privacy[this.language()]||this.documents().privacy.de||this.documents().privacy.en||"");
   loading=signal(true);
   loadError=signal(false);
   selected=signal<Reservation|null>(null);
@@ -50,9 +54,9 @@ export class ReceptionCheckinComponent implements OnInit{
   loadReservation(){
     this.loading.set(true);this.loadError.set(false);
     if(!this.checkinToken){this.loading.set(false);this.loadError.set(true);return}
-    this.http.get<{location:CheckinLocation;data:Reservation}>(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}`).subscribe({
-      next:payload=>{this.clubLocation.set(payload.location);this.reservations.set([payload.data]);this.selected.set(payload.data);this.guestCount.set(payload.data.guests);this.loading.set(false);this.step.set("guests");this.openFromUrl()},
-      error:()=>{this.reservations.set([]);this.loading.set(false);this.loadError.set(true)},
+    this.http.get<{location:CheckinLocation;data:Reservation;documents:CheckinDocuments}>(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}`).subscribe({
+      next:payload=>{this.clubLocation.set(payload.location);this.reservations.set([payload.data]);this.documents.set(payload.documents||{waiver:{},privacy:{}});this.selected.set(payload.data);this.guestCount.set(payload.data.guests);this.loading.set(false);this.step.set("guests");this.openFromUrl()},
+      error:()=>{this.reservations.set([]);this.documents.set({waiver:{},privacy:{}});this.loading.set(false);this.loadError.set(true)},
     });
   }
   decreaseGuests(){this.guestCount.update(value=>Math.max(1,value-1))}
