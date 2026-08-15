@@ -60,14 +60,26 @@ type InventoryHistoryItem = {
         </header>
 
         <div class="toolbar">
-          <label>Клуб
+          <label class="club-filter">Клуб
             <select [ngModel]="locationId()" (ngModelChange)="changeLocation($event)">
               <option value="">Все доступные клубы</option>
               @for (location of locations(); track location.id) { <option [value]="location.id">{{ location.name }}</option> }
             </select>
           </label>
+          <label class="search-filter">Поиск по названию
+            <input type="search" [ngModel]="search()" (ngModelChange)="search.set($event)" placeholder="Например, магнит 50 × 50" />
+          </label>
+          <label class="category-filter">Категория
+            <select [ngModel]="categoryFilter()" (ngModelChange)="categoryFilter.set($event)">
+              <option value="">Все категории</option>
+              @for (category of categoryOptions(); track category) { <option [value]="category">{{ category }}</option> }
+            </select>
+          </label>
+          @if (filtersActive()) {
+            <button type="button" class="clear-filters" (click)="clearFilters()">Сбросить</button>
+          }
           <button type="button" class="secondary" (click)="load()" [disabled]="loading()">{{ loading() ? "Обновляем…" : "↻ Обновить" }}</button>
-          <button type="button" class="export" (click)="exportPdf()" [disabled]="exportingPdf() || loading() || !items().length">{{ exportingPdf() ? "Готовим PDF…" : "↓ Экспорт PDF" }}</button>
+          <button type="button" class="export" (click)="exportPdf()" [disabled]="exportingPdf() || loading() || !filteredItems().length">{{ exportingPdf() ? "Готовим PDF…" : "↓ Экспорт PDF" }}</button>
         </div>
 
         @if (formOpen()) {
@@ -100,13 +112,17 @@ type InventoryHistoryItem = {
         @if (error()) { <p class="error">{{ error() }}</p> }
 
         <div class="summary">
-          <article><span>Позиций</span><b>{{ items().length }}</b></article>
+          <article><span>{{ filtersActive() ? "Найдено позиций" : "Позиций" }}</span><b>{{ filteredItems().length }}</b></article>
           <article [class.warning]="lowStockCount() > 0"><span>Нужно пополнить</span><b>{{ lowStockCount() }}</b></article>
           <article><span>Магнитов в запасе</span><b>{{ magnetQuantity() }}</b></article>
         </div>
 
-        <div class="inventory-list">
-          @for (item of items(); track item.id) {
+        <div class="category-groups">
+          @for (group of categoryGroups(); track group.category) {
+            <section class="category-group">
+              <div class="category-heading"><h3>{{ group.category }}</h3><span>{{ group.items.length }} поз.</span></div>
+              <div class="inventory-list">
+          @for (item of group.items; track item.id) {
             <article [class.low]="item.low_stock">
               <div class="item-main">
                 <div class="item-title">
@@ -172,18 +188,26 @@ type InventoryHistoryItem = {
                 </div>
               }
             </article>
+          }
+              </div>
+            </section>
           } @empty {
-            @if (!loading()) { <div class="empty"><b>Инвентарь пока пуст</b><span>Добавьте магниты или расходники для нужного клуба.</span></div> }
+            @if (!loading()) {
+              <div class="empty">
+                <b>{{ filtersActive() ? "Ничего не найдено" : "Инвентарь пока пуст" }}</b>
+                <span>{{ filtersActive() ? "Попробуйте изменить категорию или поисковый запрос." : "Добавьте магниты или расходники для нужного клуба." }}</span>
+              </div>
+            }
           }
         </div>
       </section>
     </main>
   `,
   styles: [`
-    .toolbar{display:flex;align-items:end;gap:10px;margin:22px 0 0}.toolbar label{width:min(360px,100%)}.secondary{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.export{margin-left:auto;background:#101828}
+    .toolbar{display:flex;align-items:end;gap:10px;margin:22px 0 0;flex-wrap:wrap}.toolbar label{width:min(260px,100%)}.toolbar .search-filter{flex:1 1 260px}.toolbar .club-filter,.toolbar .category-filter{flex:0 1 220px}.secondary{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.clear-filters{border:0;background:transparent;box-shadow:none;color:#667085;padding-inline:8px}.clear-filters:hover{box-shadow:none;color:#344054}.export{background:#101828}
     .new-item{grid-template-columns:repeat(3,minmax(0,1fr))!important}.form-heading{grid-column:1/-1;display:grid;gap:4px}.form-heading b{font-size:18px}.form-heading span{color:var(--muted);font-size:12px}.notes{grid-column:span 2}.save{min-height:42px;align-self:end}
     .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:20px 0}.summary article{padding:17px 19px;border:1px solid var(--line);border-radius:14px;background:#fff}.summary span{display:block;color:var(--muted);font-size:11px}.summary b{display:block;margin-top:6px;font-size:25px}.summary .warning{border-color:#f4c7a4;background:#fff8f1}.summary .warning b{color:#c04f18}
-    .inventory-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.inventory-list>article{padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 24px #19213a08}.inventory-list>article.low{border-color:#f1bc93;box-shadow:0 8px 24px #d3601710}
+    .category-groups{display:grid;gap:24px}.category-group{min-width:0}.category-heading{display:flex;align-items:center;justify-content:space-between;margin:0 2px 10px}.category-heading h3{margin:0;font-size:17px}.category-heading span{padding:5px 9px;border-radius:999px;background:#eef0ff;color:#4f46e5;font-size:10px;font-weight:800}.inventory-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.inventory-list>article{padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 24px #19213a08}.inventory-list>article.low{border-color:#f1bc93;box-shadow:0 8px 24px #d3601710}
     .item-main{display:flex;align-items:start;justify-content:space-between;gap:14px}.category{color:var(--primary);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.item-title h3{margin:5px 0 4px;font-size:18px}.item-title p{margin:0;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.added-at{display:block;margin-top:6px;color:#98a2b3;font-size:9px}.status{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:#fff0e5;color:#b54708;font-size:9px;font-weight:800}.status.ok{background:#eaf8f1;color:#087443}
     .stock{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:17px 0;padding:14px;border-radius:12px;background:#f5f7fa}.stock small{display:block;color:var(--muted);font-size:10px}.stock strong{display:block;margin-top:4px;font-size:25px}.stock strong.minimum{color:#667085}.stock em{font-size:11px;font-style:normal;font-weight:700}
     .item-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.item-actions button{min-width:0;padding:10px 6px;font-size:11px}.quick{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.quick.minus{color:#b42336}.quick.plus{color:#087443}
@@ -199,6 +223,8 @@ export class InventoryComponent {
   locations = signal<Location[]>([]);
   items = signal<InventoryItem[]>([]);
   locationId = signal("");
+  search = signal("");
+  categoryFilter = signal("");
   formOpen = signal(false);
   loading = signal(false);
   exportingPdf = signal(false);
@@ -214,8 +240,27 @@ export class InventoryComponent {
   units = ["шт.", "уп.", "м", "л", "кг"];
   draft = { name: "", category: "Магниты", locationId: "", unit: "шт.", quantity: 0, minimumQuantity: 10, notes: "" };
 
-  lowStockCount = computed(() => this.items().filter((item) => item.low_stock).length);
-  magnetQuantity = computed(() => this.displayNumber(this.items().filter((item) => /магнит/i.test(item.category)).reduce((total, item) => total + this.number(item.quantity), 0)));
+  categoryOptions = computed(() => [...new Set(this.items().map(item => item.category).filter(Boolean))].sort((a, b) => this.compareCategories(a, b)));
+  filtersActive = computed(() => Boolean(this.search().trim() || this.categoryFilter()));
+  filteredItems = computed(() => {
+    const query = this.search().trim().toLocaleLowerCase("ru-RU");
+    const category = this.categoryFilter();
+    return this.items()
+      .filter(item => (!category || item.category === category) && (!query || item.name.toLocaleLowerCase("ru-RU").includes(query)))
+      .sort((a, b) => this.compareCategories(a.category, b.category) || a.name.localeCompare(b.name, "ru-RU", { numeric: true }) || a.location_name.localeCompare(b.location_name, "ru-RU"));
+  });
+  categoryGroups = computed(() => {
+    const groups = new Map<string, InventoryItem[]>();
+    for (const item of this.filteredItems()) {
+      const category = item.category || "Без категории";
+      const existing = groups.get(category);
+      if (existing) existing.push(item);
+      else groups.set(category, [item]);
+    }
+    return [...groups.entries()].map(([category, items]) => ({ category, items }));
+  });
+  lowStockCount = computed(() => this.filteredItems().filter((item) => item.low_stock).length);
+  magnetQuantity = computed(() => this.displayNumber(this.filteredItems().filter((item) => /магнит/i.test(item.category)).reduce((total, item) => total + this.number(item.quantity), 0)));
 
   constructor() {
     this.http.get<Location[]>("/api/locations").subscribe({
@@ -230,6 +275,17 @@ export class InventoryComponent {
   displayNumber(value: number | string) { return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(this.number(value)); }
   formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value)); }
   formatDateTime(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
+  compareCategories(a: string, b: string) {
+    const aIndex = this.categories.indexOf(a);
+    const bIndex = this.categories.indexOf(b);
+    return (aIndex < 0 ? Number.MAX_SAFE_INTEGER : aIndex) - (bIndex < 0 ? Number.MAX_SAFE_INTEGER : bIndex)
+      || a.localeCompare(b, "ru-RU", { numeric: true });
+  }
+
+  clearFilters() {
+    this.search.set("");
+    this.categoryFilter.set("");
+  }
 
   changeLocation(value: string) {
     this.locationId.set(value);
@@ -248,22 +304,29 @@ export class InventoryComponent {
   }
 
   exportPdf() {
-    if (this.exportingPdf() || !this.items().length) return;
+    if (this.exportingPdf() || !this.filteredItems().length) return;
     this.exportingPdf.set(true);
     this.error.set("");
-    const query = this.locationId() ? `?locationId=${encodeURIComponent(this.locationId())}` : "";
+    const params = new URLSearchParams();
+    if (this.locationId()) params.set("locationId", this.locationId());
+    if (this.categoryFilter()) params.set("category", this.categoryFilter());
+    if (this.search().trim()) params.set("search", this.search().trim());
+    const query = params.size ? `?${params.toString()}` : "";
     this.http.get<{ generatedAt: string; items: InventoryPdfItem[] }>(`/api/inventory-export${query}`).subscribe({
       next: async (response) => {
         try {
-          const [pdfMake, fontModule] = await Promise.all([
+          const [pdfModule, fontModule] = await Promise.all([
             import("pdfmake/build/pdfmake"),
             import("pdfmake/build/vfs_fonts"),
           ]);
+          const pdfMake = ((pdfModule as unknown as { default?: typeof pdfModule }).default || pdfModule);
           const fonts = ((fontModule as unknown as { default?: Record<string, string> }).default || fontModule) as Record<string, string>;
-          const scope = this.locationId()
+          const scopeParts = [this.locationId()
             ? this.locations().find(location => location.id === this.locationId())?.name || "Выбранный клуб"
-            : "Все доступные клубы";
-          const definition = buildInventoryPdf({ ...response, scope });
+            : "Все доступные клубы"];
+          if (this.categoryFilter()) scopeParts.push(`Категория: ${this.categoryFilter()}`);
+          if (this.search().trim()) scopeParts.push(`Поиск: «${this.search().trim()}»`);
+          const definition = buildInventoryPdf({ ...response, scope: scopeParts.join(" · ") });
           pdfMake.createPdf(definition, undefined, undefined, fonts).download(
             `questcontrol-inventory-${response.generatedAt.slice(0, 10)}.pdf`,
             () => this.exportingPdf.set(false),

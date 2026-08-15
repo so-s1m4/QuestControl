@@ -1716,7 +1716,11 @@ app.get("/inventory", auth, async (req,res) => {
 });
 
 app.get("/inventory-export", auth, async (req,res) => {
-  const input=z.object({locationId:z.string().uuid().optional()}).parse(req.query);
+  const input=z.object({
+    locationId:z.string().uuid().optional(),
+    category:z.string().trim().min(1).max(80).optional(),
+    search:z.string().trim().min(1).max(120).optional(),
+  }).parse(req.query);
   if(input.locationId&&!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   const {rows:items}=await db.query(`
     SELECT i.*,l.name AS location_name,
@@ -1729,8 +1733,10 @@ app.get("/inventory-export", auth, async (req,res) => {
       AND ($2::boolean OR EXISTS(
         SELECT 1 FROM user_locations ul WHERE ul.user_id=$3 AND ul.location_id=i.location_id
       ))
+      AND ($4::text IS NULL OR lower(i.category)=lower($4))
+      AND ($5::text IS NULL OR lower(i.name) LIKE '%'||lower($5)||'%')
     ORDER BY l.name,lower(i.category),lower(i.name)
-  `,[input.locationId||null,isOwner(req),req.user.sub]);
+  `,[input.locationId||null,isOwner(req),req.user.sub,input.category||null,input.search||null]);
   const itemIds=items.map(item=>item.id);
   const {rows:movements}=itemIds.length ? await db.query(`
     SELECT m.id,m.item_id,m.delta,m.quantity_after,m.reason,m.operation_count,m.created_at,m.last_event_at,
