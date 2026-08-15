@@ -4,6 +4,11 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from "rxjs";
 import { CameraOverlayComponent } from "./core/camera-overlay.component";
 
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
 @Component({
   selector: "app-root",
   standalone: true,
@@ -52,6 +57,9 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
                 <a routerLink="/camera-settings" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Настройки камер</b><span>Планы и привязка камер</span></a>
                 <a routerLink="/bookings" [queryParams]="{ history: '1' }" (click)="mobileMenuOpen.set(false)"><b>Импорт истории</b><span>Служебная загрузка старых броней</span></a>
               }
+              @if (!isStandalone()) {
+                <button type="button" class="menu-link-button install-app" (click)="installApp()"><b>Установить приложение</b><span>Добавить QuestControl на главный экран</span></button>
+              }
             </div>
             <div class="mobile-account-actions">
               <button class="password" (click)="changePassword()">Сменить пароль</button>
@@ -70,7 +78,7 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
     .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}
-      .mobile-nav-layer{position:fixed!important;z-index:950;inset:auto 0 0;display:flex;justify-content:center;padding:0 10px 8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));pointer-events:none;isolation:isolate}
+      .mobile-nav-layer{position:absolute!important;z-index:950;inset:auto 0 0;display:flex;justify-content:center;padding:0 10px 8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));pointer-events:none;isolation:isolate}
       .mobile-nav{position:relative!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:430px;gap:4px;padding:6px;border:1px solid #ffffff1c;border-radius:20px;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);pointer-events:auto}
       .mobile-nav a,.mobile-nav>button{position:relative;display:grid;min-width:0;min-height:56px;place-items:center;align-content:center;gap:4px;padding:5px 3px;border:0;border-radius:14px;background:transparent;box-shadow:none;color:#8f9db3;text-decoration:none;transform:none;transition:background .18s,color .18s,transform .15s,box-shadow .18s}
       .mobile-nav a:hover,.mobile-nav>button:hover:not(:disabled){background:#ffffff0a;box-shadow:none;transform:none}
@@ -92,11 +100,11 @@ import { CameraOverlayComponent } from "./core/camera-overlay.component";
       .sheet-handle{width:42px;height:4px;margin:2px auto 15px;border-radius:999px;background:#c7ccd6}
       .mobile-menu-sheet>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
       .mobile-menu-sheet header small{color:#667085;font-size:9px;font-weight:800;letter-spacing:.13em}.mobile-menu-sheet h2{margin:3px 0 0;font-size:26px}.mobile-menu-sheet header button{display:grid;width:42px;height:42px;padding:0;place-items:center;border-radius:50%;background:#e9ecf2;box-shadow:none;color:#344054;font-size:24px}
-      .mobile-menu-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mobile-menu-links a{display:grid;align-content:start;min-height:88px;padding:15px;border:1px solid #e0e4eb;border-radius:14px;background:#fff;color:#111827;text-decoration:none}.mobile-menu-links a.active{border-color:#9ba8f7;background:#f0f2ff}.mobile-menu-links b{font-size:14px}.mobile-menu-links span{margin-top:6px;color:#7a8495;font-size:10px;line-height:1.35}
+      .mobile-menu-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mobile-menu-links a,.mobile-menu-links .menu-link-button{display:grid;align-content:start;min-height:88px;padding:15px;border:1px solid #e0e4eb;border-radius:14px;background:#fff;box-shadow:none;color:#111827;text-align:left;text-decoration:none}.mobile-menu-links a.active{border-color:#9ba8f7;background:#f0f2ff}.mobile-menu-links .install-app{border-color:#c9d0ff;background:linear-gradient(145deg,#f2f3ff,#fff)}.mobile-menu-links a:hover,.mobile-menu-links .menu-link-button:hover{transform:none;box-shadow:none}.mobile-menu-links b{font-size:14px}.mobile-menu-links span{margin-top:6px;color:#7a8495;font-size:10px;line-height:1.35}
       .mobile-account-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:16px;padding-top:16px;border-top:1px solid #dfe3e9}.mobile-account-actions button{width:100%;min-height:46px;box-shadow:none}.mobile-account-actions .password{background:#243047}.mobile-account-actions .logout{background:#fff;border-color:#e5b8be;color:#b42336}
       @keyframes sheet-in{from{transform:translateY(24px);opacity:.5}}
     }
-    @media(max-width:390px){.mobile-menu-sheet{padding-inline:12px}.mobile-menu-links{grid-template-columns:1fr}.mobile-menu-links a{min-height:70px}}
+    @media(max-width:390px){.mobile-menu-sheet{padding-inline:12px}.mobile-menu-links{grid-template-columns:1fr}.mobile-menu-links a,.mobile-menu-links .menu-link-button{min-height:70px}}
   `],
 })
 export class AppComponent {
@@ -106,6 +114,8 @@ export class AppComponent {
   mobileMenuOpen = signal(false);
   currentUrl = signal(this.router.url);
   isAdmin = signal(false);
+  isStandalone = signal(window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
+  installPrompt = signal<InstallPromptEvent | null>(null);
 
   constructor() {
     this.updateManagementClass();
@@ -120,6 +130,18 @@ export class AppComponent {
   @HostListener("document:keydown.escape")
   closeMobileMenu() { this.mobileMenuOpen.set(false); }
 
+  @HostListener("window:beforeinstallprompt", ["$event"])
+  captureInstallPrompt(event: Event) {
+    event.preventDefault();
+    this.installPrompt.set(event as InstallPromptEvent);
+  }
+
+  @HostListener("window:appinstalled")
+  installed() {
+    this.installPrompt.set(null);
+    this.isStandalone.set(true);
+  }
+
   moreActive() {
     const [path, query = ""] = this.currentUrl().split("?");
     return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/cameras"].includes(path);
@@ -128,6 +150,7 @@ export class AppComponent {
   logout() {
     this.mobileMenuOpen.set(false);
     document.body.classList.remove("management-user");
+    document.body.classList.remove("management-shell");
     sessionStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
     localStorage.removeItem("questcontrol.selectedCameras");
@@ -135,6 +158,7 @@ export class AppComponent {
   }
 
   private updateManagementClass() {
+    document.body.classList.toggle("management-shell", this.showLogout());
     try {
       const token = sessionStorage.getItem("access_token");
       const role = token ? JSON.parse(atob(token.split(".")[1])).role : null;
@@ -149,6 +173,20 @@ export class AppComponent {
 
   private managementRoute(url: string) {
     return url !== "/login" && !url.startsWith("/reception/checkin");
+  }
+
+  async installApp() {
+    const installPrompt = this.installPrompt();
+    if (installPrompt) {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      if (choice.outcome === "accepted") this.installPrompt.set(null);
+      return;
+    }
+    const appleDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    alert(appleDevice
+      ? "В Safari нажмите «Поделиться», затем «На экран Домой». QuestControl будет открываться как приложение."
+      : "Откройте меню браузера и выберите «Установить приложение» или «Добавить на главный экран».");
   }
 
   changePassword() {

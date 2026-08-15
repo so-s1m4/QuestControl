@@ -14,6 +14,9 @@
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.json",
             "styles": ["src/styles.css"],
+            "assets": [
+              { "glob": "**/*", "input": "src/public", "output": "/" }
+            ],
             "outputHashing": "all"
           }
         },

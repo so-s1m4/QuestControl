@@ -192,6 +192,27 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
 
 @media (max-width: 760px) {
   body { background: var(--canvas); }
+  body.management-shell {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  body.management-shell app-root {
+    position: relative;
+    display: block;
+    height: 100%;
+    overflow: hidden;
+  }
+  body.management-shell app-root > router-outlet + * {
+    display: block;
+    height: 100%;
+    overflow: hidden;
+  }
+  body.management-shell main:not(.checkin-page) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
   main:not(.checkin-page) { display: block; min-width: 0; }
 
   main > aside { display: none; }
@@ -202,6 +223,13 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
     margin: 0;
     padding: 18px 14px 88px;
     padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
+  body.management-shell main:not(.checkin-page) > section {
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
   }
   main:not(.checkin-page) > section > header {
     align-items: stretch;

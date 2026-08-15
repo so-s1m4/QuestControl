@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "QuestControl",
+  "short_name": "QuestControl",
+  "description": "Управление бронированиями, камерами, сессиями и инвентарём Escapers.",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#101827",
+  "theme_color": "#101827",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icons/quest-control-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/quest-control-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Бронирования", "short_name": "Брони", "url": "/bookings", "icons": [{ "src": "/icons/quest-control-192.png", "sizes": "192x192" }] },
+    { "name": "Камеры", "short_name": "Камеры", "url": "/cameras", "icons": [{ "src": "/icons/quest-control-192.png", "sizes": "192x192" }] }
+  ]
+}

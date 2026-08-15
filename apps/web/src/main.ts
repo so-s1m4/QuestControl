@@ -5,3 +5,9 @@ import { AppComponent } from "./app/app.component";
 import { routes } from "./app/app.routes";
 import { authInterceptor } from "./app/core/auth.interceptor";
 bootstrapApplication(AppComponent,{providers:[provideHttpClient(withInterceptors([authInterceptor])),provideRouter(routes)]}).catch(console.error);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js");
+  });
+}
