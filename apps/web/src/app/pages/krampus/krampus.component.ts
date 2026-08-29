@@ -59,6 +59,11 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
       <div class="summary">
         <div><span>Комната</span><b>{{roomName()}}</b></div><div><span>Состояние игры</span><b>{{gameState()}}</b></div><div><span>Serial</span><b>{{serialPath()}}</b></div><div><span>Обновлено</span><b>{{lastUpdated() ? (lastUpdated()|date:'HH:mm:ss') : "—"}}</b></div>
       </div>
+      <article class="serial-settings">
+        <div><span>ARDUINO SERIAL</span><h3>Порт подключения</h3><p>Для клонов чаще всего используется <code>/dev/ttyUSB0</code>, для оригинальных плат — <code>/dev/ttyACM0</code>.</p></div>
+        <label><span>Путь устройства</span><input list="serial-ports" [ngModel]="serialPort()" (ngModelChange)="serialPort.set($event)" placeholder="/dev/ttyUSB0" autocomplete="off"><datalist id="serial-ports"><option value="/dev/ttyUSB0"><option value="/dev/ttyUSB1"><option value="/dev/ttyACM0"><option value="/dev/ttyACM1"></datalist></label>
+        <button [disabled]="savingSerial()||!serialPort().trim()" (click)="saveSerialPort()">{{savingSerial()?"Подключение…":"Применить порт"}}</button>
+      </article>
       <article class="help-button-settings">
         <div><span>КНОПКА ПОМОЩИ</span><h3>Источник вызова</h3><p>Выберите устройство, нажатие которого должно показывать вызов в этой панели.</p></div>
         <select [ngModel]="helpCameraId()" (ngModelChange)="helpCameraId.set($event)">
@@ -131,7 +136,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .connections{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.connection{padding:8px 12px;border-radius:20px;background:#feecef;color:#ad2436}.connection.online{background:#e4f7ed;color:#137344}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}.inline{padding:4px 8px;margin-left:8px;background:transparent;color:inherit;border:1px solid currentColor;box-shadow:none}
   .help-call{display:grid;grid-template-columns:1fr auto;gap:18px;margin:20px 0;padding:20px;border:2px solid #e43d50;border-radius:14px;background:linear-gradient(135deg,#fff1f2,#fff);box-shadow:0 12px 35px #b4231830}.help-call-copy{display:flex;align-items:center;gap:14px}.help-call-copy small{color:#b42318;font-size:10px;font-weight:900;letter-spacing:.12em}.help-call-copy h3{margin:3px 0;color:#8f1d2c;font-size:25px}.help-call-copy p{margin:0;color:#7a3440}.help-pulse{display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:#d92d42;color:#fff;font-size:30px;font-weight:900;animation:help-pulse 1.2s infinite}.help-call-actions{display:flex;align-items:center;gap:8px}.help-call-actions button{white-space:nowrap}.camera-button{background:#273248}.ack-button{background:#168653}.doorbell-video{grid-column:1/-1;height:min(56vw,520px);overflow:hidden;border-radius:10px;background:#101622}.doorbell-video-error{grid-column:1/-1;margin:0;padding:12px 14px;border-radius:8px;background:#fff;color:#9f2534}@keyframes help-pulse{50%{box-shadow:0 0 0 12px #d92d4218}}
   .summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:24px 0}.summary div{display:grid;gap:5px;padding:14px;background:#fff;border:1px solid #e1e5ed;border-radius:10px}.summary span{color:#6b7280;font-size:12px}.summary b{overflow:hidden;text-overflow:ellipsis}
-  .help-button-settings{display:grid;grid-template-columns:minmax(260px,1fr) minmax(240px,360px) auto;gap:12px;align-items:center;margin:0 0 18px;padding:16px 18px;border:1px solid #d8deea;border-radius:11px;background:#fff}.help-button-settings span{color:#526078;font-size:10px;font-weight:900;letter-spacing:.1em}.help-button-settings h3{margin:3px 0;font-size:17px}.help-button-settings p{margin:0;color:#7a8495;font-size:11px}.help-button-settings select{width:100%;padding:11px;border:1px solid #cfd6e2;border-radius:8px;background:#fff}.help-button-settings button{background:#4058df}
+  .help-button-settings,.serial-settings{display:grid;grid-template-columns:minmax(260px,1fr) minmax(240px,360px) auto;gap:12px;align-items:center;margin:0 0 18px;padding:16px 18px;border:1px solid #d8deea;border-radius:11px;background:#fff}.help-button-settings span,.serial-settings span{color:#526078;font-size:10px;font-weight:900;letter-spacing:.1em}.help-button-settings h3,.serial-settings h3{margin:3px 0;font-size:17px}.help-button-settings p,.serial-settings p{margin:0;color:#7a8495;font-size:11px}.help-button-settings select,.serial-settings input{width:100%;padding:11px;border:1px solid #cfd6e2;border-radius:8px;background:#fff}.serial-settings label{display:grid;gap:6px}.serial-settings code{font-size:11px}.help-button-settings button,.serial-settings button{background:#4058df}
   .krampus-actions{display:flex;gap:10px;margin:0 0 24px}.krampus-actions button{min-width:110px}.start{background:#168653}.danger-solid{background:#bd3042!important}
   .krampus-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.control-card{background:white;border:1px solid #e1e5ed;border-radius:11px;padding:18px}.control-card h3{margin-top:0}
   .button-grid{display:flex;flex-wrap:wrap;gap:8px}.button-grid button{background:#eef1f6;color:#273248;box-shadow:none}
@@ -142,7 +147,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.sensor-grid article{display:flex;justify-content:space-between;background:white;padding:12px;border:1px solid #e1e5ed;border-radius:8px}.sensor-grid b{color:#b32d3e}.sensor-grid b.active{color:#168653}.empty.compact{padding:24px;margin:0}
   .terminal{height:280px;overflow:auto;background:#101622;color:#d8dfec;border-radius:10px;padding:14px}.terminal div{display:grid;grid-template-columns:70px 55px 1fr;gap:8px;padding:3px}.terminal time{color:#78859d}.terminal b{color:#7c8cff}.terminal code{white-space:pre-wrap;overflow-wrap:anywhere}
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
-  @media(max-width:800px){.help-button-settings{grid-template-columns:1fr}.help-button-settings button{width:100%}}
+  @media(max-width:800px){.help-button-settings,.serial-settings{grid-template-columns:1fr}.help-button-settings button,.serial-settings button{width:100%}}
   @media(max-width:700px){.help-call{grid-template-columns:1fr}.help-call-actions{align-items:stretch;flex-direction:column}.doorbell-video{height:62vw}}
   @media(max-width:600px){.summary{grid-template-columns:1fr}.connections{justify-content:flex-start}.krampus-actions{display:grid;grid-template-columns:1fr 1fr}.krampus-actions button{width:100%;min-width:0;min-height:48px}.button-grid{display:grid;grid-template-columns:1fr 1fr}.button-grid button{min-height:44px}.hint-upload{grid-template-columns:1fr}.hint-row{align-items:stretch;flex-direction:column}.hint-row>div{display:grid;grid-template-columns:repeat(3,1fr)}.terminal div{grid-template-columns:50px 38px minmax(0,1fr);gap:5px}.control-card{padding:15px}}
   `]
@@ -158,6 +163,7 @@ export class KrampusComponent implements OnDestroy {
   voiceHints=signal<VoiceHint[]>([]); hintName=signal(""); hintFile=signal<File|null>(null); hintFileName=signal("");
   doorbellCalls=signal<DoorbellCall[]>([]); doorbellStream=signal(""); doorbellVideoError=signal(""); doorbellVideoLoading=signal(false);
   helpCameras=signal<HelpCamera[]>([]); helpCameraId=signal(""); savingHelpCamera=signal(false);
+  serialPort=signal("/dev/ttyUSB0"); savingSerial=signal(false);
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
   private voiceSocket?:Socket;
@@ -218,7 +224,11 @@ export class KrampusComponent implements OnDestroy {
       doorbell:safe<DoorbellCall[]>(this.http.get<DoorbellCall[]>(`/api/rooms/${this.roomId()}/doorbell-calls`))
     }))).subscribe(result=>{
       this.agentOnline.set(result.status.ok||result.sensors.ok||result.logs.ok);
-      if(result.status.ok) this.status.set(result.status.value);
+      if(result.status.ok) {
+        this.status.set(result.status.value);
+        const path=result.status.value.serial?.path;
+        if(path&&!this.savingSerial()) this.serialPort.set(path);
+      }
       if(result.sensors.ok) this.sensors.set(result.sensors.value.values||{});
       if(result.logs.ok) this.logLines.set((result.logs.value.lines||[]).slice(-150));
       if(result.doorbell.ok){
@@ -375,6 +385,15 @@ export class KrampusComponent implements OnDestroy {
     this.http.post(url,body).subscribe({
       next:()=>{ this.busy.set(false); onSuccess?.(); this.notice.set(success); },
       error:error=>{ this.busy.set(false); this.error.set(this.message(error,"Команда не доставлена.")); }
+    });
+  }
+  saveSerialPort(){
+    const path=this.serialPort().trim();
+    if(this.savingSerial()||!this.roomId()||!path) return;
+    this.savingSerial.set(true); this.error.set(""); this.notice.set("");
+    this.http.post(`/api/rooms/${this.roomId()}/krampus/serial`,{path}).subscribe({
+      next:()=>{ this.savingSerial.set(false); this.serialPort.set(path); this.notice.set(`Arduino переключена на ${path}.`); },
+      error:error=>{ this.savingSerial.set(false); this.error.set(this.message(error,"Не удалось переключить порт Arduino.")); }
     });
   }
   private message(error:HttpErrorResponse,fallback:string){ return typeof error.error?.error==="string" ? `${fallback} (${error.error.error})` : fallback; }

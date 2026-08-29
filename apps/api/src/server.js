@@ -1961,6 +1961,12 @@ const krampusCommands = [
   "OVEN LIGHT OFF","OVEN MOVE ON","OVEN MOVE OFF","OVEN FOG ON","OVEN FOG OFF"
 ];
 const krampusCommand = z.object({ command:z.enum(krampusCommands.map(value=>`ADMIN ${value}`)) }).strict();
+const serialPath = z.object({
+  path:z.string().trim().min(1).max(255).refine(
+    value=>value.startsWith("/dev/")&&!value.includes("..")&&/^\/dev\/[A-Za-z0-9._/-]+$/.test(value),
+    "INVALID_SERIAL_PATH"
+  )
+}).strict();
 const voiceHintTypes = ["audio/mpeg","audio/wav","audio/x-wav","audio/ogg","audio/webm","audio/mp4","audio/x-m4a"];
 const voiceHintUpload = z.object({
   name:z.string().trim().min(1).max(120),
@@ -1988,6 +1994,15 @@ app.post("/rooms/:id/krampus/command", auth, permit("devices:command"), async (r
   const { command }=krampusCommand.parse(req.body);
   const result=await roomAgentRequest(req.params.id,"krampus",{operation:"command",command});
   await audit(req,"krampus.command","room",req.params.id,null,{command,result});
+  res.status(result.success ? 200 : 502).json(result.success ? result.result : {error:result.error});
+});
+
+app.post("/rooms/:id/krampus/serial", auth, permit("devices:command"), async (req,res) => {
+  const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
+  if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  const {path}=serialPath.parse(req.body);
+  const result=await roomAgentRequest(req.params.id,"krampus",{operation:"serial",path});
+  await audit(req,"krampus.serial.configure","room",req.params.id,null,{path,result});
   res.status(result.success ? 200 : 502).json(result.success ? result.result : {error:result.error});
 });
 

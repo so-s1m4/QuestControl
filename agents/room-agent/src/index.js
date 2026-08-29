@@ -80,6 +80,7 @@ socket.on("krampus",async(message,ack)=>{
       status:{path:"/api/status",method:"GET"},
       sensors:{path:"/api/sensors",method:"GET"},
       logs:{path:"/api/serial/tail",method:"GET"},
+      serial:{path:"/api/serial/config",method:"POST",body:{path:message.path}},
       command:{path:"/api/admin",method:"POST",body:{cmd:message.command}},
       sound:{path:message.action==="stop"?"/api/sound/stop":"/api/sound/play",method:"POST",body:message.action==="stop"?{}:{sound:message.sound}},
     };

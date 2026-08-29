@@ -22,6 +22,7 @@ Agent не слушает входящий порт. Он сам открыва�
 `http://127.0.0.1:3000`). Agent обращается только к следующим маршрутам:
 
 - `GET /api/status`, `GET /api/sensors`, `GET /api/serial/tail`;
+- `POST /api/serial/config` с JSON `{ "path": "/dev/ttyUSB0" }` для ручного выбора Arduino;
 - `POST /api/admin` с JSON `{ "cmd": "ADMIN …" }`;
 - `POST /api/sound/play` с разрешённым именем файла и `POST /api/sound/stop`.
 
@@ -34,6 +35,10 @@ curl --fail http://127.0.0.1:3000/api/status
 curl --fail http://127.0.0.1:3000/api/sensors
 curl --fail http://127.0.0.1:3000/api/serial/tail
 ```
+
+Локальный сервер должен применить новый порт из `/api/serial/config`, переподключить
+serial и сохранить выбор после перезапуска. Типичный порт клона Arduino с USB-UART
+CH340/CP210x — `/dev/ttyUSB0`; для CDC-плат часто используется `/dev/ttyACM0`.
 
 Затем проверьте `systemctl status quest-room-agent` и появление устройства в QuestControl
 со статусом `ONLINE`. `Agent online` означает доступность локального API через agent,
