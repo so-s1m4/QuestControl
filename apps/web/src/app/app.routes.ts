@@ -15,10 +15,12 @@ import { VrSessionLogsComponent } from "./pages/vr-session-logs/vr-session-logs.
 import { adminGuard } from "./core/admin.guard";
 import { ReceptionCheckinComponent } from "./pages/reception-checkin/reception-checkin.component";
 import { InventoryComponent } from "./pages/inventory/inventory.component";
+import { CameraWatchComponent } from "./pages/camera-watch/camera-watch.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
   { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
   { path: "reception/checkin", component: ReceptionCheckinComponent },
+  { path: "watch/:token", component: CameraWatchComponent },
   { path: "", component: OverviewComponent, canActivate: [authGuard] },
   { path: "cameras", component: CamerasComponent, canActivate: [authGuard] },
   {

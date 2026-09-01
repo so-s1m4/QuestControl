@@ -41,7 +41,8 @@ export class LoginComponent {
       next: result => {
         sessionStorage.setItem("access_token", result.accessToken);
         localStorage.setItem("refresh_token", result.refreshToken);
-        this.router.navigateByUrl("/");
+        let destination="/";try{if(JSON.parse(atob(result.accessToken.split(".")[1])).role==="CAMERA_VIEWER")destination="/cameras"}catch{}
+        this.router.navigateByUrl(destination);
       },
       error: () => { this.error.set("Неверный email или пароль."); this.loading.set(false); }
     });

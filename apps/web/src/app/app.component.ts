@@ -20,7 +20,7 @@ type InstallPromptEvent = Event & {
         <button class="logout" (click)="logout()">Выйти</button>
       </div>
 
-      <div class="mobile-nav-layer">
+      @if(!isCameraViewer()) {<div class="mobile-nav-layer">
         <nav class="mobile-nav" aria-label="Основная навигация">
           <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
             <i class="mobile-tab-icon home-icon" aria-hidden="true"></i><span>Обзор</span>
@@ -35,9 +35,9 @@ type InstallPromptEvent = Event & {
             <i class="mobile-tab-icon more-icon" aria-hidden="true"></i><span>Ещё</span>
           </button>
         </nav>
-      </div>
+      </div>}
 
-      @if (mobileMenuOpen()) {
+      @if (mobileMenuOpen() && !isCameraViewer()) {
         <div class="mobile-menu-backdrop" role="presentation" (click)="mobileMenuOpen.set(false)">
           <section class="mobile-menu-sheet" role="dialog" aria-modal="true" aria-label="Дополнительная навигация" (click)="$event.stopPropagation()">
             <div class="sheet-handle"></div>
@@ -114,6 +114,7 @@ export class AppComponent {
   mobileMenuOpen = signal(false);
   currentUrl = signal(this.router.url);
   isAdmin = signal(false);
+  isCameraViewer = signal(false);
   isStandalone = signal(window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
   installPrompt = signal<InstallPromptEvent | null>(null);
 
@@ -164,15 +165,17 @@ export class AppComponent {
       const role = token ? JSON.parse(atob(token.split(".")[1])).role : null;
       const admin = role === "OWNER" || role === "ADMIN";
       this.isAdmin.set(admin);
+      this.isCameraViewer.set(role === "CAMERA_VIEWER");
       document.body.classList.toggle("management-user", admin);
     } catch {
       this.isAdmin.set(false);
+      this.isCameraViewer.set(false);
       document.body.classList.remove("management-user");
     }
   }
 
   private managementRoute(url: string) {
-    return url !== "/login" && !url.startsWith("/reception/checkin");
+    return url !== "/login" && !url.startsWith("/reception/checkin") && !url.startsWith("/watch/");
   }
 
   async installApp() {

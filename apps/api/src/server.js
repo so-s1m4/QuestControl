@@ -71,6 +71,18 @@ async function locationAllowed(req, locationId) {
   if (isOwner(req)) return true;
   return Boolean((await db.query("SELECT 1 FROM user_locations WHERE user_id=$1 AND location_id=$2", [req.user.sub, locationId])).rowCount);
 }
+async function cameraAllowed(req, cameraId) {
+  if (isOwner(req)) return true;
+  if(req.user?.role==="CAMERA_GUEST") {
+    if(!req.user.shareId || !Array.isArray(req.user.cameraIds) || !req.user.cameraIds.includes(cameraId)) return false;
+    return Boolean((await db.query("SELECT 1 FROM camera_shares WHERE id=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())",[req.user.shareId])).rowCount);
+  }
+  if (req.user?.role === "CAMERA_VIEWER") {
+    return Boolean((await db.query("SELECT 1 FROM user_cameras WHERE user_id=$1 AND camera_id=$2", [req.user.sub,cameraId])).rowCount);
+  }
+  const camera=(await db.query("SELECT COALESCE(c.location_id,r.location_id) location_id FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1",[cameraId])).rows[0];
+  return Boolean(camera?.location_id && await locationAllowed(req,camera.location_id));
+}
 app.set("trust proxy", env.TRUST_PROXY);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
@@ -90,7 +102,7 @@ const requestId = (req, res, next) => { req.requestId = req.get("x-request-id") 
 app.use(requestId);
 
 async function sign(user, secret, ttl) {
-  return new SignJWT({ role: user.role, permissions: user.permissions }).setProtectedHeader({ alg: "HS256" }).setSubject(user.id).setIssuedAt().setExpirationTime(ttl).sign(key(secret));
+  return new SignJWT({ role: user.role, permissions: user.permissions, ...(user.cameraIds?{cameraIds:user.cameraIds}:{}), ...(user.shareId?{shareId:user.shareId}:{}) }).setProtectedHeader({ alg: "HS256" }).setSubject(user.id).setIssuedAt().setExpirationTime(ttl).sign(key(secret));
 }
 async function auth(req, res, next) {
   try {
@@ -106,7 +118,8 @@ const permit = (permission) => (req, res, next) => {
   res.status(403).json({ error: "FORBIDDEN", requestId: req.requestId });
 };
 async function audit(req, action, entityType, entityId, beforeState, afterState) {
-  await db.query("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,ip,user_agent,request_id,before_state,after_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", [req.user?.sub || null, action, entityType, entityId, req.ip, req.get("user-agent"), req.requestId, beforeState || null, afterState || null]);
+  const actorUserId=req.user?.role==="CAMERA_GUEST"?null:req.user?.sub||null;
+  await db.query("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,ip,user_agent,request_id,before_state,after_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", [actorUserId, action, entityType, entityId, req.ip, req.get?.("user-agent"), req.requestId||crypto.randomUUID(), beforeState || null, afterState || null]);
 }
 
 app.get("/health/live", (_, res) => res.json({ status: "ok", service: "quest-control-api" }));
@@ -147,13 +160,51 @@ app.patch("/auth/password", auth, async (req,res) => {
   res.status(204).end();
 });
 
+const shareTokenHash=token=>crypto.createHash("sha256").update(token).digest("hex");
+app.post("/camera-shares",auth,permit("cameras:manage"),async(req,res)=>{
+  const input=z.object({cameraIds:z.array(z.string().uuid()).min(1).max(24),expiresInHours:z.number().int().min(1).max(168).default(24)}).parse(req.body);
+  const cameraIds=[...new Set(input.cameraIds)];
+  for(const cameraId of cameraIds) if(!(await cameraAllowed(req,cameraId))) return res.status(403).json({error:"CAMERA_FORBIDDEN"});
+  const token=crypto.randomBytes(32).toString("base64url");
+  const client=await db.connect();
+  try{
+    await client.query("BEGIN");
+    const share=(await client.query("INSERT INTO camera_shares(token_hash,created_by,expires_at) VALUES($1,$2,now()+($3||' hours')::interval) RETURNING id,expires_at",[shareTokenHash(token),req.user.sub,input.expiresInHours])).rows[0];
+    for(const cameraId of cameraIds) await client.query("INSERT INTO camera_share_cameras(share_id,camera_id) VALUES($1,$2)",[share.id,cameraId]);
+    await client.query("COMMIT");
+    await audit(req,"camera.share.create","camera_share",share.id,null,{cameraIds,expiresAt:share.expires_at});
+    res.status(201).json({id:share.id,token,expiresAt:share.expires_at,cameraIds});
+  }catch(error){await client.query("ROLLBACK");throw error}finally{client.release()}
+});
+app.get("/camera-shares",auth,permit("cameras:manage"),async(req,res)=>{
+  const {rows}=await db.query(`SELECT s.id,s.expires_at,s.revoked_at,s.created_at,
+    COALESCE(array_agg(c.name ORDER BY c.name) FILTER(WHERE c.id IS NOT NULL),'{}') camera_names
+    FROM camera_shares s LEFT JOIN camera_share_cameras sc ON sc.share_id=s.id LEFT JOIN cameras c ON c.id=sc.camera_id
+    WHERE s.created_by=$1 GROUP BY s.id ORDER BY s.created_at DESC LIMIT 30`,[req.user.sub]);
+  res.json(rows);
+});
+app.delete("/camera-shares/:id",auth,permit("cameras:manage"),async(req,res)=>{
+  const share=(await db.query("UPDATE camera_shares SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 AND created_by=$2 RETURNING id",[req.params.id,req.user.sub])).rows[0];
+  if(!share)return res.status(404).json({error:"SHARE_NOT_FOUND"});
+  await audit(req,"camera.share.revoke","camera_share",share.id,null,{revoked:true});res.status(204).end();
+});
+app.post("/camera-shares/:token/access",rateLimit({windowMs:60_000,limit:30}),async(req,res)=>{
+  const share=(await db.query(`SELECT s.id,s.expires_at,array_agg(sc.camera_id::text) camera_ids FROM camera_shares s
+    JOIN camera_share_cameras sc ON sc.share_id=s.id WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() GROUP BY s.id`,[shareTokenHash(req.params.token)])).rows[0];
+  if(!share)return res.status(404).json({error:"SHARE_UNAVAILABLE"});
+  const guest={id:`share:${share.id}`,role:"CAMERA_GUEST",permissions:["cameras:read"],cameraIds:share.camera_ids,shareId:share.id};
+  res.json({accessToken:await sign(guest,env.JWT_ACCESS_SECRET,"15m"),expiresAt:share.expires_at});
+});
+
 app.get("/users", auth, permit("users:manage"), async (_, res) => {
   const { rows } = await db.query(`
     SELECT u.id,u.email,u.display_name,u.is_active,u.created_at,r.name AS role,
-           COALESCE(array_agg(ul.location_id) FILTER (WHERE ul.location_id IS NOT NULL),'{}') AS location_ids
+           COALESCE(array_agg(DISTINCT ul.location_id) FILTER (WHERE ul.location_id IS NOT NULL),'{}') AS location_ids,
+           COALESCE(array_agg(DISTINCT uc.camera_id) FILTER (WHERE uc.camera_id IS NOT NULL),'{}') AS camera_ids
     FROM users u
     JOIN roles r ON r.id=u.role_id
     LEFT JOIN user_locations ul ON ul.user_id=u.id
+    LEFT JOIN user_cameras uc ON uc.user_id=u.id
     GROUP BY u.id,r.name
     ORDER BY u.created_at DESC
   `);
@@ -164,8 +215,9 @@ const userInput = z.object({
   email: z.string().trim().email().max(254),
   displayName: z.string().trim().min(2).max(120),
   password: z.string().min(12).max(200),
-  role: z.enum(["OWNER", "ADMIN", "OPERATOR", "TECHNICIAN"]),
+  role: z.enum(["OWNER", "ADMIN", "OPERATOR", "TECHNICIAN", "CAMERA_VIEWER"]),
   locationIds: z.array(z.string().uuid()).default([]),
+  cameraIds: z.array(z.string().uuid()).default([]),
 });
 
 app.post("/users", auth, permit("users:manage"), async (req, res) => {
@@ -190,6 +242,15 @@ app.post("/users", auth, permit("users:manage"), async (req, res) => {
     for (const locationId of input.locationIds) {
       await client.query("INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)", [rows[0].id, locationId]);
     }
+    for (const cameraId of input.cameraIds) {
+      await client.query("INSERT INTO user_cameras(user_id,camera_id) SELECT $1,id FROM cameras WHERE id=$2", [rows[0].id,cameraId]);
+    }
+    if(input.role==="CAMERA_VIEWER") await client.query(`
+      INSERT INTO user_locations(user_id,location_id)
+      SELECT DISTINCT $1,COALESCE(c.location_id,r.location_id) FROM user_cameras uc
+      JOIN cameras c ON c.id=uc.camera_id LEFT JOIN rooms r ON r.id=c.room_id
+      WHERE uc.user_id=$1 AND COALESCE(c.location_id,r.location_id) IS NOT NULL
+      ON CONFLICT DO NOTHING`,[rows[0].id]);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -198,6 +259,27 @@ app.post("/users", auth, permit("users:manage"), async (req, res) => {
   const user = { ...rows[0], role: input.role };
   await audit(req, "user.create", "user", user.id, null, user);
   res.status(201).json(user);
+});
+
+app.put("/users/:id/cameras", auth, permit("users:manage"), async (req,res) => {
+  const {cameraIds}=z.object({cameraIds:z.array(z.string().uuid())}).parse(req.body);
+  const client=await db.connect();
+  try {
+    await client.query("BEGIN");
+    const target=(await client.query("SELECT u.id,r.name role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1",[req.params.id])).rows[0];
+    if(!target){await client.query("ROLLBACK");return res.status(404).json({error:"USER_NOT_FOUND"});}
+    if(target.role!=="CAMERA_VIEWER"){await client.query("ROLLBACK");return res.status(409).json({error:"CAMERA_VIEWER_REQUIRED"});}
+    await client.query("DELETE FROM user_cameras WHERE user_id=$1",[req.params.id]);
+    for(const cameraId of [...new Set(cameraIds)]) await client.query("INSERT INTO user_cameras(user_id,camera_id) SELECT $1,id FROM cameras WHERE id=$2",[req.params.id,cameraId]);
+    await client.query("DELETE FROM user_locations WHERE user_id=$1",[req.params.id]);
+    await client.query(`INSERT INTO user_locations(user_id,location_id)
+      SELECT DISTINCT $1,COALESCE(c.location_id,r.location_id) FROM user_cameras uc
+      JOIN cameras c ON c.id=uc.camera_id LEFT JOIN rooms r ON r.id=c.room_id
+      WHERE uc.user_id=$1 AND COALESCE(c.location_id,r.location_id) IS NOT NULL`,[req.params.id]);
+    await client.query("COMMIT");
+    await audit(req,"user.cameras.update","user",req.params.id,null,{cameraIds});
+    res.json({cameraIds});
+  } catch(error){await client.query("ROLLBACK");throw error;} finally{client.release();}
 });
 
 app.put("/users/:id/locations", auth, permit("users:manage"), async (req, res) => {
@@ -1408,7 +1490,10 @@ app.delete("/rooms/:id", auth, permit("rooms:manage"), async (req,res) => {
 });
 
 app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
-  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
+  const scoped = isOwner(req) ? { clause:"TRUE", values:[] } : req.user.role==="CAMERA_VIEWER"
+    ? {clause:"c.id IN (SELECT camera_id FROM user_cameras WHERE user_id=$1)",values:[req.user.sub]}
+    : req.user.role==="CAMERA_GUEST" ? {clause:"c.id=ANY($1::uuid[]) AND EXISTS(SELECT 1 FROM camera_shares s WHERE s.id=$2 AND s.revoked_at IS NULL AND s.expires_at>now())",values:[req.user.cameraIds||[],req.user.shareId]}
+    : { clause:"COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
     SELECT c.id,c.room_id,c.integration_id,c.name,c.provider,c.external_id,c.stream_key,c.status,
            c.plan_x,c.plan_y,COALESCE(c.location_id,r.location_id) AS location_id,r.name AS room_name
@@ -2523,7 +2608,7 @@ app.get("/tunnel/:ticket", auth, permit("local_sites:open"), async (req,res) => 
 app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => {
   const { rows } = await db.query("SELECT c.*,COALESCE(c.location_id,r.location_id) AS effective_location_id FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1", [req.params.id]);
   const camera=rows[0]; if(!camera) return res.status(404).json({error:"CAMERA_NOT_FOUND"});
-  if (!camera.effective_location_id || !(await locationAllowed(req,camera.effective_location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+  if (!(await cameraAllowed(req,camera.id))) return res.status(403).json({ error:"CAMERA_FORBIDDEN" });
   if(camera.provider==="TUYA") {
     if(!tuya.configured) return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
     if(!camera.external_id) return res.status(409).json({error:"TUYA_DEVICE_NOT_CONFIGURED"});
@@ -2565,7 +2650,7 @@ app.post("/cameras/:id/control",auth,permit("devices:command"),async(req,res)=>{
     FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1
   `,[req.params.id])).rows[0];
   if(!camera)return res.status(404).json({error:"CAMERA_NOT_FOUND"});
-  if(!camera.effective_location_id||!(await locationAllowed(req,camera.effective_location_id)))return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!(await cameraAllowed(req,camera.id)))return res.status(403).json({error:"CAMERA_FORBIDDEN"});
   if(camera.provider!=="TUYA"||!camera.external_id)return res.status(409).json({error:"CAMERA_CONTROL_NOT_SUPPORTED"});
   if(!tuya.configured)return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
   try{
@@ -2772,7 +2857,7 @@ cameraNs.on("connection",socket=>{
         WHERE c.id=$1
       `,[input.cameraId])).rows[0];
       if(!camera||camera.provider!=="TUYA"||!camera.external_id) return ack({success:false,error:"CAMERA_NOT_AVAILABLE"});
-      if(!camera.effective_location_id||!(await locationAllowed({user:socket.data.user},camera.effective_location_id))) return ack({success:false,error:"LOCATION_FORBIDDEN"});
+      if(!(await cameraAllowed({user:socket.data.user},camera.id))) return ack({success:false,error:"CAMERA_FORBIDDEN"});
       const result=await tuyaWebRTC.startSession({deviceId:camera.external_id,socket});
       ack({success:true,...result});
     } catch(error) {
@@ -2810,6 +2895,10 @@ app.use((err, req, res, _next) => {
 await db.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id text");
 await db.query("CREATE UNIQUE INDEX IF NOT EXISTS locations_external_id_idx ON locations(external_id) WHERE external_id IS NOT NULL");
 await db.query("CREATE TABLE IF NOT EXISTS user_locations(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,PRIMARY KEY(user_id,location_id))");
+await db.query(`INSERT INTO roles(name,permissions) VALUES('CAMERA_VIEWER','["cameras:read","locations:read"]'::jsonb) ON CONFLICT(name) DO UPDATE SET permissions=excluded.permissions`);
+await db.query("CREATE TABLE IF NOT EXISTS user_cameras(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,camera_id uuid NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,PRIMARY KEY(user_id,camera_id))");
+await db.query("CREATE TABLE IF NOT EXISTS camera_shares(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),token_hash text UNIQUE NOT NULL,created_by uuid REFERENCES users(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,revoked_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())");
+await db.query("CREATE TABLE IF NOT EXISTS camera_share_cameras(share_id uuid NOT NULL REFERENCES camera_shares(id) ON DELETE CASCADE,camera_id uuid NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,PRIMARY KEY(share_id,camera_id))");
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS location_id uuid REFERENCES locations(id) ON DELETE SET NULL");
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_x numeric(6,3)");
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_y numeric(6,3)");

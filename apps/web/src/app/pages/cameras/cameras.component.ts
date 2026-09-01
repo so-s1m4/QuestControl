@@ -2,6 +2,7 @@ import { Component, ElementRef, HostListener, ViewChild, inject, signal } from "
 import { HttpClient } from "@angular/common/http";
 import { FormsModule } from "@angular/forms";
 import { RouterLink } from "@angular/router";
+import QRCode from "qrcode";
 
 type Location={id:string;name:string};
 type Room={id:string;name:string;location_id:string;location_name:string};
@@ -15,9 +16,10 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
 @Component({
   selector:"app-cameras",standalone:true,imports:[FormsModule,RouterLink],
   template:`
-<main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a>@if(canConfigureCameraSettings()){<a class="camera-settings-link" routerLink="/camera-settings"><span>⚙</span> Настройки камер</a>}<a routerLink="/inventory">Инвентарь</a><a routerLink="/users">Пользователи</a></nav></aside>
+<main [class.camera-only]="isCameraViewer()">@if(!isCameraViewer()){<aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a class="active" routerLink="/cameras">Камеры</a>@if(canConfigureCameraSettings()){<a class="camera-settings-link" routerLink="/camera-settings"><span>⚙</span> Настройки камер</a>}<a routerLink="/inventory">Инвентарь</a><a routerLink="/users">Пользователи</a></nav></aside>}
   <section>
-    <header><div><h2>Камеры на плане</h2><p>Выберите локацию и камеры прямо на схеме</p></div><div class="header-actions">@if(isOwner()){<button class="secondary" (click)="toggleEdit()">{{editing()?"Закрыть редактор":"Настроить план"}}</button>}<button class="secondary" (click)="syncTuya()" [disabled]="syncing()">{{syncing()?"Синхронизация…":"↻ Tuya"}}</button></div></header>
+    <header><div><h2>{{isCameraViewer()?"Доступные камеры":"Камеры на плане"}}</h2><p>{{isCameraViewer()?"Вам показаны только разрешённые камеры":"Выберите локацию и камеры прямо на схеме"}}</p></div><div class="header-actions">@if(canManageCameras()&&selectedIds().length){<button (click)="createParentQr()">QR для родителя</button>}@if(isOwner()){<button class="secondary" (click)="toggleEdit()">{{editing()?"Закрыть редактор":"Настроить план"}}</button>}@if(canManageCameras()){<button class="secondary" (click)="syncTuya()" [disabled]="syncing()">{{syncing()?"Синхронизация…":"↻ Tuya"}}</button>}</div></header>
+    @if(qrImage()){<div class="qr-backdrop" (click)="closeQr()"><section class="qr-card" (click)="$event.stopPropagation()"><h3>Доступ для родителя</h3><p>QR открывает только {{qrCameraCount()}} выбранных камер и действует 24 часа.</p><img [src]="qrImage()" alt="QR-код доступа к камерам"><small>{{qrUrl()}}</small><div><button class="danger" (click)="revokeQr()">Отозвать доступ</button><button class="secondary" (click)="closeQr()">Закрыть</button></div></section></div>}
     <div class="location-tabs">@for(location of locations();track location.id){<button [class.active]="location.id===locationId()" (click)="selectLocation(location.id)">{{location.name}}</button>}</div>
     @if(error()){<p class="error">{{error()}}</p>} @if(notice()){<p class="notice">{{notice()}}</p>}
 
@@ -64,6 +66,8 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
     @if(!selectedCameras().length){<div class="empty compact"><b>Камеры не выбраны</b><span>Нажмите на маркеры камер на плане — они появятся в плавающем окне.</span></div>}
   </section></main>`,
   styles:[`
+    .camera-only>section{width:100%!important;max-width:none!important;margin-left:0!important}
+    .qr-backdrop{position:fixed;z-index:1200;inset:0;display:grid;place-items:center;padding:20px;background:#10182899;backdrop-filter:blur(5px)}.qr-card{display:grid;width:min(420px,100%);place-items:center;padding:25px;border-radius:16px;background:#fff;box-shadow:0 30px 80px #0005;text-align:center}.qr-card h3{margin:0;font-size:21px}.qr-card p{color:var(--muted)}.qr-card img{width:260px;max-width:100%;border-radius:10px}.qr-card small{max-width:100%;margin:10px 0 18px;overflow-wrap:anywhere;color:var(--muted)}.qr-card>div{display:flex;gap:9px}.qr-card .danger{background:#b42318}
     .camera-settings-link{width:calc(100% - 18px);margin:5px 0 8px 18px!important;padding:10px 13px!important;border:1px solid #6677f1;background:#29355b!important;color:#fff!important;box-shadow:0 6px 18px #0003}.camera-settings-link span{display:inline-grid;width:22px;height:22px;margin-right:8px;place-items:center;border-radius:6px;background:#6574ed;color:#fff;font-size:13px}.camera-settings-link:hover{background:#344473!important;border-color:#8792ff}
     .header-actions,.location-tabs,.editor-bar,.plan-legend{display:flex;gap:10px;align-items:center}.secondary,.ghost,.location-tabs button{background:#eef1f6;color:#344054;box-shadow:none}.location-tabs{margin:22px 0 14px;flex-wrap:wrap}.location-tabs button.active,.ghost.active{background:#4058df;color:white}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}
     .editor-bar{flex-wrap:wrap;padding:12px;background:#fff;border:1px solid var(--line);border-radius:12px 12px 0 0}.editor-help{margin-right:auto;color:var(--muted);font-size:12px}.upload{display:inline-flex;align-items:center;padding:10px 14px;border-radius:8px;background:#eef1f6;font-weight:700;cursor:pointer}.upload input{display:none}.background-control{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}.background-control select{padding:7px}.background-control input{width:95px}
@@ -83,13 +87,15 @@ export class CamerasComponent{
   locations=signal<Location[]>([]);rooms=signal<Room[]>([]);cameras=signal<Camera[]>([]);locationId=signal("");zones=signal<Zone[]>([]);backgroundImage=signal<string|null>(null);backgroundMode=signal<BackgroundMode>("CONTAIN");backgroundScale=signal(100);backgroundX=signal(50);backgroundY=signal(50);
   editing=signal(false);drawing=signal(false);saving=signal(false);syncing=signal(false);error=signal("");notice=signal("");selectedIds=signal<string[]>([]);
   renamingId=signal<string|null>(null);
+  qrImage=signal("");qrUrl=signal("");qrShareId=signal("");qrCameraCount=signal(0);
   selectedZone=signal<Zone|null>(null);
   zoneDraft:{name:string;type:ZoneType;color:string;roomId:string}={name:"Новая зона",type:"OTHER",color:"#64748b",roomId:""};private drag:Drag|null=null;private suppressClick=false;
   isOwner(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER"}catch{return false}}
+  isCameraViewer(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="CAMERA_VIEWER"}catch{return false}}
   canConfigureCameraSettings(){try{return ["OWNER","ADMIN"].includes(JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role)}catch{return false}}
   canManageCameras(){try{const p=JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).permissions||[];return p.includes("*")||p.includes("cameras:*")||p.includes("cameras:manage")}catch{return false}}
   constructor(){try{const stored=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");this.selectedIds.set(Array.isArray(stored)?stored:[])}catch{}this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(l[0])this.selectLocation(l[0].id)}});this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});this.loadCameras();}
-  loadCameras(){this.http.get<Camera[]>("/api/cameras").subscribe({next:c=>this.cameras.set(c),error:()=>this.error.set("Не удалось загрузить камеры.")})}
+  loadCameras(){this.http.get<Camera[]>("/api/cameras").subscribe({next:c=>{this.cameras.set(c);if(this.isCameraViewer()){this.selectedIds.set(c.map(camera=>camera.id));this.persistSelection()}},error:()=>this.error.set("Не удалось загрузить камеры.")})}
   selectLocation(id:string){this.locationId.set(id);this.editing.set(false);this.http.get<Plan>(`/api/locations/${id}/plan`).subscribe({next:p=>{this.backgroundImage.set(p.backgroundImage);this.backgroundMode.set(p.backgroundMode||"CONTAIN");this.backgroundScale.set(+(p.backgroundScale||100));this.backgroundX.set(+(p.backgroundX??50));this.backgroundY.set(+(p.backgroundY??50));this.zones.set(p.zones.map(z=>({...z,x:+z.x,y:+z.y,width:+z.width,height:+z.height,roomId:z.room_id||""})));},error:()=>this.error.set("Не удалось загрузить план локации.")})}
   backgroundSize(){return this.backgroundMode()==="CONTAIN"?"contain":this.backgroundMode()==="COVER"?"cover":`${this.backgroundScale()}% auto`}
   locationCameras(){return this.cameras().filter(c=>c.location_id===this.locationId())}
@@ -118,4 +124,7 @@ export class CamerasComponent{
   selectOnline(){for(const c of this.locationCameras().filter(c=>c.status==="ONLINE"&&!this.isSelected(c.id)))this.selectedIds.update(v=>[...v,c.id]);this.persistSelection()}clearSelection(){this.selectedIds.set([]);this.persistSelection()}
   private persistSelection(){localStorage.setItem("questcontrol.selectedCameras",JSON.stringify(this.selectedIds()));window.dispatchEvent(new Event("questcontrol-camera-selection"))}
   syncTuya(){this.syncing.set(true);this.http.post<any>("/api/cameras/sync/tuya",{}).subscribe({next:r=>{this.syncing.set(false);this.notice.set(`Tuya: камер ${r.cameras}, добавлено ${r.created}.`);this.loadCameras()},error:()=>{this.syncing.set(false);this.error.set("Не удалось синхронизировать Tuya.")}})}
+  createParentQr(){const allowed=new Set(this.cameras().map(camera=>camera.id));const cameraIds=this.selectedIds().filter(id=>allowed.has(id));if(!cameraIds.length)return;this.http.post<{id:string;token:string}>("/api/camera-shares",{cameraIds,expiresInHours:24}).subscribe({next:async share=>{const url=`${location.origin}/watch/${share.token}`;this.qrShareId.set(share.id);this.qrUrl.set(url);this.qrCameraCount.set(cameraIds.length);this.qrImage.set(await QRCode.toDataURL(url,{width:520,margin:2,errorCorrectionLevel:"M"}))},error:()=>this.error.set("Не удалось создать QR-код доступа.")})}
+  revokeQr(){const id=this.qrShareId();if(!id)return;this.http.delete(`/api/camera-shares/${id}`).subscribe({next:()=>{this.closeQr();this.notice.set("Доступ по QR-коду отозван.")},error:()=>this.error.set("Не удалось отозвать доступ.")})}
+  closeQr(){this.qrImage.set("");this.qrUrl.set("");this.qrShareId.set("");this.qrCameraCount.set(0)}
 }
