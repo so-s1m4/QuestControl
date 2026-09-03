@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "title": "Krampus House",
+  "state": { "pollMs": 2000 },
+  "blocks": [
+    {
+      "id": "mechanisms",
+      "title": "Механизмы",
+      "width": "half",
+      "categories": [
+        {
+          "id": "bear",
+          "title": "Медведь",
+          "controls": [
+            { "id": "bear-open", "type": "button", "label": "Открыть", "command": "ADMIN BEAR OPEN" },
+            { "id": "bear-close", "type": "button", "label": "Закрыть", "command": "ADMIN BEAR CLOSE" },
+            { "id": "bear-sound", "type": "button", "label": "Включить звук", "command": "ADMIN BEAR SOUND" }
+          ]
+        },
+        {
+          "id": "oven",
+          "title": "Печка",
+          "controls": [
+            { "id": "oven-uv", "type": "checkbox", "label": "Печка решена", "statePath": "oven.uv", "onLabel": "Решена", "offLabel": "Не решена", "onCommand": "ADMIN OVEN UV ON", "offCommand": "ADMIN OVEN UV OFF" },
+            { "id": "oven-speed", "type": "slider", "label": "Скорость", "statePath": "oven.speed", "min": 0, "max": 100, "step": 5, "unit": "%", "command": "ADMIN OVEN SPEED {value}" },
+            { "id": "oven-ready", "type": "indicator", "label": "Датчик печки", "statePath": "oven.ready", "onLabel": "Норма", "offLabel": "Не сработал" }
+          ]
+        }
+      ]
+    }
+  ]
+}

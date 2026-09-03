@@ -29,8 +29,22 @@ app.use(express.static(publicDir))
 
 // ====================== CONFIG ======================
 const PORT = process.env.PORT || 8001
-const SERIAL_PORT = process.env.SERIAL_PORT || '/dev/ttyUSB0'
+const SERIAL_CONFIG_FILE = process.env.SERIAL_CONFIG_FILE || path.join(__dirname, '.serial-port')
+let SERIAL_PORT = readSerialPath() || process.env.SERIAL_PORT || '/dev/ttyUSB0'
 const SERIAL_BAUD = Number(process.env.SERIAL_BAUD || 9600)
+
+function validSerialPath(value) {
+	return typeof value === 'string' && value.startsWith('/dev/') && !value.includes('..') && /^\/dev\/[A-Za-z0-9._/-]+$/.test(value) && value.length <= 255
+}
+
+function readSerialPath() {
+	try {
+		const value = fs.readFileSync(SERIAL_CONFIG_FILE, 'utf8').trim()
+		return validSerialPath(value) ? value : null
+	} catch {
+		return null
+	}
+}
 
 // ====================== SERIAL ======================
 let serial = {
@@ -46,6 +60,7 @@ let sensors = {
 }
 
 let serialReadyAt = 0
+let serialGeneration = 0
 
 function nowIso() {
 	return new Date().toISOString()
@@ -134,9 +149,18 @@ function requestSensorSnapshot() {
 	serial.port.write('ADMIN SENSORS\n')
 }
 
-try {
+function connectSerial(serialPath = SERIAL_PORT) {
+	if (!validSerialPath(serialPath)) throw new Error('Invalid serial path')
+	const generation = ++serialGeneration
+	const previous = serial.port
+	serial.enabled = false
+	serial.port = null
+	serialReadyAt = 0
+	if (previous?.isOpen) previous.close(error => error && console.error('Serial close error:', error.message))
+
+	try {
 	const port = new SerialPort({
-		path: SERIAL_PORT,
+		path: serialPath,
 		baudRate: SERIAL_BAUD,
 		autoOpen: true,
 	})
@@ -144,6 +168,7 @@ try {
 	const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }))
 
 	parser.on('data', line => {
+		if (generation !== serialGeneration) return
 		const clean = String(line).replace(/\r/g, '')
 		if (parseSensorLine(clean)) return
 		serial.lastLine = clean
@@ -154,30 +179,36 @@ try {
 	})
 
 	port.on('open', () => {
+		if (generation !== serialGeneration) return port.close()
 		serial.enabled = true
 		serial.port = port
 		serialReadyAt = Date.now() + 4000
 		broadcastConsoleStatus()
-		console.log('Serial connected:', SERIAL_PORT)
+		console.log('Serial connected:', serialPath)
 	})
 
 	port.on('close', () => {
+		if (generation !== serialGeneration) return
 		serial.enabled = false
 		serial.port = null
 		serialReadyAt = 0
 		sensors = { updatedAt: null, values: null }
 		broadcastConsoleStatus()
-		console.log('Serial disconnected:', SERIAL_PORT)
+		console.log('Serial disconnected:', serialPath)
 	})
 
 	port.on('error', err => {
+		if (generation !== serialGeneration) return
 		serial.enabled = false
 		broadcastConsoleStatus()
 		console.error('Serial error:', err.message)
 	})
-} catch (e) {
+	} catch (e) {
 	console.error('Serial init failed:', e.message)
+	}
 }
+
+connectSerial()
 
 // =================== ADMIN COMMANDS =================
 const ADMIN_COMMANDS = new Set([
@@ -323,6 +354,72 @@ const state = {
 	lastResult: null,
 }
 
+const controlState = { door: false, table: false, tableLeg: false, ovenUv: false, ovenMove: false }
+const SENSOR_EXPECTED = {
+	table0: 1, table1: 0, table2: 1, table3: 1, table4: 1, tableTop: 0, tableBottom: 1,
+	mortar: 1, plate1Move: 0, plate1Home: 0, plate2Move: 0, plate2Home: 0,
+	plate3Move: 0, plate3Home: 0, plate4Move: 0, plate4Home: 0, rope: 0, ir: 0,
+	mask: 0, bearItem: 0, start: 0, game: 0,
+}
+const ROOM_CONFIG = {
+	version: 1,
+	title: 'Krampus House',
+	state: { pollMs: 2000 },
+	blocks: [
+		{ id: 'game', title: 'Игра', width: 'full', categories: [{ id: 'session', title: 'Управление', controls: [
+			{ id: 'start', type: 'button', label: 'START', command: 'ADMIN START' },
+			{ id: 'status', type: 'button', label: 'STATUS', command: 'ADMIN STATUS' },
+			{ id: 'reset', type: 'button', label: 'RESET', command: 'ADMIN RESET' },
+			{ id: 'estop', type: 'button', label: 'ESTOP', command: 'ADMIN ESTOP' },
+		] }] },
+		{ id: 'light', title: 'Свет и атмосфера', width: 'half', categories: [
+			{ id: 'light-mode', title: 'Режим света', controls: [
+				{ id: 'light-uv', type: 'button', label: 'UV', command: 'ADMIN LIGHT UV' },
+				{ id: 'light-white', type: 'button', label: 'Белый', command: 'ADMIN LIGHT WHITE' },
+				{ id: 'light-game', type: 'button', label: 'Игровой', command: 'ADMIN LIGHT OK' },
+				{ id: 'light-off', type: 'button', label: 'Выключить', command: 'ADMIN LIGHT OFF' },
+			] },
+			{ id: 'atmosphere', title: 'Разовые действия', controls: [
+				{ id: 'mask-sound', type: 'button', label: 'Звук маски', command: 'ADMIN MASK SOUND' },
+				{ id: 'light-reset', type: 'button', label: 'Сброс света', command: 'ADMIN LIGHT RESET' },
+			] },
+		] },
+		{ id: 'mechanisms', title: 'Механизмы', width: 'half', categories: [
+			{ id: 'main-mechanisms', title: 'Основные', controls: [
+				{ id: 'door', type: 'checkbox', label: 'Дверь', statePath: 'controls.door', onLabel: 'Открыта', offLabel: 'Закрыта', onCommand: 'ADMIN DOOR OPEN', offCommand: 'ADMIN DOOR CLOSE' },
+				{ id: 'table', type: 'checkbox', label: 'Стол', statePath: 'controls.table', onLabel: 'Открыт', offLabel: 'Закрыт', onCommand: 'ADMIN TABLE OPEN', offCommand: 'ADMIN TABLE CLOSE' },
+				{ id: 'table-leg', type: 'checkbox', label: 'Ножка стола', statePath: 'controls.tableLeg', onLabel: 'Открыта', offLabel: 'Закрыта', onCommand: 'ADMIN TABLE LEG OPEN', offCommand: 'ADMIN TABLE LEG CLOSE' },
+			] },
+			{ id: 'bear', title: 'Медведь', controls: [
+				{ id: 'bear-open', type: 'button', label: 'Открыть', command: 'ADMIN BEAR OPEN' },
+				{ id: 'bear-close', type: 'button', label: 'Закрыть', command: 'ADMIN BEAR CLOSE' },
+				{ id: 'bear-sound', type: 'button', label: 'Включить звук', command: 'ADMIN BEAR SOUND' },
+			] },
+			{ id: 'puzzle', title: 'Пятнашки', controls: [
+				{ id: 'puzzle-solve', type: 'button', label: 'Решить', command: 'ADMIN PUZZLE SOLVE' },
+				{ id: 'puzzle-reset', type: 'button', label: 'Сбросить', command: 'ADMIN PUZZLE RESET' },
+			] },
+		] },
+		{ id: 'oven', title: 'Печка', width: 'half', categories: [{ id: 'oven-controls', title: 'Управление', controls: [
+			{ id: 'oven-uv', type: 'checkbox', label: 'Печка решена', statePath: 'controls.ovenUv', onLabel: 'Решена', offLabel: 'Не решена', onCommand: 'ADMIN OVEN UV ON', offCommand: 'ADMIN OVEN UV OFF' },
+			{ id: 'oven-move', type: 'checkbox', label: 'Движение печки', statePath: 'controls.ovenMove', onCommand: 'ADMIN OVEN MOVE ON', offCommand: 'ADMIN OVEN MOVE OFF' },
+		] }] },
+		{ id: 'sensors', title: 'Датчики', width: 'full', categories: [{ id: 'sensor-state', title: 'Текущее состояние', controls: Object.keys(SENSOR_EXPECTED).map(key => ({ id: `sensor-${key}`, type: 'indicator', label: key, statePath: `sensors.${key}`, expectedValue: SENSOR_EXPECTED[key], onLabel: 'Норма', offLabel: 'Не сработал' })) }] },
+	],
+}
+
+function rememberControlState(command) {
+	const changes = {
+		'ADMIN DOOR OPEN': ['door', true], 'ADMIN DOOR CLOSE': ['door', false],
+		'ADMIN TABLE OPEN': ['table', true], 'ADMIN TABLE CLOSE': ['table', false],
+		'ADMIN TABLE LEG OPEN': ['tableLeg', true], 'ADMIN TABLE LEG CLOSE': ['tableLeg', false],
+		'ADMIN OVEN UV ON': ['ovenUv', true], 'ADMIN OVEN UV OFF': ['ovenUv', false],
+		'ADMIN OVEN MOVE ON': ['ovenMove', true], 'ADMIN OVEN MOVE OFF': ['ovenMove', false],
+	}
+	const change = changes[command]
+	if (change) controlState[change[0]] = change[1]
+}
+
 // ======================== API =======================
 app.get('/api/status', (req, res) => {
 	res.json({
@@ -336,8 +433,35 @@ app.get('/api/status', (req, res) => {
 	})
 })
 
+app.get('/api/room-config', (req, res) => res.json(ROOM_CONFIG))
+
+app.get('/api/room-status', (req, res) => {
+	const ageMs = sensors.updatedAt ? Date.now() - Date.parse(sensors.updatedAt) : null
+	res.json({
+		online: serial.enabled,
+		updatedAt: sensors.updatedAt,
+		stale: ageMs === null || ageMs > 3000,
+		controls: controlState,
+		sensors: sensors.values || {},
+	})
+})
+
 app.get('/api/serial/tail', (req, res) => {
 	res.json({ ok: true, lines: serial.lines.slice(-500) })
+})
+
+app.post('/api/serial/config', (req, res) => {
+	const serialPath = String(req.body?.path || '').trim()
+	if (!validSerialPath(serialPath)) return res.status(400).json({ ok: false, error: 'INVALID_SERIAL_PATH' })
+	try {
+		fs.writeFileSync(SERIAL_CONFIG_FILE, `${serialPath}\n`, { mode: 0o600 })
+		SERIAL_PORT = serialPath
+		connectSerial(serialPath)
+		res.json({ ok: true, path: serialPath })
+	} catch (error) {
+		console.error('Serial configuration failed:', error.message)
+		res.status(500).json({ ok: false, error: 'SERIAL_CONFIGURATION_FAILED' })
+	}
 })
 
 app.get('/api/sensors', (req, res) => {
@@ -359,6 +483,7 @@ app.post('/api/admin', (req, res) => {
 
 	state.lastCommand = v.cmd
 	state.lastAt = nowIso()
+	rememberControlState(v.cmd)
 
 	let result = { mode: 'mock', wrote: v.cmd }
 
