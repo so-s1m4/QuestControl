@@ -82,9 +82,8 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
             <div class="switch-row"><span><b>Стол</b><small>{{toggleText('table','Закрыт','Открыт')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('table')" [attr.aria-checked]="toggleOn('table')" [disabled]="busy()" (click)="toggle('table','TABLE OPEN','TABLE CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Ножка стола</b><small>{{toggleText('tableLeg','Магнит включён · светодиод выключен','Магнит выключен · светодиод включён')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('tableLeg')" [attr.aria-checked]="toggleOn('tableLeg')" [disabled]="busy()" (click)="toggle('tableLeg','TABLE LEG OPEN','TABLE LEG CLOSE')"><i></i></button></div>
           </div>
-          <div class="control-section"><span class="section-label">Медведь</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR OPEN')">Открыть</button><button [disabled]="busy()" (click)="command('BEAR CLOSE')">Закрыть</button></div></div>
+          <div class="control-section"><span class="section-label">Медведь</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR OPEN')">Открыть</button><button [disabled]="busy()" (click)="command('BEAR CLOSE')">Закрыть</button><button [disabled]="busy()" (click)="command('BEAR SOUND')">Включить звук</button></div></div>
           <div class="control-section"><span class="section-label">Пятнашки</span><div class="button-grid"><button [disabled]="busy()" (click)="command('PUZZLE SOLVE')">Решить пятнашки</button><button class="secondary-danger" [disabled]="busy()" (click)="command('PUZZLE RESET',true)">Сбросить пятнашки</button></div></div>
-          <div class="control-section"><span class="section-label">Звук</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR SOUND')">Звук медведя</button></div></div>
         </article>
         <article class="control-card">
           <h3>Печка</h3>
