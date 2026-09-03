@@ -1251,6 +1251,9 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
     const room=(await db.query("SELECT id,location_id FROM rooms WHERE id=$1",[input.roomId])).rows[0];
     if (!room) return res.status(404).json({ error:"ROOM_NOT_FOUND" });
     if (!(await locationAllowed(req,room.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
+    if ((await db.query("SELECT 1 FROM sessions WHERE room_id=$1 AND status NOT IN ('FINISHED','CANCELLED') LIMIT 1",[input.roomId])).rowCount) {
+      return res.status(409).json({ error:"SESSION_EXISTS" });
+    }
     if (input.gameId && !(await db.query("SELECT 1 FROM games WHERE id=$1 AND room_id=$2",[input.gameId,input.roomId])).rowCount) {
       return res.status(400).json({error:"GAME_NOT_IN_ZONE"});
     }

@@ -23,6 +23,8 @@ type HelpCamera = { id:string; name:string; provider:string; status:string; conf
 type HelpButtonConfig = { cameraId:string|null; cameras:HelpCamera[] };
 type RoomCamera = { id:string; name:string; provider:string; status:string; room_id?:string|null; room_name?:string|null };
 type CameraPlayer = { mode:"hls"|"player"|"webrtc"; endpoint?:string; safeEndpoint?:SafeResourceUrl };
+type Game = { id:string; name:string; room_id:string };
+type GameSession = { id:string; room_id:string; game_id:string|null; status:"RUNNING"|"PAUSED"|"FINISHED"|"CANCELLED"; started_at:string|null; ended_at:string|null; remaining_seconds:number|null };
 type PollResult<T> = { ok:true; value:T } | { ok:false };
 
 const ATMOSPHERE = ["LIGHT UV","LIGHT WHITE","LIGHT OK","LIGHT OFF","LIGHT RESET","MASK SOUND"] as const;
@@ -63,6 +65,12 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
       <div class="summary">
         <div><span>Комната</span><b>{{roomName()}}</b></div><div><span>Состояние игры</span><b>{{gameState()}}</b></div><div><span>Serial</span><b>{{serialPath()}}</b></div><div><span>Обновлено</span><b>{{lastUpdated() ? (lastUpdated()|date:'HH:mm:ss') : "—"}}</b></div>
       </div>
+      <article class="session-timer" [class.running]="activeSession()?.status==='RUNNING'">
+        <div><span>ИГРОВАЯ СЕССИЯ</span><b>{{activeSession()?'Таймер запущен':'Новая игра'}}</b><small>{{activeSession()?roomName():'Запуск синхронизируется на всех устройствах'}}</small></div>
+        <strong>{{timerText()}}</strong>
+        @if(activeSession()){<button class="finish-session" [disabled]="sessionBusy()" (click)="finishSession()">{{sessionBusy()?'Завершаем…':'Завершить'}}</button>}
+        @else{<label><span>Минут</span><input type="number" min="5" max="240" step="5" [ngModel]="sessionMinutes()" (ngModelChange)="sessionMinutes.set(+$event)"></label><button class="start-session" [disabled]="sessionBusy()" (click)="startSession()">{{sessionBusy()?'Запускаем…':'▶ Запустить таймер'}}</button>}
+      </article>
       <div class="krampus-actions"><button class="start" [disabled]="busy()" (click)="command('START')">START</button><button [disabled]="busy()" (click)="command('STATUS')">STATUS</button><button class="danger-solid" [disabled]="busy()" (click)="command('RESET',true)">RESET</button><button class="danger-solid" [disabled]="busy()" (click)="command('ESTOP',true)">ESTOP</button></div>
       <div class="krampus-layout">
         <article class="control-card">
@@ -139,7 +147,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
       </div><aside class="camera-pane" [class.focused]="focusedCameraId()">
         <div class="camera-heading"><div><span>НАБЛЮДЕНИЕ</span><h3>Камеры комнаты</h3></div>@if(focusedCameraId()){<button (click)="focusedCameraId.set(null)">Показать все</button>}</div>
         @if(camerasLoading()){<div class="camera-empty">Подключаем камеры…</div>}
-        @else if(!roomCameras().length){<div class="camera-empty"><b>Камеры не привязаны</b><span>Добавьте камеры в комнату Krampus через настройки камер.</span></div>}
+        @else if(!roomCameras().length){<div class="camera-empty"><b>Камеры не выбраны</b><span>Выберите нужные ракурсы на странице «Камеры» — здесь появятся только они.</span><a routerLink="/cameras">Выбрать камеры</a></div>}
         @else{<div class="camera-grid" [class.single]="focusedCameraId()">
           @for(camera of visibleCameras();track camera.id){<article class="camera-tile" (click)="focusCamera(camera.id)">
             <div class="camera-video">
@@ -160,6 +168,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .connections{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.connection{padding:8px 12px;border-radius:20px;background:#feecef;color:#ad2436}.connection.online{background:#e4f7ed;color:#137344}.notice{padding:12px 14px;border-radius:8px;background:#ecfdf3;color:#067647}.inline{padding:4px 8px;margin-left:8px;background:transparent;color:inherit;border:1px solid currentColor;box-shadow:none}
   .help-call{display:grid;grid-template-columns:1fr auto;gap:18px;margin:20px 0;padding:20px;border:2px solid #e43d50;border-radius:14px;background:linear-gradient(135deg,#fff1f2,#fff);box-shadow:0 12px 35px #b4231830}.help-call-copy{display:flex;align-items:center;gap:14px}.help-call-copy small{color:#b42318;font-size:10px;font-weight:900;letter-spacing:.12em}.help-call-copy h3{margin:3px 0;color:#8f1d2c;font-size:25px}.help-call-copy p{margin:0;color:#7a3440}.help-pulse{display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:#d92d42;color:#fff;font-size:30px;font-weight:900;animation:help-pulse 1.2s infinite}.help-call-actions{display:flex;align-items:center;gap:8px}.help-call-actions button{white-space:nowrap}.camera-button{background:#273248}.ack-button{background:#168653}.doorbell-video{grid-column:1/-1;height:min(56vw,520px);overflow:hidden;border-radius:10px;background:#101622}.doorbell-video-error{grid-column:1/-1;margin:0;padding:12px 14px;border-radius:8px;background:#fff;color:#9f2534}@keyframes help-pulse{50%{box-shadow:0 0 0 12px #d92d4218}}
   .summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:24px 0}.summary div{display:grid;gap:5px;padding:14px;background:#fff;border:1px solid #e1e5ed;border-radius:10px}.summary span{color:#6b7280;font-size:12px}.summary b{overflow:hidden;text-overflow:ellipsis}
+  .session-timer{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;margin:0 0 16px;padding:16px 18px;border:1px solid #d8deea;border-radius:12px;background:#fff}.session-timer.running{border-color:#98d9b9;background:#f2fbf6}.session-timer>div span,.session-timer>div b,.session-timer>div small{display:block}.session-timer>div span{color:#526078;font-size:9px;font-weight:900;letter-spacing:.1em}.session-timer>div b{margin-top:4px}.session-timer>div small{margin-top:3px;color:#7a8495;font-size:10px}.session-timer>strong{font-size:30px;font-variant-numeric:tabular-nums}.session-timer label{display:grid;grid-template-columns:auto 72px;align-items:center;gap:7px;color:#667085;font-size:10px}.session-timer input{width:72px;padding:9px}.session-timer button{white-space:nowrap}.start-session{background:#168653}.finish-session{background:#bd3042}
   .help-button-settings,.serial-settings{display:grid;grid-template-columns:minmax(260px,1fr) minmax(240px,360px) auto;gap:12px;align-items:center;margin:0 0 18px;padding:16px 18px;border:1px solid #d8deea;border-radius:11px;background:#fff}.help-button-settings span,.serial-settings span{color:#526078;font-size:10px;font-weight:900;letter-spacing:.1em}.help-button-settings h3,.serial-settings h3{margin:3px 0;font-size:17px}.help-button-settings p,.serial-settings p{margin:0;color:#7a8495;font-size:11px}.help-button-settings select,.serial-settings input{width:100%;padding:11px;border:1px solid #cfd6e2;border-radius:8px;background:#fff}.serial-settings label{display:grid;gap:6px}.serial-settings code{font-size:11px}.help-button-settings button,.serial-settings button{background:#4058df}
   .krampus-actions{display:flex;gap:10px;margin:0 0 24px}.krampus-actions button{min-width:110px}.start{background:#168653}.danger-solid{background:#bd3042!important}
   .krampus-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.control-card{background:white;border:1px solid #e1e5ed;border-radius:11px;padding:18px}.control-card h3{margin-top:0}
@@ -178,7 +187,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
   @media(max-width:800px){.help-button-settings,.serial-settings{grid-template-columns:1fr}.help-button-settings button,.serial-settings button{width:100%}}
   @media(max-width:700px){.help-call{grid-template-columns:1fr}.help-call-actions{align-items:stretch;flex-direction:column}.doorbell-video{height:62vw}}
-  @media(max-width:600px){.summary{grid-template-columns:1fr}.connections{justify-content:flex-start}.krampus-actions{display:grid;grid-template-columns:1fr 1fr}.krampus-actions button{width:100%;min-width:0;min-height:48px}.button-grid{display:grid;grid-template-columns:1fr 1fr}.button-grid button{min-height:44px}.hint-upload{grid-template-columns:1fr}.hint-row{align-items:stretch;flex-direction:column}.hint-row>div{display:grid;grid-template-columns:repeat(3,1fr)}.terminal div{grid-template-columns:50px 38px minmax(0,1fr);gap:5px}.control-card{padding:15px}}
+  @media(max-width:600px){.summary{grid-template-columns:1fr}.session-timer{grid-template-columns:1fr auto}.session-timer>div{grid-column:1/-1}.session-timer label{justify-self:start}.connections{justify-content:flex-start}.krampus-actions{display:grid;grid-template-columns:1fr 1fr}.krampus-actions button{width:100%;min-width:0;min-height:48px}.button-grid{display:grid;grid-template-columns:1fr 1fr}.button-grid button{min-height:44px}.hint-upload{grid-template-columns:1fr}.hint-row{align-items:stretch;flex-direction:column}.hint-row>div{display:grid;grid-template-columns:repeat(3,1fr)}.terminal div{grid-template-columns:50px 38px minmax(0,1fr);gap:5px}.control-card{padding:15px}}
   `]
 })
 export class KrampusComponent implements OnDestroy {
@@ -195,6 +204,7 @@ export class KrampusComponent implements OnDestroy {
   helpCameras=signal<HelpCamera[]>([]); helpCameraId=signal(""); savingHelpCamera=signal(false);
   serialPort=signal("/dev/ttyUSB0"); savingSerial=signal(false);
   roomCameras=signal<RoomCamera[]>([]); cameraPlayers=signal<Record<string,CameraPlayer>>({}); camerasLoading=signal(false); focusedCameraId=signal<string|null>(null);
+  activeSession=signal<GameSession|null>(null); roomGameId=signal<string|null>(null); sessionMinutes=signal(60); sessionBusy=signal(false); now=signal(Date.now());
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
   private voiceSocket?:Socket;
@@ -202,8 +212,9 @@ export class KrampusComponent implements OnDestroy {
   private recorder?:MediaRecorder;
   private microphone?:MediaStream;
   private lastDoorbellId="";
+  private clockTimer?:ReturnType<typeof setInterval>;
 
-  constructor(){ this.loadRoom(); }
+  constructor(){ this.loadRoom(); this.clockTimer=setInterval(()=>this.now.set(Date.now()),1000); }
 
   loadRoom(){
     this.poll?.unsubscribe(); this.loading.set(true); this.error.set("");
@@ -212,7 +223,7 @@ export class KrampusComponent implements OnDestroy {
         const room=rooms.find(r=>/krampus/i.test(r.name));
         this.loading.set(false);
         if(!room){ this.roomId.set(""); return; }
-        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.loadHelpButton(); this.loadRoomCameras(); this.connectDoorbell(); this.startPolling();
+        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.loadHelpButton(); this.loadRoomCameras(); this.loadRoomGame(); this.connectDoorbell(); this.startPolling();
       },
       error:error=>{ this.loading.set(false); this.error.set(this.message(error,"Не удалось загрузить комнаты.")); }
     });
@@ -222,7 +233,10 @@ export class KrampusComponent implements OnDestroy {
     this.http.get<RoomCamera[]>("/api/cameras").subscribe({
       next:cameras=>{
         const roomName=this.roomName().split(" · ")[0];
-        const matches=cameras.filter(camera=>camera.room_id===this.roomId()||camera.room_name===roomName||/krampus/i.test(camera.room_name||""));
+        let selectedIds:string[]=[];
+        try{const stored=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");selectedIds=Array.isArray(stored)?stored:[];}catch{}
+        const selected=new Set(selectedIds);
+        const matches=cameras.filter(camera=>selected.has(camera.id)&&(camera.room_id===this.roomId()||camera.room_name===roomName||/krampus/i.test(camera.room_name||"")));
         this.roomCameras.set(matches); this.camerasLoading.set(false);
         for(const camera of matches) this.openCamera(camera);
       },
@@ -238,6 +252,19 @@ export class KrampusComponent implements OnDestroy {
     });
   }
   fallbackCamera(camera:RoomCamera){ this.cameraPlayers.update(current=>{const next={...current};delete next[camera.id];return next});this.openCamera(camera,"hls"); }
+  loadRoomGame(){ this.http.get<Game[]>("/api/games").subscribe({next:games=>this.roomGameId.set(games.find(game=>game.room_id===this.roomId())?.id||null)}); }
+  startSession(){
+    if(this.sessionBusy()||this.activeSession()) return;
+    const minutes=Math.max(5,Math.min(240,Math.round(this.sessionMinutes()||60)));
+    this.sessionMinutes.set(minutes); this.sessionBusy.set(true); this.error.set("");
+    this.http.post<GameSession>("/api/sessions",{roomId:this.roomId(),gameId:this.roomGameId(),status:"RUNNING",startedAt:new Date().toISOString(),endedAt:null,remainingSeconds:minutes*60}).subscribe({
+      next:session=>{this.activeSession.set(session);this.sessionBusy.set(false);this.notice.set("Игровая сессия и таймер запущены на всех устройствах.");this.command("START");},
+      error:({status})=>{this.sessionBusy.set(false);if(status===409){this.notice.set("Сессия уже запущена на другом устройстве.");this.refreshSession();}else this.error.set("Не удалось запустить игровую сессию.");}
+    });
+  }
+  finishSession(){ const session=this.activeSession();if(!session||this.sessionBusy())return;this.sessionBusy.set(true);this.http.patch<GameSession>(`/api/sessions/${session.id}`,{action:"FINISH"}).subscribe({next:()=>{this.activeSession.set(null);this.sessionBusy.set(false);this.notice.set("Игровая сессия завершена.");},error:()=>{this.sessionBusy.set(false);this.error.set("Не удалось завершить игровую сессию.");}}); }
+  refreshSession(){ this.http.get<GameSession[]>("/api/sessions").subscribe({next:sessions=>this.activeSession.set(sessions.find(session=>session.room_id===this.roomId()&&(session.status==="RUNNING"||session.status==="PAUSED"))||null)}); }
+  timerText(){ const session=this.activeSession();if(!session?.started_at)return `${String(this.sessionMinutes()).padStart(2,"0")}:00`;const total=session.remaining_seconds??3600;const elapsed=session.status==="RUNNING"?Math.max(0,Math.floor((this.now()-new Date(session.started_at).getTime())/1000)):0;const left=Math.max(0,total-elapsed);return `${String(Math.floor(left/60)).padStart(2,"0")}:${String(left%60).padStart(2,"0")}`; }
   connectDoorbell(){
     this.doorbellSocket?.disconnect();
     const token=sessionStorage.getItem("access_token");
@@ -273,7 +300,8 @@ export class KrampusComponent implements OnDestroy {
       status:safe<KrampusStatus>(this.http.get<KrampusStatus>(`/api/rooms/${this.roomId()}/krampus/status`)),
       sensors:safe<{values?:Record<string,unknown>}>(this.http.get<{values?:Record<string,unknown>}>(`/api/rooms/${this.roomId()}/krampus/sensors`)),
       logs:safe<{lines?:LogLine[]}>(this.http.get<{lines?:LogLine[]}>(`/api/rooms/${this.roomId()}/krampus/logs`)),
-      doorbell:safe<DoorbellCall[]>(this.http.get<DoorbellCall[]>(`/api/rooms/${this.roomId()}/doorbell-calls`))
+      doorbell:safe<DoorbellCall[]>(this.http.get<DoorbellCall[]>(`/api/rooms/${this.roomId()}/doorbell-calls`)),
+      sessions:safe<GameSession[]>(this.http.get<GameSession[]>("/api/sessions"))
     }))).subscribe(result=>{
       this.agentOnline.set(result.status.ok||result.sensors.ok||result.logs.ok);
       if(result.status.ok) {
@@ -283,6 +311,7 @@ export class KrampusComponent implements OnDestroy {
       }
       if(result.sensors.ok) this.sensors.set(result.sensors.value.values||{});
       if(result.logs.ok) this.logLines.set((result.logs.value.lines||[]).slice(-150));
+      if(result.sessions.ok) this.activeSession.set(result.sessions.value.find(session=>session.room_id===this.roomId()&&(session.status==="RUNNING"||session.status==="PAUSED"))||null);
       if(result.doorbell.ok){
         this.doorbellCalls.set(result.doorbell.value);
         const active=result.doorbell.value.find(call=>call.status==="RINGING");
@@ -457,5 +486,5 @@ export class KrampusComponent implements OnDestroy {
   sensorValue(value:unknown){ return typeof value==="boolean"?(value?"ON":"OFF"):String(value??"—"); }
   sensorLabel(key:string){ return key.replaceAll("_"," ").replace(/\b\w/g,char=>char.toUpperCase()); }
   logTime(line:LogLine){ const date=line.at?new Date(line.at):null; return date&&!Number.isNaN(date.getTime())?date.toLocaleTimeString("ru-RU",{hour12:false}):"—"; }
-  ngOnDestroy(){ this.poll?.unsubscribe(); this.doorbellSocket?.disconnect(); this.closeVoice(); }
+  ngOnDestroy(){ this.poll?.unsubscribe(); if(this.clockTimer)clearInterval(this.clockTimer); this.doorbellSocket?.disconnect(); this.closeVoice(); }
 }
