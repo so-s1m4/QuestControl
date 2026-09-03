@@ -117,7 +117,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
           </div>
         </article>
       </div>
-      <h3>Датчики</h3><div class="sensor-grid">@for(item of sensorEntries();track item[0]){<article><span>{{sensorLabel(item[0])}}</span><b [class.active]="sensorActive(item[1])">{{sensorValue(item[1])}}</b></article>}@empty{<div class="empty compact">Нет данных от датчиков</div>}</div>
+      <div class="sensor-heading"><h3>Датчики</h3>@if(sensorEntries().length){<div class="sensor-summary"><span><b>{{sensorSummary().correct}}</b> правильно</span><span><b>{{sensorSummary().incorrect}}</b> не сработало</span><span><b>{{sensorSummary().total}}</b> всего</span></div>}</div><div class="sensor-grid">@for(item of sensorEntries();track item[0]){<article><span>{{sensorLabel(item[0])}}</span><b [class.active]="sensorActive(item[1])">{{sensorValue(item[1])}}</b></article>}@empty{<div class="empty compact">Нет данных от датчиков</div>}</div>
       <h3>Serial-консоль</h3><div class="terminal">@for(line of logLines();track $index){<div><time>{{logTime(line)}}</time><b>{{line.direction||"—"}}</b><code>{{line.line||""}}</code></div>}@empty{<span>Нет данных</span>}</div>
       <div class="service-settings">
         <article class="serial-settings">
@@ -167,6 +167,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .switch-list{display:grid;gap:2px}.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #eef0f4}.switch-row:last-child{border-bottom:0}.switch-row span,.switch-row b,.switch-row small{display:block}.switch-row small{margin-top:3px;color:#7a8495;font-size:11px}.switch{position:relative;flex:0 0 48px;width:48px;height:27px;padding:0;border-radius:20px;background:#cbd1dc;box-shadow:none}.switch i{position:absolute;left:3px;top:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 2px 5px #10182735;transition:left .18s}.switch.on{background:#168653}.switch.on i{left:24px}.switch:hover:not(:disabled){transform:none;box-shadow:none}
   .voice-hints{margin-top:20px;padding-top:16px;border-top:1px solid #e1e5ed}.voice-hints h4{margin:0}.voice-hints>p{margin:7px 0 12px;color:#6b7280;font-size:12px}.hint-upload{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.hint-upload label:first-child{grid-column:1/-1}.file-picker{display:flex;align-items:center;min-height:40px;padding:9px 11px;border:1px dashed #c7ceda;border-radius:8px;color:#4c5668;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-picker input{display:none}.hint-list{display:grid;gap:7px;margin-top:12px}.hint-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #eef0f4}.hint-row>span,.hint-row b,.hint-row small{display:block;min-width:0}.hint-row>span{overflow:hidden}.hint-row b,.hint-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hint-row small{margin-top:3px;color:#7a8495;font-size:10px}.hint-row>div{display:flex;gap:5px}.hint-row button{padding:7px 9px;box-shadow:none}.hint-preview{background:#eef1f6;color:#273248}.hint-send{background:#168653}.hint-delete{background:#fff0f1;color:#a82030}.no-hints{padding:12px 0;color:#7a8495;font-size:12px}
   .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.sensor-grid article{display:flex;justify-content:space-between;background:white;padding:12px;border:1px solid #e1e5ed;border-radius:8px}.sensor-grid b{color:#b32d3e}.sensor-grid b.active{color:#168653}.empty.compact{padding:24px;margin:0}
+  .sensor-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:22px}.sensor-heading h3{margin:0}.sensor-summary{display:flex;flex-wrap:wrap;gap:10px;color:#7a8495;font-size:10px}.sensor-summary span{padding:5px 8px;border-radius:7px;background:#fff;border:1px solid #e1e5ed}.sensor-summary b{color:#273248}
   .terminal{height:280px;overflow:auto;background:#101622;color:#d8dfec;border-radius:10px;padding:14px}.terminal div{display:grid;grid-template-columns:70px 55px 1fr;gap:8px;padding:3px}.terminal time{color:#78859d}.terminal b{color:#7c8cff}.terminal code{white-space:pre-wrap;overflow-wrap:anywhere}
   .service-settings{display:grid;gap:12px;margin-top:26px;padding-top:22px;border-top:1px solid #dfe3eb}.service-settings .serial-settings,.service-settings .help-button-settings{margin:0}
   .krampus-workspace{display:grid;grid-template-columns:minmax(420px,44%) minmax(0,1fr);gap:18px;align-items:start}.control-pane{min-width:0}.camera-pane{position:sticky;top:24px;display:flex;flex-direction:column;min-width:0;height:calc(100vh - 48px);padding:14px;border-radius:14px;background:#0d121b;color:#eef2f7;overflow:hidden}.camera-heading{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.camera-heading span{color:#8c98aa;font-size:9px;font-weight:900;letter-spacing:.12em}.camera-heading h3{margin:3px 0 0}.camera-heading button{padding:8px 10px;background:#273248;box-shadow:none}.camera-grid{display:grid;flex:1;grid-template-columns:1fr;grid-auto-rows:minmax(0,1fr);min-height:0;gap:9px}.camera-grid.single,.camera-grid.count-1,.camera-grid.count-2{grid-template-columns:1fr}.camera-grid.count-3,.camera-grid.count-4{grid-template-columns:repeat(2,minmax(0,1fr))}.camera-grid.count-3 .camera-tile:first-child{grid-column:1/-1}.camera-tile{display:flex;min-width:0;min-height:0;overflow:hidden;flex-direction:column;border:1px solid #293347;border-radius:10px;background:#151c28;cursor:pointer}.camera-tile.active-camera{border-color:#7183ff;box-shadow:0 0 0 1px #7183ff inset}.camera-video{position:relative;display:grid;flex:1;min-height:0;place-items:center;overflow:hidden;background:#020305}.camera-video app-webrtc-player,.camera-video app-hls-player,.camera-video iframe{display:block;width:100%;height:100%;border:0}.camera-video>button{background:#273248;color:#fff;box-shadow:none}.camera-status{position:absolute;top:8px;left:8px;padding:4px 6px;border-radius:5px;background:#3b2530;color:#ffbec6;font-size:8px;font-weight:900}.camera-status.online{background:#153c2b;color:#7ee2a8}.camera-tile footer{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px}.camera-tile footer span,.camera-tile footer b,.camera-tile footer small{display:block;min-width:0}.camera-tile footer span{overflow:hidden}.camera-tile footer b,.camera-tile footer small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.camera-tile footer small{margin-top:2px;color:#8c98aa;font-size:9px}.camera-tile footer button{display:grid;flex:0 0 30px;width:30px;height:30px;padding:0;place-items:center;background:#273248;box-shadow:none}.camera-empty{display:grid;flex:1;min-height:280px;place-content:center;gap:5px;padding:20px;color:#8c98aa;text-align:center}.camera-empty b{color:#eef2f7}.camera-control-error{margin:0;padding:0 10px 10px;color:#ff9ca8;font-size:10px;text-align:center}
@@ -309,6 +310,7 @@ export class KrampusComponent implements OnDestroy {
         if(path&&!this.savingSerial()) this.serialPort.set(path);
       }
       if(result.sensors.ok) this.sensors.set(result.sensors.value.values||{});
+      if(result.status.ok||result.sensors.ok) this.syncToggleStates();
       if(result.logs.ok) this.logLines.set((result.logs.value.lines||[]).slice(-150));
       if(result.sessions.ok) this.activeSession.set(result.sessions.value.find(session=>session.room_id===this.roomId()&&(session.status==="RUNNING"||session.status==="PAUSED"))||null);
       if(result.doorbell.ok){
@@ -359,6 +361,28 @@ export class KrampusComponent implements OnDestroy {
   }
   toggleOn(key:ToggleKey){ return this.toggleStates()[key]===true; }
   toggleText(key:ToggleKey,off="Выключено",on="Включено"){ return this.toggleStates()[key]===undefined?"Состояние не получено":this.toggleOn(key)?on:off; }
+  private syncToggleStates(){
+    const flat=new Map<string,unknown>();
+    const visit=(value:unknown,path:string[]=[]):void=>{
+      if(!value||typeof value!=="object"||Array.isArray(value))return;
+      for(const [key,item] of Object.entries(value as Record<string,unknown>)){
+        const next=[...path,key];const normalized=next.join("_").replace(/[^a-z0-9]/gi,"").toLowerCase();
+        if(item&&typeof item==="object"&&!Array.isArray(item))visit(item,next);else flat.set(normalized,item);
+      }
+    };
+    visit(this.status());visit(this.sensors());
+    const aliases:Record<Exclude<ToggleKey,"bear">,string[]>={
+      door:["dooropen","dooropened","doorstate"],table:["tableopen","tableopened","tablestate"],tableLeg:["tablelegopen","tablelegopened","tablelegstate"],
+      ovenUv:["ovenuv","ovenuvon","ovensolved","ovencomplete"],ovenLight:["ovenlight","ovenlighton"],ovenMove:["ovenmove","ovenmoving","ovenmoveon"],ovenFog:["ovenfog","ovenfogon"]
+    };
+    const updates:Partial<Record<ToggleKey,boolean>>={};
+    for(const [key,names] of Object.entries(aliases) as [Exclude<ToggleKey,"bear">,string[]][]){
+      const entry=[...flat.entries()].find(([path])=>names.some(name=>path===name||path.endsWith(name)));
+      const parsed=entry?this.booleanState(entry[1]):undefined;if(parsed!==undefined)updates[key]=parsed;
+    }
+    if(Object.keys(updates).length)this.toggleStates.update(current=>({...current,...updates}));
+  }
+  private booleanState(value:unknown){if(value===true||value===1||value==="1")return true;if(value===false||value===0||value==="0")return false;if(typeof value==="string"){const normalized=value.trim().toLowerCase();if(["on","open","opened","active","solved","true","yes"].includes(normalized))return true;if(["off","closed","inactive","unsolved","false","no"].includes(normalized))return false;}return undefined;}
   sound(action:"play"|"stop",sound?:"alert.mp3"|"calling.mp3"){
     this.send(`/api/rooms/${this.roomId()}/krampus/sound`,{action,sound},action==="stop"?"Звук остановлен.":"Звук запущен.");
   }
@@ -481,8 +505,9 @@ export class KrampusComponent implements OnDestroy {
   gameState(){ return this.status()?.game?.state||String(this.status()?.["state"]||"—"); }
   serialPath(){ return this.status()?.serial?.path||"—"; }
   sensorEntries(){ return Object.entries(this.sensors()).sort(([a],[b])=>a.localeCompare(b)); }
-  sensorActive(value:unknown){ return value===1||value===true||value==="1"||value==="ON"; }
-  sensorValue(value:unknown){ return typeof value==="boolean"?(value?"ON":"OFF"):String(value??"—"); }
+  sensorSummary(){const entries=this.sensorEntries();const correct=entries.filter(([,value])=>this.sensorActive(value)).length;return{correct,incorrect:entries.length-correct,total:entries.length};}
+  sensorActive(value:unknown){ return this.booleanState(value)===true; }
+  sensorValue(value:unknown){const state=this.booleanState(value);return state===true?"Правильно":state===false?"Не сработал":String(value??"—"); }
   sensorLabel(key:string){ return key.replaceAll("_"," ").replace(/\b\w/g,char=>char.toUpperCase()); }
   logTime(line:LogLine){ const date=line.at?new Date(line.at):null; return date&&!Number.isNaN(date.getTime())?date.toLocaleTimeString("ru-RU",{hour12:false}):"—"; }
   ngOnDestroy(){ this.stopAllPtz(); this.poll?.unsubscribe(); if(this.clockTimer)clearInterval(this.clockTimer); this.doorbellSocket?.disconnect(); this.closeVoice(); }
