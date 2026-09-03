@@ -199,6 +199,9 @@ type VrStatus = {
                       >Открыть панель Krampus →</a
                     >
                   }
+                  @if (roomDevices(r.id).length) {
+                    <a class="room-link" [routerLink]="['/rooms',r.id,'control']">Открыть панель room-agent →</a>
+                  }
                 </article>
               } @empty {
                 <div class="empty compact">

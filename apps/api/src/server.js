@@ -2068,6 +2068,48 @@ async function allowedRoom(req, roomId) {
   return room && await locationAllowed(req,room.location_id) ? room : null;
 }
 
+const controlManifest = z.object({
+  version:z.literal(1),
+  title:z.string().trim().min(1).max(120),
+  state:z.object({pollMs:z.number().int().min(500).max(60_000).default(2000)}).strict().optional(),
+  blocks:z.array(z.object({
+    id:z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/),
+    title:z.string().trim().min(1).max(80),
+    width:z.enum(["full","half","third"]).default("half"),
+    categories:z.array(z.object({
+      id:z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/),title:z.string().trim().min(1).max(80),
+      controls:z.array(z.object({
+        id:z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/),type:z.enum(["button","checkbox","slider","indicator"]),
+        label:z.string().trim().min(1).max(80),statePath:z.string().trim().max(160).optional(),
+        onLabel:z.string().trim().max(40).optional(),offLabel:z.string().trim().max(40).optional(),
+        min:z.number().optional(),max:z.number().optional(),step:z.number().positive().optional(),unit:z.string().trim().max(20).optional(),
+      }).strict()).max(50),
+    }).strict()).max(20),
+  }).strict()).max(20),
+}).strict();
+
+app.get("/rooms/:id/control-panel/manifest",auth,permit("rooms:read"),async(req,res)=>{
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const result=await roomAgentRequest(req.params.id,"control-panel",{operation:"manifest"});
+  if(!result.success) return res.status(502).json({error:result.error});
+  res.json(controlManifest.parse(result.result));
+});
+
+app.get("/rooms/:id/control-panel/state",auth,permit("rooms:read"),async(req,res)=>{
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const result=await roomAgentRequest(req.params.id,"control-panel",{operation:"state"});
+  res.status(result.success?200:502).json(result.success?result.result:{error:result.error});
+});
+
+app.post("/rooms/:id/control-panel/actions/:controlId",auth,permit("devices:command"),async(req,res)=>{
+  if(!(await allowedRoom(req,req.params.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const input=z.object({checked:z.boolean().optional(),value:z.number().finite().optional()}).strict().parse(req.body);
+  const controlId=z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/).parse(req.params.controlId);
+  const result=await roomAgentRequest(req.params.id,"control-panel",{operation:"execute",controlId,...input});
+  await audit(req,"room.control_panel.command","room",req.params.id,null,{controlId,...input,result});
+  res.status(result.success?200:502).json(result.success?result.result:{error:result.error});
+});
+
 app.get("/rooms/:id/krampus/:resource", auth, permit("rooms:read"), async (req,res) => {
   const targetRoom = (await db.query("SELECT location_id FROM rooms WHERE id=$1",[req.params.id])).rows[0];
   if (!targetRoom || !(await locationAllowed(req,targetRoom.location_id))) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });

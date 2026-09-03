@@ -16,6 +16,7 @@ import { adminGuard } from "./core/admin.guard";
 import { ReceptionCheckinComponent } from "./pages/reception-checkin/reception-checkin.component";
 import { InventoryComponent } from "./pages/inventory/inventory.component";
 import { CameraWatchComponent } from "./pages/camera-watch/camera-watch.component";
+import { RoomControlComponent } from "./pages/room-control/room-control.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
   { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
@@ -42,6 +43,7 @@ export const routes: Routes = [
     canActivate: [authGuard],
   },
   { path: "rooms", component: RoomsComponent, canActivate: [authGuard] },
+  { path: "rooms/:id/control", component: RoomControlComponent, canActivate: [authGuard] },
   { path: "inventory", component: InventoryComponent, canActivate: [authGuard] },
   {
     path: "vr-sankt-poelten/logs",
