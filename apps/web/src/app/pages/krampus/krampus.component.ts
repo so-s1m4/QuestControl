@@ -1,4 +1,4 @@
-import { Component, inject, OnDestroy, signal } from "@angular/core";
+import { Component, HostListener, inject, OnDestroy, signal } from "@angular/core";
 import { HttpClient, HttpErrorResponse } from "@angular/common/http";
 import { RouterLink } from "@angular/router";
 import { DatePipe } from "@angular/common";
@@ -149,7 +149,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
         @if(camerasLoading()){<div class="camera-empty">Подключаем камеры…</div>}
         @else if(!roomCameras().length){<div class="camera-empty"><b>Камеры не выбраны</b><span>Выберите нужные ракурсы на странице «Камеры» — здесь появятся только они.</span><a routerLink="/cameras">Выбрать камеры</a></div>}
         @else{<div class="camera-grid" [class.single]="focusedCameraId()">
-          @for(camera of visibleCameras();track camera.id){<article class="camera-tile" (click)="focusCamera(camera.id)">
+          @for(camera of visibleCameras();track camera.id){<article class="camera-tile" [class.active-camera]="activeCameraId()===camera.id" (click)="selectCamera(camera)">
             <div class="camera-video">
               @if(cameraPlayers()[camera.id];as player){
                 @if(player.mode==="webrtc"){<app-webrtc-player [cameraId]="camera.id" (fallbackRequested)="fallbackCamera(camera)"/>}
@@ -158,7 +158,13 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
               } @else {<button (click)="openCamera(camera);$event.stopPropagation()">▶ Открыть камеру</button>}
               <span class="camera-status" [class.online]="camera.status==='ONLINE'">{{camera.status==='ONLINE'?'ONLINE':camera.status}}</span>
             </div>
-            <footer><span><b>{{camera.name}}</b><small>{{camera.provider}}</small></span><button [attr.aria-label]="focusedCameraId()?'Вернуться к сетке':'Развернуть камеру'">{{focusedCameraId()?'↙':'↗'}}</button></footer>
+            <footer><span><b>{{camera.name}}</b><small>{{camera.provider}}{{camera.provider==='TUYA'&&activeCameraId()===camera.id?' · активна для PTZ':''}}</small></span><button (click)="focusCamera(camera.id);$event.stopPropagation()" [attr.aria-label]="focusedCameraId()?'Вернуться к сетке':'Развернуть камеру'">{{focusedCameraId()?'↙':'↗'}}</button></footer>
+            @if(camera.provider==='TUYA'&&activeCameraId()===camera.id){<div class="ptz-controls" aria-label="Управление поворотом камеры">
+              <span></span><button aria-label="Вверх" (pointerdown)="startPtz($event,camera,'UP')" (pointerup)="stopPtz(camera)" (pointercancel)="stopPtz(camera)" (pointerleave)="stopPtz(camera)">↑</button><span></span>
+              <button aria-label="Влево" (pointerdown)="startPtz($event,camera,'LEFT')" (pointerup)="stopPtz(camera)" (pointercancel)="stopPtz(camera)" (pointerleave)="stopPtz(camera)">←</button><button aria-label="Стоп" (click)="stopPtz(camera)">●</button><button aria-label="Вправо" (pointerdown)="startPtz($event,camera,'RIGHT')" (pointerup)="stopPtz(camera)" (pointercancel)="stopPtz(camera)" (pointerleave)="stopPtz(camera)">→</button>
+              <span></span><button aria-label="Вниз" (pointerdown)="startPtz($event,camera,'DOWN')" (pointerup)="stopPtz(camera)" (pointercancel)="stopPtz(camera)" (pointerleave)="stopPtz(camera)">↓</button><span></span>
+            </div>}
+            @if(cameraControlErrors()[camera.id]){<p class="camera-control-error">{{cameraControlErrors()[camera.id]}}</p>}
           </article>}
         </div>}
       </aside></div>
@@ -180,7 +186,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.sensor-grid article{display:flex;justify-content:space-between;background:white;padding:12px;border:1px solid #e1e5ed;border-radius:8px}.sensor-grid b{color:#b32d3e}.sensor-grid b.active{color:#168653}.empty.compact{padding:24px;margin:0}
   .terminal{height:280px;overflow:auto;background:#101622;color:#d8dfec;border-radius:10px;padding:14px}.terminal div{display:grid;grid-template-columns:70px 55px 1fr;gap:8px;padding:3px}.terminal time{color:#78859d}.terminal b{color:#7c8cff}.terminal code{white-space:pre-wrap;overflow-wrap:anywhere}
   .service-settings{display:grid;gap:12px;margin-top:26px;padding-top:22px;border-top:1px solid #dfe3eb}.service-settings .serial-settings,.service-settings .help-button-settings{margin:0}
-  .krampus-workspace{display:grid;grid-template-columns:minmax(420px,44%) minmax(0,1fr);gap:18px;align-items:start}.control-pane{min-width:0}.camera-pane{position:sticky;top:24px;min-width:0;height:calc(100vh - 48px);padding:14px;border-radius:14px;background:#0d121b;color:#eef2f7;overflow:auto}.camera-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.camera-heading span{color:#8c98aa;font-size:9px;font-weight:900;letter-spacing:.12em}.camera-heading h3{margin:3px 0 0}.camera-heading button{padding:8px 10px;background:#273248;box-shadow:none}.camera-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.camera-grid.single{grid-template-columns:1fr}.camera-tile{min-width:0;overflow:hidden;border:1px solid #293347;border-radius:10px;background:#151c28;cursor:pointer}.camera-video{position:relative;display:grid;place-items:center;aspect-ratio:16/9;overflow:hidden;background:#020305}.camera-video app-webrtc-player,.camera-video app-hls-player,.camera-video iframe{display:block;width:100%;height:100%;border:0}.camera-video>button{background:#273248;color:#fff;box-shadow:none}.camera-status{position:absolute;top:8px;left:8px;padding:4px 6px;border-radius:5px;background:#3b2530;color:#ffbec6;font-size:8px;font-weight:900}.camera-status.online{background:#153c2b;color:#7ee2a8}.camera-tile footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px}.camera-tile footer span,.camera-tile footer b,.camera-tile footer small{display:block;min-width:0}.camera-tile footer span{overflow:hidden}.camera-tile footer b,.camera-tile footer small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.camera-tile footer small{margin-top:2px;color:#8c98aa;font-size:9px}.camera-tile footer button{display:grid;flex:0 0 30px;width:30px;height:30px;padding:0;place-items:center;background:#273248;box-shadow:none}.camera-empty{display:grid;min-height:280px;place-content:center;gap:5px;padding:20px;color:#8c98aa;text-align:center}.camera-empty b{color:#eef2f7}
+  .krampus-workspace{display:grid;grid-template-columns:minmax(420px,44%) minmax(0,1fr);gap:18px;align-items:start}.control-pane{min-width:0}.camera-pane{position:sticky;top:24px;min-width:0;height:calc(100vh - 48px);padding:14px;border-radius:14px;background:#0d121b;color:#eef2f7;overflow:auto}.camera-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.camera-heading span{color:#8c98aa;font-size:9px;font-weight:900;letter-spacing:.12em}.camera-heading h3{margin:3px 0 0}.camera-heading button{padding:8px 10px;background:#273248;box-shadow:none}.camera-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.camera-grid.single{grid-template-columns:1fr}.camera-tile{min-width:0;overflow:hidden;border:1px solid #293347;border-radius:10px;background:#151c28;cursor:pointer}.camera-tile.active-camera{border-color:#7183ff;box-shadow:0 0 0 1px #7183ff inset}.camera-video{position:relative;display:grid;place-items:center;aspect-ratio:16/9;overflow:hidden;background:#020305}.camera-video app-webrtc-player,.camera-video app-hls-player,.camera-video iframe{display:block;width:100%;height:100%;border:0}.camera-video>button{background:#273248;color:#fff;box-shadow:none}.camera-status{position:absolute;top:8px;left:8px;padding:4px 6px;border-radius:5px;background:#3b2530;color:#ffbec6;font-size:8px;font-weight:900}.camera-status.online{background:#153c2b;color:#7ee2a8}.camera-tile footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px}.camera-tile footer span,.camera-tile footer b,.camera-tile footer small{display:block;min-width:0}.camera-tile footer span{overflow:hidden}.camera-tile footer b,.camera-tile footer small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.camera-tile footer small{margin-top:2px;color:#8c98aa;font-size:9px}.camera-tile footer button{display:grid;flex:0 0 30px;width:30px;height:30px;padding:0;place-items:center;background:#273248;box-shadow:none}.camera-empty{display:grid;min-height:280px;place-content:center;gap:5px;padding:20px;color:#8c98aa;text-align:center}.camera-empty b{color:#eef2f7}.ptz-controls{display:grid;grid-template-columns:repeat(3,38px);justify-content:center;gap:5px;padding:8px 10px 12px;border-top:1px solid #293347}.ptz-controls button{display:grid;width:38px;height:38px;padding:0;place-items:center;touch-action:none;background:#273248;box-shadow:none;color:#fff;font-size:17px}.ptz-controls button:active{background:#5264dd}.camera-control-error{margin:0;padding:0 10px 10px;color:#ff9ca8;font-size:10px;text-align:center}
   .krampus-workspace .summary{grid-template-columns:repeat(2,minmax(0,1fr))}.krampus-workspace .help-button-settings,.krampus-workspace .serial-settings{grid-template-columns:1fr}.krampus-workspace .help-button-settings button,.krampus-workspace .serial-settings button{width:100%}.krampus-workspace .krampus-layout{grid-template-columns:1fr}
   @media(max-width:1180px){.krampus-workspace{grid-template-columns:minmax(360px,43%) minmax(0,1fr)}.camera-grid{grid-template-columns:1fr}}
   @media(max-width:900px){.krampus-workspace{grid-template-columns:1fr}.camera-pane{position:relative;top:auto;height:auto;min-height:420px;grid-row:1}.camera-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -204,6 +210,7 @@ export class KrampusComponent implements OnDestroy {
   helpCameras=signal<HelpCamera[]>([]); helpCameraId=signal(""); savingHelpCamera=signal(false);
   serialPort=signal("/dev/ttyUSB0"); savingSerial=signal(false);
   roomCameras=signal<RoomCamera[]>([]); cameraPlayers=signal<Record<string,CameraPlayer>>({}); camerasLoading=signal(false); focusedCameraId=signal<string|null>(null);
+  activeCameraId=signal<string|null>(null); cameraControlErrors=signal<Record<string,string>>({}); private activePtz=new Set<string>();
   activeSession=signal<GameSession|null>(null); roomGameId=signal<string|null>(null); sessionMinutes=signal(60); sessionBusy=signal(false); now=signal(Date.now());
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
@@ -238,6 +245,7 @@ export class KrampusComponent implements OnDestroy {
         const selected=new Set(selectedIds);
         const matches=cameras.filter(camera=>selected.has(camera.id)&&(camera.room_id===this.roomId()||camera.room_name===roomName||/krampus/i.test(camera.room_name||"")));
         this.roomCameras.set(matches); this.camerasLoading.set(false);
+        if(!matches.some(camera=>camera.id===this.activeCameraId())) this.activeCameraId.set(matches.find(camera=>camera.provider==="TUYA")?.id||matches[0]?.id||null);
         for(const camera of matches) this.openCamera(camera);
       },
       error:()=>{ this.camerasLoading.set(false); this.error.set("Не удалось загрузить камеры комнаты."); }
@@ -245,6 +253,14 @@ export class KrampusComponent implements OnDestroy {
   }
   visibleCameras(){ const focused=this.focusedCameraId(); return focused?this.roomCameras().filter(camera=>camera.id===focused):this.roomCameras(); }
   focusCamera(id:string){ this.focusedCameraId.set(this.focusedCameraId()===id?null:id); }
+  selectCamera(camera:RoomCamera){ this.stopAllPtz();this.activeCameraId.set(camera.id); }
+  @HostListener("document:keydown",["$event"]) keyDown(event:KeyboardEvent){const direction=({ArrowUp:"UP",ArrowRight:"RIGHT",ArrowDown:"DOWN",ArrowLeft:"LEFT"} as const)[event.key as "ArrowUp"|"ArrowRight"|"ArrowDown"|"ArrowLeft"];if(!direction||event.repeat||this.isEditing(event.target))return;const camera=this.roomCameras().find(item=>item.id===this.activeCameraId()&&item.provider==="TUYA");if(!camera)return;event.preventDefault();this.activePtz.add(camera.id);this.controlCamera(camera,{action:"ptz",direction});}
+  @HostListener("document:keyup",["$event"]) keyUp(event:KeyboardEvent){if(!event.key.startsWith("Arrow")||this.isEditing(event.target))return;const camera=this.roomCameras().find(item=>item.id===this.activeCameraId());if(camera){event.preventDefault();this.stopPtz(camera);}}
+  @HostListener("window:blur") stopAllPtz(){for(const id of [...this.activePtz]){const camera=this.roomCameras().find(item=>item.id===id);if(camera)this.stopPtz(camera);}}
+  startPtz(event:PointerEvent,camera:RoomCamera,direction:"UP"|"RIGHT"|"DOWN"|"LEFT"){event.preventDefault();event.stopPropagation();this.activeCameraId.set(camera.id);this.activePtz.add(camera.id);(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);this.controlCamera(camera,{action:"ptz",direction});}
+  stopPtz(camera:RoomCamera){if(!this.activePtz.delete(camera.id))return;this.controlCamera(camera,{action:"ptz",direction:"STOP"});}
+  private isEditing(target:EventTarget|null){return target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target instanceof HTMLSelectElement||(target instanceof HTMLElement&&target.isContentEditable);}
+  private controlCamera(camera:RoomCamera,body:unknown){this.cameraControlErrors.update(current=>{const next={...current};delete next[camera.id];return next});this.http.post(`/api/cameras/${camera.id}/control`,body).subscribe({error:({error})=>this.cameraControlErrors.update(current=>({...current,[camera.id]:error?.message||"Команда не поддерживается этой камерой"}))});}
   openCamera(camera:RoomCamera,transport:"webrtc"|"hls"="webrtc"){
     const query=transport==="hls"?"?transport=hls":"";
     this.http.get<{endpoint?:string;mode:"hls"|"player"|"webrtc"}>(`/api/cameras/${camera.id}/stream${query}`).subscribe({
@@ -486,5 +502,5 @@ export class KrampusComponent implements OnDestroy {
   sensorValue(value:unknown){ return typeof value==="boolean"?(value?"ON":"OFF"):String(value??"—"); }
   sensorLabel(key:string){ return key.replaceAll("_"," ").replace(/\b\w/g,char=>char.toUpperCase()); }
   logTime(line:LogLine){ const date=line.at?new Date(line.at):null; return date&&!Number.isNaN(date.getTime())?date.toLocaleTimeString("ru-RU",{hour12:false}):"—"; }
-  ngOnDestroy(){ this.poll?.unsubscribe(); if(this.clockTimer)clearInterval(this.clockTimer); this.doorbellSocket?.disconnect(); this.closeVoice(); }
+  ngOnDestroy(){ this.stopAllPtz(); this.poll?.unsubscribe(); if(this.clockTimer)clearInterval(this.clockTimer); this.doorbellSocket?.disconnect(); this.closeVoice(); }
 }
