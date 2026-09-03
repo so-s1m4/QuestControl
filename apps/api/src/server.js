@@ -2081,6 +2081,7 @@ const controlManifest = z.object({
       controls:z.array(z.object({
         id:z.string().regex(/^[a-zA-Z0-9_-]{1,60}$/),type:z.enum(["button","checkbox","slider","indicator"]),
         label:z.string().trim().min(1).max(80),statePath:z.string().trim().max(160).optional(),
+        expectedValue:z.union([z.string(),z.number(),z.boolean()]).optional(),
         onLabel:z.string().trim().max(40).optional(),offLabel:z.string().trim().max(40).optional(),
         min:z.number().optional(),max:z.number().optional(),step:z.number().positive().optional(),unit:z.string().trim().max(20).optional(),
       }).strict()).max(50),

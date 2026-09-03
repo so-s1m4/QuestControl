@@ -26,7 +26,7 @@ const roomConfigSchema=z.object({
       z.object({...controlBase,type:z.literal("button"),command:serialCommand}).strict(),
       z.object({...controlBase,type:z.literal("checkbox"),statePath:z.string().min(1).max(160),onLabel:z.string().max(40).optional(),offLabel:z.string().max(40).optional(),onCommand:serialCommand,offCommand:serialCommand}).strict(),
       z.object({...controlBase,type:z.literal("slider"),statePath:z.string().min(1).max(160),min:z.number(),max:z.number(),step:z.number().positive(),unit:z.string().max(20).optional(),command:serialCommand.refine(value=>value.includes("{value}"),"SLIDER_VALUE_PLACEHOLDER_REQUIRED")}).strict(),
-      z.object({...controlBase,type:z.literal("indicator"),statePath:z.string().min(1).max(160),onLabel:z.string().max(40).optional(),offLabel:z.string().max(40).optional()}).strict(),
+      z.object({...controlBase,type:z.literal("indicator"),statePath:z.string().min(1).max(160),expectedValue:z.union([z.string(),z.number(),z.boolean()]).default(true),onLabel:z.string().max(40).optional(),offLabel:z.string().max(40).optional()}).strict(),
     ])).max(50)
   }).strict()).max(20)}).strict()).max(20)
 }).strict();
@@ -94,7 +94,7 @@ function publicManifest(roomConfig) {
   return {version:roomConfig.version,title:roomConfig.title,state:{pollMs:roomConfig.state.pollMs},blocks:roomConfig.blocks.map(block=>({
     id:block.id,title:block.title,width:block.width,categories:block.categories.map(category=>({id:category.id,title:category.title,controls:category.controls.map(control=>{
         const visible={id:control.id,type:control.type,label:control.label};
-        for(const key of ["statePath","onLabel","offLabel","min","max","step","unit"]) if(control[key]!==undefined) visible[key]=control[key];
+        for(const key of ["statePath","expectedValue","onLabel","offLabel","min","max","step","unit"]) if(control[key]!==undefined) visible[key]=control[key];
         return visible;
       })}))
   }))};

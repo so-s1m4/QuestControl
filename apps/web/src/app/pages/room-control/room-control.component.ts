@@ -2,7 +2,7 @@ import { Component, OnDestroy, inject, signal } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
 import { ActivatedRoute, RouterLink } from "@angular/router";
 
-type Control = { id:string; type:"button"|"checkbox"|"slider"|"indicator"; label:string; statePath?:string; onLabel?:string; offLabel?:string; min?:number; max?:number; step?:number; unit?:string };
+type Control = { id:string; type:"button"|"checkbox"|"slider"|"indicator"; label:string; statePath?:string; expectedValue?:string|number|boolean; onLabel?:string; offLabel?:string; min?:number; max?:number; step?:number; unit?:string };
 type Manifest = { version:1; title:string; state?:{pollMs:number}; blocks:{id:string;title:string;width:"full"|"half"|"third";categories:{id:string;title:string;controls:Control[]}[]}[] };
 
 @Component({
@@ -19,7 +19,7 @@ type Manifest = { version:1; title:string; state?:{pollMs:number}; blocks:{id:st
             @if(control.type==='button'){<button [disabled]="busy()===control.id" (click)="execute(control)">{{busy()===control.id?'Выполняется…':control.label}}</button>}
             @else if(control.type==='checkbox'){<label class="check"><span><b>{{control.label}}</b><small>{{boolValue(control)?(control.onLabel||'Включено'):(control.offLabel||'Выключено')}}</small></span><button role="switch" [class.on]="boolValue(control)" [disabled]="busy()===control.id" (click)="execute(control,!boolValue(control))"><i></i></button></label>}
             @else if(control.type==='slider'){<label class="range"><span><b>{{control.label}}</b><output>{{numberValue(control)}}{{control.unit||''}}</output></span><input type="range" [min]="control.min??0" [max]="control.max??100" [step]="control.step??1" [value]="numberValue(control)" [disabled]="busy()===control.id" (change)="execute(control,undefined,+$any($event.target).value)"></label>}
-            @else {<div class="indicator" [class.ok]="boolValue(control)"><i></i><span><b>{{control.label}}</b><small>{{boolValue(control)?(control.onLabel||'Норма'):(control.offLabel||'Не сработал')}}</small></span></div>}
+            @else {<div class="indicator" [class.ok]="indicatorOk(control)"><i></i><span><b>{{control.label}}</b><small>{{indicatorOk(control)?(control.onLabel||'Норма'):(control.offLabel||'Не сработал')}}</small></span></div>}
           }
         </div></section>}
       </article>}
@@ -35,6 +35,7 @@ export class RoomControlComponent implements OnDestroy {
   refresh(){this.http.get<Record<string,unknown>>(`/api/rooms/${this.roomId}/control-panel/state`).subscribe({next:s=>{this.state.set(s);this.online.set(true)},error:()=>this.online.set(false)});}
   value(control:Control){return (control.statePath||"").split(".").filter(Boolean).reduce<any>((value,key)=>value?.[key],this.state());}
   boolValue(control:Control){const value=this.value(control);return value===true||value===1||String(value).toLowerCase()==="on"||String(value).toLowerCase()==="true";}
+  indicatorOk(control:Control){return this.value(control)===(control.expectedValue??true);}
   numberValue(control:Control){const value=Number(this.value(control));return Number.isFinite(value)?value:(control.min??0);}
   execute(control:Control,checked?:boolean,value?:number){this.busy.set(control.id);const body=control.type==="checkbox"?{checked}:{...(control.type==="slider"?{value}:{})};this.http.post(`/api/rooms/${this.roomId}/control-panel/actions/${control.id}`,body).subscribe({next:()=>{this.busy.set("");this.refresh()},error:()=>{this.busy.set("");alert("Команда не выполнена.")}});}
   ngOnDestroy(){clearInterval(this.timer);}
