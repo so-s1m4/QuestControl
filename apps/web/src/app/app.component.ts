@@ -69,7 +69,7 @@ type InstallPromptEvent = Event & {
         </div>
       }
 
-      <app-camera-overlay />
+      @if (!currentUrl().startsWith("/krampus")) { <app-camera-overlay /> }
     }
     <router-outlet />
   `,

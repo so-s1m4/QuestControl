@@ -2,10 +2,12 @@ import { Component, inject, OnDestroy, signal } from "@angular/core";
 import { HttpClient, HttpErrorResponse } from "@angular/common/http";
 import { RouterLink } from "@angular/router";
 import { DatePipe } from "@angular/common";
+import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 import { FormsModule } from "@angular/forms";
 import { Subscription, catchError, forkJoin, interval, of, startWith, switchMap } from "rxjs";
 import { io, Socket } from "socket.io-client";
 import { HlsPlayerComponent } from "../cameras/hls-player.component";
+import { WebRtcPlayerComponent } from "../cameras/webrtc-player.component";
 
 type Room = { id:string; name:string; location_name?:string };
 type KrampusStatus = {
@@ -19,6 +21,8 @@ type VoiceHint = { id:string; name:string; file_name:string; content_type:string
 type DoorbellCall = { id:string; camera_id:string; camera_name:string; camera_status:string; status:"RINGING"|"ACKNOWLEDGED"|"EXPIRED"; rang_at:string; acknowledged_at:string|null };
 type HelpCamera = { id:string; name:string; provider:string; status:string; config?:{category?:string} };
 type HelpButtonConfig = { cameraId:string|null; cameras:HelpCamera[] };
+type RoomCamera = { id:string; name:string; provider:string; status:string; room_id?:string|null; room_name?:string|null };
+type CameraPlayer = { mode:"hls"|"player"|"webrtc"; endpoint?:string; safeEndpoint?:SafeResourceUrl };
 type PollResult<T> = { ok:true; value:T } | { ok:false };
 
 const ATMOSPHERE = ["LIGHT UV","LIGHT WHITE","LIGHT OK","LIGHT OFF","LIGHT RESET","MASK SOUND"] as const;
@@ -27,7 +31,7 @@ const OVEN = ["OVEN SOLVED","OVEN RESET","OVEN UV ON","OVEN UV OFF","OVEN LIGHT 
 type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|"ovenFog";
 
 @Component({
-  selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule,HlsPlayerComponent],
+  selector:"app-krampus", standalone:true, imports:[RouterLink,DatePipe,FormsModule,HlsPlayerComponent,WebRtcPlayerComponent],
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/inventory">Инвентарь</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
@@ -55,22 +59,10 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
     }
     @if(loading()){<div class="empty"><b>Подключение к Krampus…</b><span>Ищем комнату и room-agent.</span></div>}
     @else if(!roomId()){<div class="empty"><b>Комната Krampus не настроена</b><span>Создайте комнату с «Krampus» в названии и привяжите устройство с agent_id.</span></div>}
-    @else{
+    @else{<div class="krampus-workspace"><div class="control-pane">
       <div class="summary">
         <div><span>Комната</span><b>{{roomName()}}</b></div><div><span>Состояние игры</span><b>{{gameState()}}</b></div><div><span>Serial</span><b>{{serialPath()}}</b></div><div><span>Обновлено</span><b>{{lastUpdated() ? (lastUpdated()|date:'HH:mm:ss') : "—"}}</b></div>
       </div>
-      <article class="serial-settings">
-        <div><span>ARDUINO SERIAL</span><h3>Порт подключения</h3><p>Для клонов чаще всего используется <code>/dev/ttyUSB0</code>, для оригинальных плат — <code>/dev/ttyACM0</code>.</p></div>
-        <label><span>Путь устройства</span><input list="serial-ports" [ngModel]="serialPort()" (ngModelChange)="serialPort.set($event)" placeholder="/dev/ttyUSB0" autocomplete="off"><datalist id="serial-ports"><option value="/dev/ttyUSB0"><option value="/dev/ttyUSB1"><option value="/dev/ttyACM0"><option value="/dev/ttyACM1"></datalist></label>
-        <button [disabled]="savingSerial()||!serialPort().trim()" (click)="saveSerialPort()">{{savingSerial()?"Подключение…":"Применить порт"}}</button>
-      </article>
-      <article class="help-button-settings">
-        <div><span>КНОПКА ПОМОЩИ</span><h3>Источник вызова</h3><p>Выберите устройство, нажатие которого должно показывать вызов в этой панели.</p></div>
-        <select [ngModel]="helpCameraId()" (ngModelChange)="helpCameraId.set($event)">
-          @for(camera of helpCameras();track camera.id){<option [value]="camera.id">{{camera.name}} · {{camera.status}}</option>}
-        </select>
-        <button [disabled]="savingHelpCamera()||!helpCameraId()" (click)="saveHelpCamera()">{{savingHelpCamera()?"Сохранение…":"Сохранить"}}</button>
-      </article>
       <div class="krampus-actions"><button class="start" [disabled]="busy()" (click)="command('START')">START</button><button [disabled]="busy()" (click)="command('STATUS')">STATUS</button><button class="danger-solid" [disabled]="busy()" (click)="command('RESET',true)">RESET</button><button class="danger-solid" [disabled]="busy()" (click)="command('ESTOP',true)">ESTOP</button></div>
       <div class="krampus-layout">
         <article class="control-card">
@@ -130,6 +122,38 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
       </div>
       <h3>Датчики</h3><div class="sensor-grid">@for(item of sensorEntries();track item[0]){<article><span>{{sensorLabel(item[0])}}</span><b [class.active]="sensorActive(item[1])">{{sensorValue(item[1])}}</b></article>}@empty{<div class="empty compact">Нет данных от датчиков</div>}</div>
       <h3>Serial-консоль</h3><div class="terminal">@for(line of logLines();track $index){<div><time>{{logTime(line)}}</time><b>{{line.direction||"—"}}</b><code>{{line.line||""}}</code></div>}@empty{<span>Нет данных</span>}</div>
+      <div class="service-settings">
+        <article class="serial-settings">
+          <div><span>ARDUINO SERIAL</span><h3>Порт подключения</h3><p>Для клонов чаще всего используется <code>/dev/ttyUSB0</code>, для оригинальных плат — <code>/dev/ttyACM0</code>.</p></div>
+          <label><span>Путь устройства</span><input list="serial-ports" [ngModel]="serialPort()" (ngModelChange)="serialPort.set($event)" placeholder="/dev/ttyUSB0" autocomplete="off"><datalist id="serial-ports"><option value="/dev/ttyUSB0"><option value="/dev/ttyUSB1"><option value="/dev/ttyACM0"><option value="/dev/ttyACM1"></datalist></label>
+          <button [disabled]="savingSerial()||!serialPort().trim()" (click)="saveSerialPort()">{{savingSerial()?"Подключение…":"Применить порт"}}</button>
+        </article>
+        <article class="help-button-settings">
+          <div><span>КНОПКА ПОМОЩИ</span><h3>Источник вызова</h3><p>Выберите устройство, нажатие которого должно показывать вызов в этой панели.</p></div>
+          <select [ngModel]="helpCameraId()" (ngModelChange)="helpCameraId.set($event)">
+            @for(camera of helpCameras();track camera.id){<option [value]="camera.id">{{camera.name}} · {{camera.status}}</option>}
+          </select>
+          <button [disabled]="savingHelpCamera()||!helpCameraId()" (click)="saveHelpCamera()">{{savingHelpCamera()?"Сохранение…":"Сохранить"}}</button>
+        </article>
+      </div>
+      </div><aside class="camera-pane" [class.focused]="focusedCameraId()">
+        <div class="camera-heading"><div><span>НАБЛЮДЕНИЕ</span><h3>Камеры комнаты</h3></div>@if(focusedCameraId()){<button (click)="focusedCameraId.set(null)">Показать все</button>}</div>
+        @if(camerasLoading()){<div class="camera-empty">Подключаем камеры…</div>}
+        @else if(!roomCameras().length){<div class="camera-empty"><b>Камеры не привязаны</b><span>Добавьте камеры в комнату Krampus через настройки камер.</span></div>}
+        @else{<div class="camera-grid" [class.single]="focusedCameraId()">
+          @for(camera of visibleCameras();track camera.id){<article class="camera-tile" (click)="focusCamera(camera.id)">
+            <div class="camera-video">
+              @if(cameraPlayers()[camera.id];as player){
+                @if(player.mode==="webrtc"){<app-webrtc-player [cameraId]="camera.id" (fallbackRequested)="fallbackCamera(camera)"/>}
+                @else if(player.mode==="hls"){<app-hls-player [url]="player.endpoint!"/>}
+                @else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen"></iframe>}
+              } @else {<button (click)="openCamera(camera);$event.stopPropagation()">▶ Открыть камеру</button>}
+              <span class="camera-status" [class.online]="camera.status==='ONLINE'">{{camera.status==='ONLINE'?'ONLINE':camera.status}}</span>
+            </div>
+            <footer><span><b>{{camera.name}}</b><small>{{camera.provider}}</small></span><button [attr.aria-label]="focusedCameraId()?'Вернуться к сетке':'Развернуть камеру'">{{focusedCameraId()?'↙':'↗'}}</button></footer>
+          </article>}
+        </div>}
+      </aside></div>
     }
   </section></main>`,
   styles:[`
@@ -146,6 +170,11 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .voice-hints{margin-top:20px;padding-top:16px;border-top:1px solid #e1e5ed}.voice-hints h4{margin:0}.voice-hints>p{margin:7px 0 12px;color:#6b7280;font-size:12px}.hint-upload{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.hint-upload label:first-child{grid-column:1/-1}.file-picker{display:flex;align-items:center;min-height:40px;padding:9px 11px;border:1px dashed #c7ceda;border-radius:8px;color:#4c5668;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-picker input{display:none}.hint-list{display:grid;gap:7px;margin-top:12px}.hint-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #eef0f4}.hint-row>span,.hint-row b,.hint-row small{display:block;min-width:0}.hint-row>span{overflow:hidden}.hint-row b,.hint-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hint-row small{margin-top:3px;color:#7a8495;font-size:10px}.hint-row>div{display:flex;gap:5px}.hint-row button{padding:7px 9px;box-shadow:none}.hint-preview{background:#eef1f6;color:#273248}.hint-send{background:#168653}.hint-delete{background:#fff0f1;color:#a82030}.no-hints{padding:12px 0;color:#7a8495;font-size:12px}
   .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.sensor-grid article{display:flex;justify-content:space-between;background:white;padding:12px;border:1px solid #e1e5ed;border-radius:8px}.sensor-grid b{color:#b32d3e}.sensor-grid b.active{color:#168653}.empty.compact{padding:24px;margin:0}
   .terminal{height:280px;overflow:auto;background:#101622;color:#d8dfec;border-radius:10px;padding:14px}.terminal div{display:grid;grid-template-columns:70px 55px 1fr;gap:8px;padding:3px}.terminal time{color:#78859d}.terminal b{color:#7c8cff}.terminal code{white-space:pre-wrap;overflow-wrap:anywhere}
+  .service-settings{display:grid;gap:12px;margin-top:26px;padding-top:22px;border-top:1px solid #dfe3eb}.service-settings .serial-settings,.service-settings .help-button-settings{margin:0}
+  .krampus-workspace{display:grid;grid-template-columns:minmax(420px,44%) minmax(0,1fr);gap:18px;align-items:start}.control-pane{min-width:0}.camera-pane{position:sticky;top:24px;min-width:0;height:calc(100vh - 48px);padding:14px;border-radius:14px;background:#0d121b;color:#eef2f7;overflow:auto}.camera-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.camera-heading span{color:#8c98aa;font-size:9px;font-weight:900;letter-spacing:.12em}.camera-heading h3{margin:3px 0 0}.camera-heading button{padding:8px 10px;background:#273248;box-shadow:none}.camera-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.camera-grid.single{grid-template-columns:1fr}.camera-tile{min-width:0;overflow:hidden;border:1px solid #293347;border-radius:10px;background:#151c28;cursor:pointer}.camera-video{position:relative;display:grid;place-items:center;aspect-ratio:16/9;overflow:hidden;background:#020305}.camera-video app-webrtc-player,.camera-video app-hls-player,.camera-video iframe{display:block;width:100%;height:100%;border:0}.camera-video>button{background:#273248;color:#fff;box-shadow:none}.camera-status{position:absolute;top:8px;left:8px;padding:4px 6px;border-radius:5px;background:#3b2530;color:#ffbec6;font-size:8px;font-weight:900}.camera-status.online{background:#153c2b;color:#7ee2a8}.camera-tile footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px}.camera-tile footer span,.camera-tile footer b,.camera-tile footer small{display:block;min-width:0}.camera-tile footer span{overflow:hidden}.camera-tile footer b,.camera-tile footer small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.camera-tile footer small{margin-top:2px;color:#8c98aa;font-size:9px}.camera-tile footer button{display:grid;flex:0 0 30px;width:30px;height:30px;padding:0;place-items:center;background:#273248;box-shadow:none}.camera-empty{display:grid;min-height:280px;place-content:center;gap:5px;padding:20px;color:#8c98aa;text-align:center}.camera-empty b{color:#eef2f7}
+  .krampus-workspace .summary{grid-template-columns:repeat(2,minmax(0,1fr))}.krampus-workspace .help-button-settings,.krampus-workspace .serial-settings{grid-template-columns:1fr}.krampus-workspace .help-button-settings button,.krampus-workspace .serial-settings button{width:100%}.krampus-workspace .krampus-layout{grid-template-columns:1fr}
+  @media(max-width:1180px){.krampus-workspace{grid-template-columns:minmax(360px,43%) minmax(0,1fr)}.camera-grid{grid-template-columns:1fr}}
+  @media(max-width:900px){.krampus-workspace{grid-template-columns:1fr}.camera-pane{position:relative;top:auto;height:auto;min-height:420px;grid-row:1}.camera-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
   @media(max-width:800px){.help-button-settings,.serial-settings{grid-template-columns:1fr}.help-button-settings button,.serial-settings button{width:100%}}
   @media(max-width:700px){.help-call{grid-template-columns:1fr}.help-call-actions{align-items:stretch;flex-direction:column}.doorbell-video{height:62vw}}
@@ -154,6 +183,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
 })
 export class KrampusComponent implements OnDestroy {
   private http=inject(HttpClient);
+  private sanitizer=inject(DomSanitizer);
   private poll?:Subscription;
   roomId=signal(""); roomName=signal(""); status=signal<KrampusStatus|null>(null);
   sensors=signal<Record<string,unknown>>({}); logLines=signal<LogLine[]>([]);
@@ -164,6 +194,7 @@ export class KrampusComponent implements OnDestroy {
   doorbellCalls=signal<DoorbellCall[]>([]); doorbellStream=signal(""); doorbellVideoError=signal(""); doorbellVideoLoading=signal(false);
   helpCameras=signal<HelpCamera[]>([]); helpCameraId=signal(""); savingHelpCamera=signal(false);
   serialPort=signal("/dev/ttyUSB0"); savingSerial=signal(false);
+  roomCameras=signal<RoomCamera[]>([]); cameraPlayers=signal<Record<string,CameraPlayer>>({}); camerasLoading=signal(false); focusedCameraId=signal<string|null>(null);
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
   private voiceSocket?:Socket;
@@ -181,11 +212,32 @@ export class KrampusComponent implements OnDestroy {
         const room=rooms.find(r=>/krampus/i.test(r.name));
         this.loading.set(false);
         if(!room){ this.roomId.set(""); return; }
-        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.loadHelpButton(); this.connectDoorbell(); this.startPolling();
+        this.roomId.set(room.id); this.roomName.set(room.location_name?`${room.name} · ${room.location_name}`:room.name); this.loadHints(); this.loadHelpButton(); this.loadRoomCameras(); this.connectDoorbell(); this.startPolling();
       },
       error:error=>{ this.loading.set(false); this.error.set(this.message(error,"Не удалось загрузить комнаты.")); }
     });
   }
+  loadRoomCameras(){
+    this.camerasLoading.set(true);
+    this.http.get<RoomCamera[]>("/api/cameras").subscribe({
+      next:cameras=>{
+        const roomName=this.roomName().split(" · ")[0];
+        const matches=cameras.filter(camera=>camera.room_id===this.roomId()||camera.room_name===roomName||/krampus/i.test(camera.room_name||""));
+        this.roomCameras.set(matches); this.camerasLoading.set(false);
+        for(const camera of matches) this.openCamera(camera);
+      },
+      error:()=>{ this.camerasLoading.set(false); this.error.set("Не удалось загрузить камеры комнаты."); }
+    });
+  }
+  visibleCameras(){ const focused=this.focusedCameraId(); return focused?this.roomCameras().filter(camera=>camera.id===focused):this.roomCameras(); }
+  focusCamera(id:string){ this.focusedCameraId.set(this.focusedCameraId()===id?null:id); }
+  openCamera(camera:RoomCamera,transport:"webrtc"|"hls"="webrtc"){
+    const query=transport==="hls"?"?transport=hls":"";
+    this.http.get<{endpoint?:string;mode:"hls"|"player"|"webrtc"}>(`/api/cameras/${camera.id}/stream${query}`).subscribe({
+      next:player=>this.cameraPlayers.update(current=>({...current,[camera.id]:{...player,safeEndpoint:player.mode==="player"?this.sanitizer.bypassSecurityTrustResourceUrl(player.endpoint!):undefined}}))
+    });
+  }
+  fallbackCamera(camera:RoomCamera){ this.cameraPlayers.update(current=>{const next={...current};delete next[camera.id];return next});this.openCamera(camera,"hls"); }
   connectDoorbell(){
     this.doorbellSocket?.disconnect();
     const token=sessionStorage.getItem("access_token");
