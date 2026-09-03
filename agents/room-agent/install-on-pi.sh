@@ -64,17 +64,20 @@ fi
 
 id quest-agent >/dev/null 2>&1 || useradd --system --home-dir /var/lib/quest-control-agent --create-home --shell /usr/sbin/nologin quest-agent
 usermod -a -G audio quest-agent
-install -d -m 0755 "${INSTALL_DIR}" "${CONFIG_DIR}" "${BACKUP_DIR}"
+install -d -m 0755 "${INSTALL_DIR}" "${INSTALL_DIR}/releases" "${CONFIG_DIR}" "${BACKUP_DIR}"
 
 if [[ -f "${CONFIG_FILE}" ]]; then
   cp -a "${CONFIG_FILE}" "${BACKUP_DIR}/room-agent.env.$(date +%Y%m%d-%H%M%S)"
 fi
 
-install -m 0644 "${SOURCE_DIR}/package.json" "${SOURCE_DIR}/package-lock.json" "${INSTALL_DIR}/"
-install -d -m 0755 "${INSTALL_DIR}/src"
-install -m 0644 "${SOURCE_DIR}/src/index.js" "${INSTALL_DIR}/src/index.js"
-cd "${INSTALL_DIR}"
+AGENT_VERSION="$(node -p "require('${SOURCE_DIR}/package.json').version")"
+RELEASE_DIR="${INSTALL_DIR}/releases/${AGENT_VERSION}"
+install -d -m 0755 "${RELEASE_DIR}/src"
+install -m 0644 "${SOURCE_DIR}/package.json" "${SOURCE_DIR}/package-lock.json" "${RELEASE_DIR}/"
+install -m 0644 "${SOURCE_DIR}/src/index.js" "${RELEASE_DIR}/src/index.js"
+cd "${RELEASE_DIR}"
 npm ci --omit=dev
+ln -sfn "${RELEASE_DIR}" "${INSTALL_DIR}/current"
 
 if [[ ! "${KEEP_CONFIG}" =~ ^[Yy]$ ]]; then
   umask 077
@@ -95,8 +98,12 @@ chown root:root "${CONFIG_FILE}"
 chmod 0600 "${CONFIG_FILE}"
 
 install -m 0644 "${SOURCE_DIR}/quest-room-agent.service" "${SERVICE_FILE}"
+install -m 0755 "${SOURCE_DIR}/update-room-agent.sh" /usr/local/sbin/quest-room-agent-update
+install -m 0644 "${SOURCE_DIR}/quest-room-agent-update.service" /etc/systemd/system/quest-room-agent-update.service
+install -m 0644 "${SOURCE_DIR}/quest-room-agent-update.timer" /etc/systemd/system/quest-room-agent-update.timer
 systemctl daemon-reload
 systemctl enable --now quest-room-agent
+systemctl enable --now quest-room-agent-update.timer
 sleep 2
 systemctl --no-pager --full status quest-room-agent || {
   echo

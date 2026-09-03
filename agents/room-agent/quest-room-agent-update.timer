@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for QuestControl Room Agent updates
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

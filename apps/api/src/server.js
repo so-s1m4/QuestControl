@@ -2,6 +2,8 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -127,6 +129,28 @@ app.get("/health/ready", async (_, res) => {
   try { await Promise.all([db.query("SELECT 1"), redis.ping()]); res.json({ status: "ready", postgres: "ok", redis: "ok" }); }
   catch (error) { res.status(503).json({ status: "not-ready", error: error.message }); }
 });
+
+async function agentDownloadAuth(req,res,next) {
+  const agentId=req.get("x-agent-id");
+  const token=req.get("authorization")?.replace(/^Bearer /,"");
+  if(!agentId||!token) return res.status(401).json({error:"AGENT_UNAUTHORIZED"});
+  const expected=await redis.get(`agent-token:${agentId}`);
+  const actual=crypto.createHash("sha256").update(token).digest("hex");
+  if(!expected||expected.length!==actual.length||!crypto.timingSafeEqual(Buffer.from(expected),Buffer.from(actual))) return res.status(401).json({error:"AGENT_UNAUTHORIZED"});
+  req.agentId=agentId;
+  next();
+}
+const roomAgentArchive=path.resolve(process.env.ROOM_AGENT_RELEASE_PATH||"/app/releases/room-agent.tar.gz");
+function roomAgentRelease() {
+  const packageInfo=JSON.parse(fs.readFileSync(process.env.ROOM_AGENT_PACKAGE_PATH||"/app/releases/room-agent-package.json","utf8"));
+  const sha256=crypto.createHash("sha256").update(fs.readFileSync(roomAgentArchive)).digest("hex");
+  return {version:packageInfo.version,channel:"stable",sha256,downloadUrl:"/api/agent-updates/room-agent/download"};
+}
+app.get("/agent-updates/room-agent/latest",agentDownloadAuth,(req,res)=>{
+  if(req.query.channel&&req.query.channel!=="stable") return res.status(404).json({error:"UPDATE_CHANNEL_NOT_FOUND"});
+  res.json(roomAgentRelease());
+});
+app.get("/agent-updates/room-agent/download",agentDownloadAuth,(_,res)=>res.sendFile(roomAgentArchive));
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
 app.post("/auth/login", rateLimit({ windowMs: 15 * 60_000, limit: 10 }), async (req, res) => {

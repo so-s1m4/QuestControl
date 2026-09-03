@@ -35,7 +35,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: apps/api
+          context: .
+          file: apps/api/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ steps.names.outputs.owner }}/quest-control-api:latest
