@@ -37,7 +37,7 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   template:`
   <main><aside><h1>Q <span>QUESTCONTROL</span></h1><nav><a routerLink="/">Обзор</a><a routerLink="/bookings">Бронирования</a><a class="sessions-nav" routerLink="/sessions">Сессии</a><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a><a routerLink="/cameras">Камеры</a><a routerLink="/inventory">Инвентарь</a><a routerLink="/users">Пользователи</a></nav></aside>
   <section>
-    <header><div><h2>Krampus House</h2><p>Управление комнатой через защищённый room-agent</p></div>
+    <header><div><h2>Krampus House</h2></div>
       <div class="connections"><span class="connection" [class.online]="agentOnline()">{{agentOnline()?"Agent online":"Agent offline"}}</span><span class="connection" [class.online]="arduinoOnline()">{{arduinoOnline()?"Arduino online":"Arduino offline"}}</span></div>
     </header>
     @if(error()){<p class="error">{{error()}} <button class="inline" (click)="loadRoom()">Повторить</button></p>}
@@ -62,9 +62,6 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
     @if(loading()){<div class="empty"><b>Подключение к Krampus…</b><span>Ищем комнату и room-agent.</span></div>}
     @else if(!roomId()){<div class="empty"><b>Комната Krampus не настроена</b><span>Создайте комнату с «Krampus» в названии и привяжите устройство с agent_id.</span></div>}
     @else{<div class="krampus-workspace"><div class="control-pane">
-      <div class="summary">
-        <div><span>Комната</span><b>{{roomName()}}</b></div><div><span>Состояние игры</span><b>{{gameState()}}</b></div><div><span>Serial</span><b>{{serialPath()}}</b></div><div><span>Обновлено</span><b>{{lastUpdated() ? (lastUpdated()|date:'HH:mm:ss') : "—"}}</b></div>
-      </div>
       <article class="session-timer" [class.running]="activeSession()?.status==='RUNNING'">
         <div><span>ИГРОВАЯ СЕССИЯ</span><b>{{activeSession()?'Таймер запущен':'Новая игра'}}</b><small>{{activeSession()?roomName():'Запуск синхронизируется на всех устройствах'}}</small></div>
         <strong>{{timerText()}}</strong>
