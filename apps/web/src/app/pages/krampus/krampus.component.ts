@@ -78,11 +78,11 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
         <article class="control-card">
           <h3>Механизмы</h3>
           <div class="switch-list">
-            <div class="switch-row"><span><b>Медведь</b><small>{{toggleText('bear','Закрыт','Открыт')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('bear')" [attr.aria-checked]="toggleOn('bear')" [disabled]="busy()" (click)="toggle('bear','BEAR OPEN','BEAR CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Дверь</b><small>{{toggleText('door','Закрыта','Открыта')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('door')" [attr.aria-checked]="toggleOn('door')" [disabled]="busy()" (click)="toggle('door','DOOR OPEN','DOOR CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Стол</b><small>{{toggleText('table','Закрыт','Открыт')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('table')" [attr.aria-checked]="toggleOn('table')" [disabled]="busy()" (click)="toggle('table','TABLE OPEN','TABLE CLOSE')"><i></i></button></div>
             <div class="switch-row"><span><b>Ножка стола</b><small>{{toggleText('tableLeg','Магнит включён · светодиод выключен','Магнит выключен · светодиод включён')}}</small></span><button class="switch" role="switch" [class.on]="toggleOn('tableLeg')" [attr.aria-checked]="toggleOn('tableLeg')" [disabled]="busy()" (click)="toggle('tableLeg','TABLE LEG OPEN','TABLE LEG CLOSE')"><i></i></button></div>
           </div>
+          <div class="control-section"><span class="section-label">Медведь</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR OPEN')">Открыть</button><button [disabled]="busy()" (click)="command('BEAR CLOSE')">Закрыть</button></div></div>
           <div class="control-section"><span class="section-label">Пятнашки</span><div class="button-grid"><button [disabled]="busy()" (click)="command('PUZZLE SOLVE')">Решить пятнашки</button><button class="secondary-danger" [disabled]="busy()" (click)="command('PUZZLE RESET',true)">Сбросить пятнашки</button></div></div>
           <div class="control-section"><span class="section-label">Звук</span><div class="button-grid"><button [disabled]="busy()" (click)="command('BEAR SOUND')">Звук медведя</button></div></div>
         </article>
