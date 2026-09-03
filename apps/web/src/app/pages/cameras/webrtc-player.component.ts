@@ -9,13 +9,11 @@ type SignalMessage = { sessionId:string; type:"answer"|"candidate"|"disconnect";
   standalone:true,
   template:`
     <video #video controls autoplay muted playsinline></video>
-    @if(muted()){<button class="sound" (click)="enableSound()">🔊 Включить звук</button>}
     @if(status()){<p class="status">{{status()}}</p>}
   `,
   styles:[`
     :host{position:relative;display:block;width:100%;height:100%;min-width:0;overflow:hidden;background:#101622}
     video{display:block;width:100%;height:100%;object-fit:contain;background:#101622}
-    .sound{position:absolute;z-index:2;right:10px;bottom:44px;padding:7px 10px;border:0;border-radius:7px;background:#fffffff0;color:#182033;font-weight:700}
     .status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;padding:8px 11px;border-radius:7px;background:#101828c9;color:#fff;font-size:12px;white-space:nowrap}
   `],
 })
@@ -23,7 +21,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   @Input({required:true}) cameraId!:string;
   @Output() fallbackRequested=new EventEmitter<void>();
   @ViewChild("video",{static:true}) video!:ElementRef<HTMLVideoElement>;
-  status=signal("Подключение WebRTC…"); muted=signal(true);
+  status=signal("Подключение WebRTC…");
   private socket?:Socket;private peer?:RTCPeerConnection;private sessionId="";private fallbackSent=false;
   private timeout?:ReturnType<typeof setTimeout>;private disconnectTimeout?:ReturnType<typeof setTimeout>;
   private stream=new MediaStream();
@@ -108,11 +106,6 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
 
   private send(type:"offer"|"candidate"|"disconnect",payload:string){
     if(this.socket?.connected&&this.sessionId)this.socket.emit("signal",{sessionId:this.sessionId,type,payload});
-  }
-
-  enableSound(){
-    const video=this.video.nativeElement;
-    video.muted=false;video.volume=1;this.muted.set(false);video.play().catch(()=>{});
   }
 
   private diagnostic(stage:string,detail=""){this.socket?.emit("diagnostic",{cameraId:this.cameraId,stage,detail:detail.slice(0,160)})}
