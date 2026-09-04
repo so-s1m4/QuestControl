@@ -237,6 +237,7 @@ app.get("/users", auth, permit("users:manage"), async (_, res) => {
     JOIN roles r ON r.id=u.role_id
     LEFT JOIN user_locations ul ON ul.user_id=u.id
     LEFT JOIN user_cameras uc ON uc.user_id=u.id
+    WHERE u.deleted_at IS NULL
     GROUP BY u.id,r.name
     ORDER BY u.created_at DESC
   `);
@@ -350,6 +351,56 @@ app.patch("/users/:id/status", auth, permit("users:manage"), async (req, res) =>
   res.json(rows[0]);
 });
 
+app.patch("/users/:id", auth, async (req,res) => {
+  if(!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  const parsed=z.object({
+    displayName:z.string().trim().min(2).max(120),
+    role:z.enum(["OWNER","ADMIN","OPERATOR","TECHNICIAN","CAMERA_VIEWER"]),
+    newPassword:z.string().min(12).max(200).optional(),
+    isActive:z.boolean(),
+    locationIds:z.array(z.string().uuid())
+  }).safeParse(req.body);
+  if(!parsed.success) return res.status(400).json({error:"INVALID_INPUT",details:parsed.error.flatten()});
+  const input=parsed.data;
+  const client=await db.connect();
+  try {
+    await client.query("BEGIN");
+    const before=(await client.query("SELECT u.id,u.email,u.display_name,r.name role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1 FOR UPDATE",[req.params.id])).rows[0];
+    if(!before){await client.query("ROLLBACK");return res.status(404).json({error:"USER_NOT_FOUND"});}
+    if(before.role==="OWNER"&&(input.role!=="OWNER"||!input.isActive)){
+      const owners=await client.query("SELECT count(*)::int count FROM users u JOIN roles r ON r.id=u.role_id WHERE r.name='OWNER' AND u.is_active=true");
+      if(owners.rows[0].count<=1){await client.query("ROLLBACK");return res.status(409).json({error:"LAST_OWNER"});}
+    }
+    const role=(await client.query("SELECT id FROM roles WHERE name=$1",[input.role])).rows[0];
+    if(!role){await client.query("ROLLBACK");return res.status(400).json({error:"INVALID_ROLE"});}
+    if(req.params.id===req.user.sub&&!input.isActive){await client.query("ROLLBACK");return res.status(409).json({error:"CANNOT_DISABLE_SELF"});}
+    const passwordHash=input.newPassword?await argon2.hash(input.newPassword):null;
+    const updated=(await client.query(`UPDATE users SET display_name=$1,role_id=$2,is_active=$3,
+      password_hash=COALESCE($4,password_hash),refresh_token_hash=CASE WHEN $4 IS NULL THEN refresh_token_hash ELSE NULL END
+      WHERE id=$5 RETURNING id,email,display_name,is_active,created_at`,[input.displayName,role.id,input.isActive,passwordHash,req.params.id])).rows[0];
+    await client.query("DELETE FROM user_locations WHERE user_id=$1",[req.params.id]);
+    for(const locationId of [...new Set(input.locationIds)]) await client.query("INSERT INTO user_locations(user_id,location_id) SELECT $1,id FROM locations WHERE id=$2",[req.params.id,locationId]);
+    await client.query("COMMIT");
+    const result={...updated,role:input.role};
+    await audit(req,"user.update","user",req.params.id,before,{...result,passwordChanged:Boolean(input.newPassword)});
+    res.json(result);
+  } catch(error){await client.query("ROLLBACK");throw error;} finally{client.release();}
+});
+
+app.delete("/users/:id",auth,async(req,res)=>{
+  if(!isOwner(req)) return res.status(403).json({error:"OWNER_REQUIRED"});
+  if(req.params.id===req.user.sub) return res.status(409).json({error:"CANNOT_DELETE_SELF"});
+  const target=(await db.query("SELECT u.id,u.email,u.display_name,r.name role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1 AND u.deleted_at IS NULL",[req.params.id])).rows[0];
+  if(!target) return res.status(404).json({error:"USER_NOT_FOUND"});
+  if(target.role==="OWNER"){
+    const owners=await db.query("SELECT count(*)::int count FROM users u JOIN roles r ON r.id=u.role_id WHERE r.name='OWNER' AND u.is_active=true AND u.deleted_at IS NULL");
+    if(owners.rows[0].count<=1) return res.status(409).json({error:"LAST_OWNER"});
+  }
+  await db.query("UPDATE users SET is_active=false,deleted_at=now(),refresh_token_hash=NULL WHERE id=$1",[req.params.id]);
+  await audit(req,"user.delete","user",req.params.id,target,{deleted:true});
+  res.status(204).end();
+});
+
 app.patch("/users/:id/password", auth, permit("users:manage"), async (req,res) => {
   const { newPassword }=z.object({newPassword:z.string().min(12).max(200)}).parse(req.body);
   if(req.params.id===req.user.sub) return res.status(409).json({error:"USE_SELF_PASSWORD_CHANGE"});
@@ -364,14 +415,18 @@ app.patch("/users/:id/password", auth, permit("users:manage"), async (req,res) =
 
 app.get("/dashboard", auth, async (req, res) => {
   const scope = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
-  const [rooms, bookings, devices] = await Promise.all([
+  const [rooms, bookings, devices, myShifts] = await Promise.all([
     db.query(`SELECT r.*,l.name location_name,
       COALESCE((SELECT d.status FROM devices d WHERE d.room_id=r.id ORDER BY d.last_seen DESC NULLS LAST LIMIT 1),r.status) live_status
       FROM rooms r JOIN locations l ON l.id=r.location_id WHERE ${scope.clause} ORDER BY r.name`,scope.values),
     db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND b.external_source IS NULL AND ${scope.clause} ORDER BY starts_at`,scope.values),
-    db.query(`SELECT d.status,count(*)::int total FROM devices d JOIN rooms r ON r.id=d.room_id WHERE ${scope.clause} GROUP BY d.status`,scope.values)
+    db.query(`SELECT d.status,count(*)::int total FROM devices d JOIN rooms r ON r.id=d.room_id WHERE ${scope.clause} GROUP BY d.status`,scope.values),
+    db.query(`SELECT w.id,w.starts_at,w.ends_at,w.responsibility,l.name location_name
+      FROM work_shifts w JOIN locations l ON l.id=w.location_id
+      WHERE w.user_id=$1 AND (w.starts_at AT TIME ZONE l.timezone)::date=(now() AT TIME ZONE l.timezone)::date
+      ORDER BY w.starts_at`,[req.user.sub])
   ]);
-  res.json({ rooms: rooms.rows, bookings: bookings.rows, deviceSummary: devices.rows });
+  res.json({ rooms: rooms.rows, bookings: bookings.rows, deviceSummary: devices.rows, myShifts: myShifts.rows });
 });
 
 app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
@@ -452,6 +507,49 @@ app.post("/work-schedules/recurring",auth,permit("users:manage"),async(req,res)=
     await audit(req,"work_shift.recurring.create","work_shift",null,null,{...input,created,skipped});
     res.status(201).json({created,skipped});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+});
+
+app.get("/work-time-entries",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({from:z.string().date(),to:z.string().date()}).safeParse(req.query);
+  if(!parsed.success || parsed.data.from>parsed.data.to) return res.status(400).json({error:"INVALID_DATE_RANGE"});
+  const scope=isOwner(req)?{clause:"TRUE",values:[parsed.data.from,parsed.data.to]}:{clause:"e.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$3)",values:[parsed.data.from,parsed.data.to,req.user.sub]};
+  const {rows}=await db.query(`SELECT e.*,u.display_name user_name,l.name location_name,b.customer_name,b.product_name,b.starts_at booking_starts_at,r.name room_name
+    FROM work_time_entries e JOIN users u ON u.id=e.user_id JOIN locations l ON l.id=e.location_id
+    LEFT JOIN bookings b ON b.id=e.booking_id LEFT JOIN rooms r ON r.id=b.room_id
+    WHERE e.arrived_at<($2::date+interval '1 day') AND e.left_at>=$1::date AND ${scope.clause}
+    ORDER BY e.arrived_at DESC`,scope.values);
+  res.json(rows);
+});
+
+app.get("/work-time-bookings",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({from:z.string().date(),to:z.string().date(),locationId:z.string().uuid().optional()}).safeParse(req.query);
+  if(!parsed.success || parsed.data.from>parsed.data.to) return res.status(400).json({error:"INVALID_DATE_RANGE"});
+  const values=[parsed.data.from,parsed.data.to],conditions=["b.starts_at<($2::date+interval '1 day')","b.ends_at>=$1::date"];
+  if(parsed.data.locationId){values.push(parsed.data.locationId);conditions.push(`r.location_id=$${values.length}`);}
+  if(!isOwner(req)){values.push(req.user.sub);conditions.push(`r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$${values.length})`);}
+  const {rows}=await db.query(`SELECT b.id,b.customer_name,b.product_name,b.starts_at,b.ends_at,r.name room_name,r.location_id FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE ${conditions.join(" AND ")} ORDER BY b.starts_at`,values);
+  res.json(rows);
+});
+
+app.post("/work-time-entries",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),bookingId:z.string().uuid().nullable().default(null),arrivedAt:z.string().datetime({offset:true}),leftAt:z.string().datetime({offset:true}),note:z.string().trim().max(300).nullable().default(null)}).safeParse(req.body);
+  if(!parsed.success || new Date(parsed.data?.leftAt||0)<=new Date(parsed.data?.arrivedAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
+  const input=parsed.data;
+  if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.userId])).rowCount) return res.status(404).json({error:"USER_NOT_FOUND"});
+  if(input.bookingId && !(await db.query("SELECT 1 FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE b.id=$1 AND r.location_id=$2",[input.bookingId,input.locationId])).rowCount) return res.status(400).json({error:"BOOKING_LOCATION_MISMATCH"});
+  const entry=(await db.query("INSERT INTO work_time_entries(user_id,location_id,booking_id,arrived_at,left_at,note,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[input.userId,input.locationId,input.bookingId,input.arrivedAt,input.leftAt,input.note,req.user.sub])).rows[0];
+  await audit(req,"work_time_entry.create","work_time_entry",entry.id,null,entry);
+  res.status(201).json(entry);
+});
+
+app.delete("/work-time-entries/:id",auth,permit("users:manage"),async(req,res)=>{
+  const entry=(await db.query("SELECT * FROM work_time_entries WHERE id=$1",[req.params.id])).rows[0];
+  if(!entry) return res.status(404).json({error:"TIME_ENTRY_NOT_FOUND"});
+  if(!(await locationAllowed(req,entry.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  await db.query("DELETE FROM work_time_entries WHERE id=$1",[entry.id]);
+  await audit(req,"work_time_entry.delete","work_time_entry",entry.id,entry,null);
+  res.status(204).end();
 });
 
 app.delete("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
