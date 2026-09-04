@@ -117,7 +117,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
           <h2>Бронирования</h2>
           <p>Расписание гостей из подключённых систем бронирования</p>
         </div>
-        <div class="header-tools">@if(isOwner()){<button type="button" class="sheets-settings" (click)="openGoogleSheetsSettings()">Google Sheets</button>}<div class="view-switch">
+        <div class="header-tools">@if(isManagement()){<button type="button" class="sheets-settings" (click)="openGoogleSheetsSettings()">Google Sheets</button>}<div class="view-switch">
           <button
             [class.active]="viewMode() === 'calendar'"
             (click)="viewMode.set('calendar')"
