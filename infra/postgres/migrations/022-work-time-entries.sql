@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS work_time_entries(
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   booking_id uuid REFERENCES bookings(id) ON DELETE SET NULL,
+  booking_snapshot jsonb,
   arrived_at timestamptz NOT NULL,
   left_at timestamptz NOT NULL,
   note text,
