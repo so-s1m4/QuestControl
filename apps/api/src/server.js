@@ -1857,6 +1857,7 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
       locationName:location.name,roomName:details.rows[0]?.room_name||"",game:details.rows[0]?.game_name||externalBooking.product.effective_name,
       startTime:bookingStartTime,durationMinutes,players:input.playerCount,total:pricing.total,onlineAmount:pricing.total,price:pricing.pricePerPerson,
       discountAmount:pricing.discountAmount,discountReason:pricing.discountReason,promoCode:pricing.promoCode,
+      paymentStatus:externalBooking.order.payment_status||"",
       phone:externalBooking.owner?.phone||"",administrator:user.rows[0]?.display_name||"",comments:`QuestControl · ${input.bookingId}`,
     };
     await db.query("UPDATE sessions SET sheet_sync_status='PENDING',sheet_sync_payload=$2 WHERE id=$1",[session.id,JSON.stringify({clubId:input.clubId,payload:sheetPayload})]);
