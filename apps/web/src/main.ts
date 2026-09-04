@@ -4,7 +4,8 @@ import { provideRouter } from "@angular/router";
 import { AppComponent } from "./app/app.component";
 import { routes } from "./app/app.routes";
 import { authInterceptor } from "./app/core/auth.interceptor";
-bootstrapApplication(AppComponent,{providers:[provideHttpClient(withInterceptors([authInterceptor])),provideRouter(routes)]}).catch(console.error);
+import { timeToGrowCacheInterceptor } from "./app/core/time-to-grow-cache.interceptor";
+bootstrapApplication(AppComponent,{providers:[provideHttpClient(withInterceptors([authInterceptor,timeToGrowCacheInterceptor])),provideRouter(routes)]}).catch(console.error);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
