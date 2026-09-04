@@ -76,6 +76,9 @@ type ExternalBooking = {
   checkInErrors: CheckInError[];
   checkedInPlayers: CheckedInPlayer[];
   confirmed: boolean;
+  sourceType?: "TIME_TO_GROW" | "GENERIC";
+  sourceId?: string;
+  sourceName?: string;
 };
 type ExternalClub = {
   id: string;
@@ -83,6 +86,7 @@ type ExternalClub = {
   timezone: string;
   address: string | null;
 };
+type BookingSourceOption={id:string;name:string;locationExternalId:string;locationName:string};
 type SessionInventoryItem={id:string;name:string;category:string;unit:string;quantity:number;game_id:string|null;recommended:boolean};
 
 @Component({
@@ -289,9 +293,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
                     "Игра выбирается на месте"
                 }}</small>
               </div>
-              <button class="confirmation" [class.confirmed]="b.confirmed" [disabled]="confirmingId() === b.id" (click)="toggleExternalConfirmation(b)">
-                {{ b.confirmed ? "Подтверждено" : "Не подтверждено" }}
-              </button>
+              @if(!isGenericBooking(b)){<button class="confirmation" [class.confirmed]="b.confirmed" [disabled]="confirmingId() === b.id" (click)="toggleExternalConfirmation(b)">{{ b.confirmed ? "Подтверждено" : "Не подтверждено" }}</button>}@else{<span class="pill">{{b.sourceName}}</span>}
               <span class="card-chevron" aria-hidden="true">⌄</span>
               @if (expandedExternalId() === b.id) {
                 <div class="booking-details">
@@ -372,7 +374,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
                       </div>
                     }
                   </section>
-                  <section class="booking-controls">
+                  @if(!isGenericBooking(b)){<section class="booking-controls">
                     <h4>Управление бронью</h4>
                     <div class="control-group">
                       <span>Check-in гостей</span>
@@ -408,7 +410,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
                         <button class="start-session" (click)="openSessionRecord(b)">Записать игру</button>
                       }
                     </div>
-                  </section>
+                  </section>}@else{<section class="booking-controls"><h4>Источник</h4><p>Бронь получена через {{b.sourceName}}. Управление check-in и игровой сессией для этого API пока не включено.</p></section>}
                 </div>
               }
             </article>
@@ -1428,10 +1430,10 @@ export class BookingsComponent {
       )
       .subscribe({
         next: (r) => {
-          this.externalClubs.set(r.data);
-          this.externalClubId = r.defaultClubId || "";
-          this.loadExternal();
-          this.loadCalendar();
+          this.http.get<BookingSourceOption[]>("/api/booking-sources").subscribe({next:sources=>{
+            const options:ExternalClub[]=[...r.data,...sources.map(source=>({id:`source:${source.id}`,name:`API · ${source.name}`,timezone:"Europe/Vienna",address:source.locationName}))];
+            this.externalClubs.set(options);this.externalClubId=r.defaultClubId||options[0]?.id||"";this.loadExternal();this.loadCalendar();
+          },error:()=>{this.externalClubs.set(r.data);this.externalClubId=r.defaultClubId||"";this.loadExternal();this.loadCalendar();}});
         },
         error: ({ status }) => {
           this.externalLoading.set(false);
@@ -1520,7 +1522,8 @@ export class BookingsComponent {
     const to=this.localDate(new Date(month.getFullYear(),month.getMonth(),days));
     this.calendarLoading.set(true);
     this.externalError.set("");
-    this.http.get<{data:ExternalBooking[]}>(`/api/time-to-grow/bookings?from=${from}&to=${to}&clubId=${encodeURIComponent(this.externalClubId)}`).subscribe({
+    const sourceId=this.genericSourceId(),url=sourceId?`/api/booking-sources/${encodeURIComponent(sourceId)}/bookings?from=${from}&to=${to}`:`/api/time-to-grow/bookings?from=${from}&to=${to}&clubId=${encodeURIComponent(this.externalClubId)}`;
+    this.http.get<{data:ExternalBooking[]}>(url).subscribe({
       next: (response) => {
         const byDate: Record<string, ExternalBooking[]> = {};
         for(let index=0;index<days;index++)byDate[this.localDate(new Date(month.getFullYear(),month.getMonth(),index+1))]=[];
@@ -1539,10 +1542,8 @@ export class BookingsComponent {
     this.expandedExternalId.set(null);
     this.externalLoading.set(true);
     this.externalError.set("");
-    this.http
-      .get<{ data: ExternalBooking[] }>(
-        `/api/time-to-grow/bookings?date=${encodeURIComponent(this.externalDate)}&clubId=${encodeURIComponent(this.externalClubId)}`,
-      )
+    const sourceId=this.genericSourceId(),url=sourceId?`/api/booking-sources/${encodeURIComponent(sourceId)}/bookings?date=${encodeURIComponent(this.externalDate)}`:`/api/time-to-grow/bookings?date=${encodeURIComponent(this.externalDate)}&clubId=${encodeURIComponent(this.externalClubId)}`;
+    this.http.get<{ data: ExternalBooking[] }>(url)
       .subscribe({
         next: (r) => {
           this.externalBookings.set(r.data);
@@ -1559,6 +1560,8 @@ export class BookingsComponent {
         },
       });
   }
+  genericSourceId(){return this.externalClubId.startsWith("source:")?this.externalClubId.slice(7):null;}
+  isGenericBooking(booking:ExternalBooking){return booking.sourceType==="GENERIC";}
   toggleExternal(id: string) {
     this.expandedExternalId.update((current) => (current === id ? null : id));
   }
