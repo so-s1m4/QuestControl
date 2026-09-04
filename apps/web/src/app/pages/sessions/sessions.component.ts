@@ -12,6 +12,7 @@ type Session={
   id:string;status:string;started_at:string|null;ended_at:string|null;
   room_id:string;room_name:string;game_id:string|null;game_name:string|null;location_name:string;player_count:number;
   identified_player_count:number;anonymous_player_count:number;elapsed_seconds:number|null;
+  sheet_sync_status:"PENDING"|"SYNCED"|"FAILED"|null;sheet_sync_error:string|null;sheet_sync_payload:unknown;
 };
 type Breakdown={player_plays:number;identified_unique_players:number;sessions?:number};
 type Statistics={
@@ -69,7 +70,7 @@ type Statistics={
         <div class="players"><b>{{item.player_count}}</b><span>игроков</span></div>
         <div class="duration"><b>{{duration(item.elapsed_seconds)}}</b><span>время</span></div>
         <span class="status" [class.running]="item.status==='RUNNING'" [class.finished]="item.status==='FINISHED'">{{status(item.status)}}</span>
-        @if(canManageSessions()){<div class="row-actions"><button class="secondary" (click)="editSession(item)">Изменить</button>@if(isOwner()){<button class="danger" (click)="deleteSession(item)">Удалить</button>}</div>}
+        @if(canManageSessions()){<div class="row-actions"><button class="secondary" (click)="editSession(item)">Изменить</button>@if(isOwner()&&item.sheet_sync_payload&&item.sheet_sync_status!=='SYNCED'){<button class="sync" (click)="retrySheetSync(item)" [disabled]="syncingId()===item.id">{{syncingId()===item.id?'Отправляем…':'В таблицу'}}</button>}@if(isOwner()){<button class="danger" (click)="deleteSession(item)">Удалить</button>}</div>}
       </article>}@empty{@if(!loading()){<div class="empty"><b>Сессий за этот период нет</b><span>Измените фильтр локации или даты.</span></div>}}
     </div>
   </section></main>`,
@@ -85,7 +86,7 @@ type Statistics={
 export class SessionsComponent{
   private http=inject(HttpClient);
   locations=signal<Location[]>([]);rooms=signal<Room[]>([]);games=signal<Game[]>([]);sessions=signal<Session[]>([]);stats=signal<Statistics|null>(null);
-  loading=signal(false);error=signal("");locationId="";
+  loading=signal(false);error=signal("");syncingId=signal<string|null>(null);locationId="";
   showForm=signal(false);editingId=signal<string|null>(null);
   draft={roomId:"",gameId:"",startedAt:this.localDateTime(new Date()),endedAt:"",status:"RUNNING"};
   from=this.iso(new Date(Date.now()-30*86_400_000));to=this.iso(new Date());
@@ -102,6 +103,7 @@ export class SessionsComponent{
   closeForm(){this.showForm.set(false);this.editingId.set(null);}
   saveSession(){if(this.draft.status==="FINISHED"&&!this.draft.endedAt){this.error.set("Для завершённой сессии укажите время окончания.");return}const body={roomId:this.draft.roomId,gameId:this.draft.gameId||null,startedAt:new Date(this.draft.startedAt).toISOString(),endedAt:this.draft.endedAt?new Date(this.draft.endedAt).toISOString():null,status:this.draft.status};const request=this.editingId()?this.http.patch(`/api/sessions/${this.editingId()}`,body):this.http.post("/api/sessions",body);request.subscribe({next:()=>{this.closeForm();this.load();},error:()=>this.error.set("Не удалось сохранить сессию.")});}
   deleteSession(item:Session){if(!confirm(`Удалить сессию ${item.room_name}? Это действие нельзя отменить.`))return;this.http.delete(`/api/sessions/${item.id}`).subscribe({next:()=>this.load(),error:()=>this.error.set("Не удалось удалить сессию.")});}
+  retrySheetSync(item:Session){this.syncingId.set(item.id);this.error.set("");this.http.post(`/api/sessions/${item.id}/google-sheets/retry`,{}).subscribe({next:()=>{this.syncingId.set(null);this.load()},error:({error})=>{this.syncingId.set(null);this.error.set(error?.error==="SHEET_SYNC_DATA_MISSING"?"Для этой старой сессии недостаточно данных для повторной отправки.":"Google Таблица не приняла запись. Проверьте настройки локации.")}})}
   private iso(date:Date){return date.toISOString().slice(0,10);}
   private localDateTime(date:Date){const shifted=new Date(date.getTime()-date.getTimezoneOffset()*60_000);return shifted.toISOString().slice(0,16);}
 }

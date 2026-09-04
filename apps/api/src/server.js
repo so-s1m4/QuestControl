@@ -1691,6 +1691,21 @@ async function sendSessionToGoogleSheets(clubId,payload){
   if(!response.ok||!result?.ok)throw new Error(`GOOGLE_SHEETS_SYNC_FAILED:${response.status}:${result?.error||"INVALID_RESPONSE"}`);
   return {configured:true,...result};
 }
+async function syncStoredSessionToGoogleSheets(sessionId){
+  const session=(await db.query("SELECT sheet_sync_payload FROM sessions WHERE id=$1",[sessionId])).rows[0];
+  const stored=session?.sheet_sync_payload;
+  if(!stored?.clubId||!stored?.payload)throw Object.assign(new Error("SHEET_SYNC_DATA_MISSING"),{code:"SHEET_SYNC_DATA_MISSING"});
+  await db.query("UPDATE sessions SET sheet_sync_status='PENDING',sheet_sync_error=NULL WHERE id=$1",[sessionId]);
+  try{
+    const result=await sendSessionToGoogleSheets(stored.clubId,stored.payload);
+    const status=result.configured&&result.ok?"SYNCED":"FAILED";
+    await db.query("UPDATE sessions SET sheet_sync_status=$2,sheet_sync_error=$3,sheet_synced_at=CASE WHEN $2='SYNCED' THEN now() ELSE sheet_synced_at END WHERE id=$1",[sessionId,status,result.configured?"INVALID_RESPONSE":"NOT_CONFIGURED"]);
+    return {...result,status};
+  }catch(error){
+    await db.query("UPDATE sessions SET sheet_sync_status='FAILED',sheet_sync_error=$2 WHERE id=$1",[sessionId,String(error.message||error).slice(0,500)]);
+    throw error;
+  }
+}
 
 app.get("/settings/google-sheets",auth,async(req,res)=>{
   if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
@@ -1816,18 +1831,29 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     ]);
     const durationMinutes=Math.round((new Date(input.endedAt)-new Date(input.startedAt))/60000);
     const startTime=new Intl.DateTimeFormat("de-AT",{timeZone:location.timezone,hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(input.startedAt));
-    let sheetSync={configured:false};
+    const sheetPayload={
+      type:"session.recorded",sessionId:session.id,bookingId:input.bookingId,date:input.date,
+      locationName:location.name,roomName:details.rows[0]?.room_name||"",game:details.rows[0]?.game_name||externalBooking.product.effective_name,
+      startTime,durationMinutes,players:input.playerCount,total:externalBooking.order.total_amount,
+      onlineAmount:externalBooking.order.total_amount,price:input.playerCount?externalBooking.order.total_amount/input.playerCount:externalBooking.order.total_amount,
+      phone:externalBooking.owner?.phone||"",administrator:user.rows[0]?.display_name||"",comments:`QuestControl · ${input.bookingId}`,
+    };
+    await db.query("UPDATE sessions SET sheet_sync_status='PENDING',sheet_sync_payload=$2 WHERE id=$1",[session.id,JSON.stringify({clubId:input.clubId,payload:sheetPayload})]);
+    let sheetSync={configured:false,status:"FAILED"};
     try{
-      sheetSync=await sendSessionToGoogleSheets(input.clubId,{
-        type:"session.recorded",sessionId:session.id,bookingId:input.bookingId,date:input.date,
-        locationName:location.name,roomName:details.rows[0]?.room_name||"",game:details.rows[0]?.game_name||externalBooking.product.effective_name,
-        startTime,durationMinutes,players:input.playerCount,total:externalBooking.order.total_amount,
-        onlineAmount:externalBooking.order.total_amount,price:input.playerCount?externalBooking.order.total_amount/input.playerCount:externalBooking.order.total_amount,
-        phone:externalBooking.owner?.phone||"",administrator:user.rows[0]?.display_name||"",comments:`QuestControl · ${input.bookingId}`,
-      });
-    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false};}
+      sheetSync=await syncStoredSessionToGoogleSheets(session.id);
+    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false,status:"FAILED"};}
     res.status(201).json({...session,sheetSync});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+});
+
+app.post("/sessions/:id/google-sheets/retry",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const session=(await db.query(`SELECT s.id,r.location_id FROM sessions s JOIN rooms r ON r.id=s.room_id WHERE s.id=$1`,[req.params.id])).rows[0];
+  if(!session)return res.status(404).json({error:"SESSION_NOT_FOUND"});
+  if(!(await locationAllowed(req,session.location_id)))return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  try{const result=await syncStoredSessionToGoogleSheets(session.id);await audit(req,"session.google_sheets.retry","session",session.id,null,result);res.json(result);}
+  catch(error){console.error("Google Sheets retry failed",session.id,error);res.status(error.code==="SHEET_SYNC_DATA_MISSING"?409:502).json({error:error.code||"GOOGLE_SHEETS_SYNC_FAILED"});}
 });
 
 app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => {
