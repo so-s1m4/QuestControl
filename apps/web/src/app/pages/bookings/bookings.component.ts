@@ -20,6 +20,7 @@ type Booking = {
   payment_status: string;
   session_id: string | null;
   session_status: string | null;
+  confirmed: boolean;
 };
 type CheckedInPlayer = {
   id: string;
@@ -65,6 +66,7 @@ type ExternalBooking = {
   checkInTotal: number;
   checkInPath: string;
   checkedInPlayers: CheckedInPlayer[];
+  confirmed: boolean;
 };
 type ExternalClub = {
   id: string;
@@ -84,6 +86,7 @@ type ExternalClub = {
         <a routerLink="/">Обзор</a
         ><a class="active" routerLink="/bookings">Бронирования</a
         ><a class="sessions-nav" routerLink="/sessions">Сессии</a
+        ><a class="sessions-nav" routerLink="/work-schedules">Графики работы</a
         ><a routerLink="/locations">Локации</a><a routerLink="/rooms">Комнаты</a
         ><a routerLink="/cameras">Камеры</a
         ><a routerLink="/inventory">Инвентарь</a
@@ -276,6 +279,9 @@ type ExternalClub = {
                     "Игра выбирается на месте"
                 }}</small>
               </div>
+              <button class="confirmation" [class.confirmed]="b.confirmed" [disabled]="confirmingId() === b.id" (click)="toggleExternalConfirmation(b)">
+                {{ b.confirmed ? "Подтверждено" : "Не подтверждено" }}
+              </button>
               <span class="card-chevron" aria-hidden="true">⌄</span>
               @if (expandedExternalId() === b.id) {
                 <div class="booking-details">
@@ -419,6 +425,7 @@ type ExternalClub = {
               >
             </div>
             <span class="pill">{{ b.payment_status }}</span>
+            <button class="confirmation" [class.confirmed]="b.confirmed" [disabled]="confirmingId() === b.id" (click)="toggleConfirmation(b)">{{ b.confirmed ? "Подтверждено" : "Не подтверждено" }}</button>
             @if (b.session_id) {
               <div class="session-actions">
                 <span class="pill live">{{ b.session_status }}</span>
@@ -754,7 +761,7 @@ type ExternalClub = {
         border-radius: 14px;
       }
       .schedule.external article {
-        grid-template-columns: 80px 1fr auto;
+        grid-template-columns: 80px 1fr auto auto;
       }
       .schedule article.open {
         border-color: #b9c5ee;
@@ -800,6 +807,8 @@ type ExternalClub = {
         background: #e8f8ef;
         color: #087443;
       }
+      .confirmation { padding: 8px 11px; background: #fff1f0; border: 1px solid #f3c4c0; box-shadow: none; color: #b42318; font-size: 10px; white-space: nowrap; }
+      .confirmation.confirmed { background: #e8f8ef; border-color: #a6dfbf; color: #087443; }
       .pill.checkin {
         background: #eef4ff;
         color: #3448a5;
@@ -1127,7 +1136,7 @@ type ExternalClub = {
           grid-template-columns: 64px 1fr;
         }
         .schedule.external article {
-          grid-template-columns: 64px minmax(0, 1fr) 34px;
+          grid-template-columns: 64px minmax(0, 1fr) auto 34px;
         }
         .schedule > article > button,
         .schedule > article > .pill,
@@ -1257,6 +1266,8 @@ type ExternalClub = {
         .schedule.external article {
           grid-template-columns: 66px minmax(0, 1fr) 34px;
         }
+        .schedule.external .confirmation { grid-column: 2; justify-self: start; }
+        .schedule.external .card-chevron { grid-column: 3; grid-row: 1; }
         .schedule.external .booking-card { align-items: start; }
         .schedule.external .booking-main { padding-top: 1px; }
         .schedule.external .card-chevron { align-self: start; }
@@ -1310,6 +1321,7 @@ export class BookingsComponent {
   extraGuestMessages = signal<Record<string, { text: string; error: boolean }>>({});
   extraGuestBusyId = signal<string | null>(null);
   importingId = signal<string | null>(null);
+  confirmingId = signal<string | null>(null);
   externalDate = this.localDate(new Date());
   games = signal<Game[]>([]);
   selectedGames: Record<string, string> = {};
@@ -1682,6 +1694,20 @@ export class BookingsComponent {
         error: () =>
           this.externalError.set("Не удалось изменить состояние сессии."),
       });
+  }
+  toggleExternalConfirmation(booking: ExternalBooking) {
+    this.confirmingId.set(booking.id);
+    this.http.patch<{confirmed:boolean}>(`/api/time-to-grow/bookings/${booking.id}/confirmation`, { clubId: this.externalClubId, confirmed: !booking.confirmed }).subscribe({
+      next: ({confirmed}) => { this.externalBookings.update(items=>items.map(item=>item.id===booking.id?{...item,confirmed}:item)); this.confirmingId.set(null); },
+      error: () => { this.confirmingId.set(null); this.externalError.set("Не удалось изменить подтверждение брони."); },
+    });
+  }
+  toggleConfirmation(booking: Booking) {
+    this.confirmingId.set(booking.id);
+    this.http.patch<{confirmed:boolean}>(`/api/bookings/${booking.id}/confirmation`, { confirmed: !booking.confirmed }).subscribe({
+      next: ({confirmed}) => { this.bookings.update(items=>items.map(item=>item.id===booking.id?{...item,confirmed}:item)); this.confirmingId.set(null); },
+      error: () => { this.confirmingId.set(null); this.error.set("Не удалось изменить подтверждение брони."); },
+    });
   }
   importArchive() {
     if (!this.externalClubId || this.archiveFrom > this.archiveTo) return;

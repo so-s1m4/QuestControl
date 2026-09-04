@@ -17,6 +17,7 @@ import { ReceptionCheckinComponent } from "./pages/reception-checkin/reception-c
 import { InventoryComponent } from "./pages/inventory/inventory.component";
 import { CameraWatchComponent } from "./pages/camera-watch/camera-watch.component";
 import { RoomControlComponent } from "./pages/room-control/room-control.component";
+import { WorkSchedulesComponent } from "./pages/work-schedules/work-schedules.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
   { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
@@ -32,6 +33,7 @@ export const routes: Routes = [
   { path: "krampus", component: KrampusComponent, canActivate: [authGuard] },
   { path: "users", component: UsersComponent, canActivate: [authGuard] },
   { path: "bookings", component: BookingsComponent, canActivate: [authGuard] },
+  { path: "work-schedules", component: WorkSchedulesComponent, canActivate: [authGuard, adminGuard] },
   {
     path: "sessions",
     component: SessionsComponent,

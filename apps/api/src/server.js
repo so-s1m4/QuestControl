@@ -379,6 +379,47 @@ app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
   res.json(rows);
 });
 
+app.patch("/bookings/:id/confirmation", auth, permit("bookings:read"), async (req,res) => {
+  const parsed=z.object({confirmed:z.boolean()}).safeParse(req.body);
+  if(!parsed.success) return res.status(400).json({error:"INVALID_INPUT"});
+  const booking=(await db.query(`SELECT b.id,b.confirmed,r.location_id FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE b.id=$1`,[req.params.id])).rows[0];
+  if(!booking) return res.status(404).json({error:"BOOKING_NOT_FOUND"});
+  if(!(await locationAllowed(req,booking.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const updated=(await db.query("UPDATE bookings SET confirmed=$1 WHERE id=$2 RETURNING id,confirmed",[parsed.data.confirmed,booking.id])).rows[0];
+  await audit(req,"booking.confirmation.update","booking",booking.id,{confirmed:booking.confirmed},updated);
+  res.json(updated);
+});
+
+app.get("/work-schedules",auth,async(req,res)=>{
+  const parsed=z.object({from:z.string().date(),to:z.string().date()}).safeParse(req.query);
+  if(!parsed.success || parsed.data.from>parsed.data.to) return res.status(400).json({error:"INVALID_DATE_RANGE"});
+  const scope=isOwner(req)?{clause:"TRUE",values:[parsed.data.from,parsed.data.to]}:{clause:"w.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$3)",values:[parsed.data.from,parsed.data.to,req.user.sub]};
+  const {rows}=await db.query(`SELECT w.*,u.display_name user_name,l.name location_name FROM work_shifts w JOIN users u ON u.id=w.user_id JOIN locations l ON l.id=w.location_id WHERE w.starts_at < ($2::date + interval '1 day') AND w.ends_at >= $1::date AND ${scope.clause} ORDER BY w.starts_at,u.display_name`,scope.values);
+  res.json(rows);
+});
+
+app.post("/work-schedules",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300)}).safeParse(req.body);
+  if(!parsed.success || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
+  const input=parsed.data;
+  if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.userId])).rowCount) return res.status(404).json({error:"USER_NOT_FOUND"});
+  const overlap=(await db.query("SELECT 1 FROM work_shifts WHERE user_id=$1 AND starts_at<$3 AND ends_at>$2",[input.userId,input.startsAt,input.endsAt])).rowCount;
+  if(overlap) return res.status(409).json({error:"SHIFT_OVERLAP"});
+  const shift=(await db.query("INSERT INTO work_shifts(user_id,location_id,starts_at,ends_at,responsibility,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[input.userId,input.locationId,input.startsAt,input.endsAt,input.responsibility,req.user.sub])).rows[0];
+  await audit(req,"work_shift.create","work_shift",shift.id,null,shift);
+  res.status(201).json(shift);
+});
+
+app.delete("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
+  const shift=(await db.query("SELECT * FROM work_shifts WHERE id=$1",[req.params.id])).rows[0];
+  if(!shift) return res.status(404).json({error:"SHIFT_NOT_FOUND"});
+  if(!(await locationAllowed(req,shift.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  await db.query("DELETE FROM work_shifts WHERE id=$1",[shift.id]);
+  await audit(req,"work_shift.delete","work_shift",shift.id,shift,null);
+  res.status(204).end();
+});
+
 app.post("/bookings/:id/participants", auth, permit("bookings:manage"), async (req, res) => {
   if (!env.PSEUDONYMIZATION_SECRET) return res.status(503).json({ error:"PSEUDONYMIZATION_NOT_CONFIGURED" });
   const input = z.object({
@@ -1084,6 +1125,11 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       WHERE b.external_source='TIME_TO_GROW' AND b.external_id=ANY($1::text[])
     `,[bookings.map(booking=>booking.id)])).rows : [];
     const importedById=new Map(importedRows.map(row=>[row.external_id,row]));
+    const confirmationRows=bookings.length ? (await db.query(
+      "SELECT external_booking_id,confirmed FROM external_booking_confirmations WHERE club_id=$1 AND external_booking_id=ANY($2::text[])",
+      [clubId,bookings.map(booking=>booking.id)]
+    )).rows : [];
+    const confirmationsById=new Map(confirmationRows.map(row=>[row.external_booking_id,row.confirmed]));
 
     res.json({
       data: bookings.map(booking => ({
@@ -1095,6 +1141,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         localBookingId: importedById.get(booking.id)?.local_booking_id || null,
         sessionId: importedById.get(booking.id)?.session_id || null,
         sessionStatus: importedById.get(booking.id)?.session_status || null,
+        confirmed: confirmationsById.get(booking.id) || false,
         id: booking.id,
         date: booking.start.date,
         startsAt: booking.start.time,
@@ -1133,6 +1180,22 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
     res.status(502).json({ error: code, upstreamStatus: error?.upstreamStatus });
   }
+});
+
+app.patch("/time-to-grow/bookings/:id/confirmation",auth,permit("bookings:read"),async(req,res)=>{
+  const parsed=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/),confirmed:z.boolean()}).safeParse(req.body);
+  if(!parsed.success) return res.status(400).json({error:"INVALID_INPUT"});
+  const {clubId,confirmed}=parsed.data;
+  if(!isOwner(req)) {
+    const allowed=await db.query("SELECT 1 FROM user_locations ul JOIN locations l ON l.id=ul.location_id WHERE ul.user_id=$1 AND l.external_id=$2",[req.user.sub,clubId]);
+    if(!allowed.rowCount) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  }
+  const before=(await db.query("SELECT confirmed FROM external_booking_confirmations WHERE club_id=$1 AND external_booking_id=$2",[clubId,req.params.id])).rows[0];
+  const result=(await db.query(`INSERT INTO external_booking_confirmations(club_id,external_booking_id,confirmed,updated_by) VALUES($1,$2,$3,$4)
+    ON CONFLICT(club_id,external_booking_id) DO UPDATE SET confirmed=excluded.confirmed,updated_by=excluded.updated_by,updated_at=now()
+    RETURNING external_booking_id AS id,confirmed`,[clubId,req.params.id,confirmed,req.user.sub])).rows[0];
+  await audit(req,"booking.confirmation.update","external_booking",req.params.id,before||{confirmed:false},result);
+  res.json(result);
 });
 
 app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) => {

@@ -48,6 +48,7 @@ type InstallPromptEvent = Event & {
             <div class="mobile-menu-links">
               @if (isAdmin()) {
                 <a routerLink="/sessions" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Сессии</b><span>История игр и статистика</span></a>
+                <a routerLink="/work-schedules" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Графики работы</b><span>Кто, когда и за что отвечает</span></a>
               }
               <a routerLink="/locations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Локации</b><span>Площадки и контакты</span></a>
               <a routerLink="/rooms" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Комнаты</b><span>Зоны, игры и устройства</span></a>
