@@ -802,6 +802,25 @@ const timeToGrowDataRows = (payload) => Array.isArray(payload?.data)
   : (payload?.data && typeof payload.data === "object" ? [payload.data] : []);
 
 const firstText = (...values) => values.find(value => typeof value === "string" && value.trim())?.trim() || null;
+const firstNumber = (...values) => {
+  for(const value of values){const parsed=Number(value);if(Number.isFinite(parsed)&&parsed>=0)return parsed;}
+  return null;
+};
+function timeToGrowBookingPricing(booking){
+  const order=booking.order||{},discount=booking.discount||{},promotion=booking.promotion||{},coupon=booking.coupon||{};
+  const paid=firstNumber(order.total_amount,order.total,booking.total_amount,booking.total,0)||0;
+  const players=Math.max(1,Number(booking.size)||0);
+  const discountAmount=firstNumber(order.discount_amount,order.discount_total,order.discount,booking.discount_amount,booking.discount_total,discount.amount,discount.value,0)||0;
+  const gross=firstNumber(order.original_amount,order.subtotal_amount,order.total_before_discount,order.full_amount,booking.original_amount,booking.subtotal_amount,paid+discountAmount)||paid+discountAmount;
+  const rawPrice=firstNumber(order.price_per_person,order.unit_price,booking.price_per_person,booking.unit_price,booking.product?.price_per_person,booking.product?.price);
+  return {
+    pricePerPerson:rawPrice??gross/players,
+    discountAmount,
+    discountReason:firstText(order.discount_reason,order.discount_name,booking.discount_reason,discount.reason,discount.name,promotion.name,coupon.name)||"",
+    promoCode:firstText(order.promo_code,order.promocode,booking.promo_code,booking.promocode,discount.code,promotion.code,coupon.code)||"",
+    total:paid,
+  };
+}
 const firstCount = (...values) => {
   const count = values.map(Number).find(value => Number.isInteger(value) && value > 0);
   return count || null;
@@ -1424,6 +1443,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         productName: booking.product.effective_name,
         players: booking.size,
         amountCents: Math.round(booking.order.total_amount * 100),
+        pricing: timeToGrowBookingPricing(booking),
         currency: "EUR",
         paymentStatus: booking.order.payment_status,
         paymentStatusDisplay: booking.order.payment_status_display,
@@ -1798,10 +1818,8 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
   const input=z.object({
     clubId:z.string().regex(/^[a-z0-9]{26}$/),date:z.string().date(),bookingId:z.string(),gameId:z.string().uuid(),
     startedAt:z.string().datetime({offset:true}),endedAt:z.string().datetime({offset:true}),playerCount:z.number().int().min(0).max(1000),
-    pricePerPerson:z.union([z.literal(0),z.literal(35),z.literal(40),z.literal(50)]),
-    discountAmount:z.number().min(0).max(100000).default(0),discountReason:z.string().trim().max(300).default(""),promoCode:z.string().trim().max(100).default(""),
     deductions:z.array(z.object({itemId:z.string().uuid(),quantity:z.number().int().positive().max(1000)})).max(20)
-  }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).refine(value=>value.discountAmount<=value.pricePerPerson*value.playerCount,{path:["discountAmount"],message:"Discount exceeds total"}).parse(req.body);
+  }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).parse(req.body);
   const location=(await db.query("SELECT id,name,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
   if(!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
   if(!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
@@ -1833,13 +1851,12 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     ]);
     const durationMinutes=Math.round((new Date(input.endedAt)-new Date(input.startedAt))/60000);
     const bookingStartTime=String(externalBooking.start.time||"").slice(0,5);
-    const grossAmount=input.pricePerPerson*input.playerCount;
-    const totalAmount=Math.max(0,grossAmount-input.discountAmount);
+    const pricing=timeToGrowBookingPricing(externalBooking);
     const sheetPayload={
       type:"session.recorded",sessionId:session.id,bookingId:input.bookingId,date:input.date,
       locationName:location.name,roomName:details.rows[0]?.room_name||"",game:details.rows[0]?.game_name||externalBooking.product.effective_name,
-      startTime:bookingStartTime,durationMinutes,players:input.playerCount,total:totalAmount,onlineAmount:totalAmount,price:input.pricePerPerson,
-      discountAmount:input.discountAmount,discountReason:input.discountReason,promoCode:input.promoCode,
+      startTime:bookingStartTime,durationMinutes,players:input.playerCount,total:pricing.total,onlineAmount:pricing.total,price:pricing.pricePerPerson,
+      discountAmount:pricing.discountAmount,discountReason:pricing.discountReason,promoCode:pricing.promoCode,
       phone:externalBooking.owner?.phone||"",administrator:user.rows[0]?.display_name||"",comments:`QuestControl · ${input.bookingId}`,
     };
     await db.query("UPDATE sessions SET sheet_sync_status='PENDING',sheet_sync_payload=$2 WHERE id=$1",[session.id,JSON.stringify({clubId:input.clubId,payload:sheetPayload})]);
