@@ -2128,7 +2128,7 @@ const inventoryItemInput = z.object({
   quantity: z.coerce.number().finite().min(0).max(1_000_000),
   minimumQuantity: z.coerce.number().finite().min(0).max(1_000_000),
   notes: z.string().trim().max(500).default(""),
-  gameId:z.string().uuid().nullable().default(null),
+  gameId:z.preprocess(value=>value===""?null:value,z.string().uuid().nullable()).default(null),
 });
 
 app.get("/inventory", auth, async (req,res) => {

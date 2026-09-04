@@ -354,7 +354,8 @@ export class InventoryComponent {
     if (!this.draft.name.trim() || !this.draft.locationId) { this.error.set("Укажите название и клуб."); return; }
     this.saving.set(true);
     this.error.set("");
-    this.http.post("/api/inventory", this.draft).subscribe({
+    const payload={...this.draft,gameId:this.draft.category==="Магниты"&&this.draft.gameId?this.draft.gameId:null};
+    this.http.post("/api/inventory", payload).subscribe({
       next: () => {
         const locationId = this.draft.locationId;
         this.draft = { name: "", category: "Магниты", locationId, unit: "шт.", quantity: 0, minimumQuantity: 10, notes: "",gameId:"" };

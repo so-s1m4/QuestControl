@@ -77,7 +77,7 @@ type InstallPromptEvent = Event & {
     <router-outlet />
   `,
   styles: [`
-    .account-actions{position:fixed;z-index:1000;left:24px;bottom:24px;display:grid;width:150px;gap:7px}.account-actions button{width:100%;padding:10px 12px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}
+    .account-actions{position:fixed;z-index:1000;left:22px;bottom:24px;display:grid;width:236px;gap:7px}.account-actions button{width:100%;padding:10px 12px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}
     .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}
