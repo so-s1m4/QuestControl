@@ -1730,12 +1730,8 @@ app.put("/settings/google-sheets",auth,async(req,res)=>{
 app.post("/settings/google-sheets/test",auth,async(req,res)=>{
   if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
   const {clubId}=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/)}).parse(req.body);
-  const config=await googleSheetsConfig(clubId);
-  if(!config?.url)return res.status(409).json({error:"GOOGLE_SHEETS_NOT_CONFIGURED"});
-  const response=await fetch(config.url,{redirect:"follow",signal:AbortSignal.timeout(30000)});
-  const result=await response.json().catch(()=>null);
-  if(!response.ok||!result?.ok)return res.status(502).json({error:"GOOGLE_SHEETS_UNAVAILABLE"});
-  res.json({ok:true});
+  try{const result=await sendSessionToGoogleSheets(clubId,{type:"connection.test"});res.json({ok:true,sheets:result.sheets||[]});}
+  catch(error){res.status(error.message?.includes("NOT_CONFIGURED")?409:502).json({error:"GOOGLE_SHEETS_UNAVAILABLE"});}
 });
 
 const timeToGrowSettingsInput=z.object({
