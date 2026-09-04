@@ -41,6 +41,12 @@ const emptyParticipant = (): Participant => ({
   submitted: false,
 });
 
+const minimumAgeBirthDate = () => {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - 10);
+  return date.toISOString().slice(0, 10);
+};
+
 const copy = {
   en: {
     index: "Index", title: "Check-in", select: "Please select your reservation:", guests: "How many guests have arrived?",
@@ -190,6 +196,10 @@ export default function CheckinPage() {
   const saveParticipant = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selected || isSubmitting || draft.submitted) return;
+    if (!draft.birthDate || draft.birthDate > minimumAgeBirthDate()) {
+      setSubmitError(true);
+      return;
+    }
     setIsSubmitting(true);
     setSubmitError(false);
     try {
@@ -290,7 +300,7 @@ export default function CheckinPage() {
                 <label><span>{t.lastName} *</span><input required value={draft.lastName} onChange={(e) => updateField("lastName", e.target.value)} autoComplete="family-name" /></label>
                 <label><span>{t.email} *</span><input required type="email" value={draft.email} onChange={(e) => updateField("email", e.target.value)} autoComplete="email" /></label>
                 <label><span>{t.phone}</span><input type="tel" value={draft.phone} onChange={(e) => updateField("phone", e.target.value)} autoComplete="tel" /></label>
-                <label className="birth-field"><span>{t.birthDate} *</span><input required type="date" max={new Date().toISOString().slice(0, 10)} value={draft.birthDate} onChange={(e) => updateField("birthDate", e.target.value)} /><small>{t.birthdayHint}</small></label>
+                <label className="birth-field"><span>{t.birthDate} *</span><input required type="date" max={minimumAgeBirthDate()} value={draft.birthDate} onChange={(e) => updateField("birthDate", e.target.value)} /><small>{t.birthdayHint}</small></label>
                 <label><span>{t.gender} *</span><select required value={draft.gender} onChange={(e) => updateField("gender", e.target.value as Participant["gender"])}><option value="">—</option><option value="female">{t.female}</option><option value="male">{t.male}</option><option value="non-binary">{t.diverse}</option></select></label>
               </div>
               <label className="consent-row optional"><input type="checkbox" checked={draft.allowMarketingMaterials} onChange={(e) => updateField("allowMarketingMaterials", e.target.checked)} /><span className="toggle" /> <span>{t.marketing}</span></label>

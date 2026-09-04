@@ -124,6 +124,14 @@ async function audit(req, action, entityType, entityId, beforeState, afterState)
   await db.query("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,ip,user_agent,request_id,before_state,after_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", [actorUserId, action, entityType, entityId, req.ip, req.get?.("user-agent"), req.requestId||crypto.randomUUID(), beforeState || null, afterState || null]);
 }
 
+async function recordCheckinFailure(req, bookingId, details) {
+  try {
+    await audit(req,"checkin.participant.submit.failed","external_booking",bookingId||null,null,details);
+  } catch (error) {
+    console.error("Could not record check-in failure",{requestId:req.requestId,error:error?.message});
+  }
+}
+
 app.get("/health/live", (_, res) => res.json({ status: "ok", service: "quest-control-api" }));
 app.get("/health/ready", async (_, res) => {
   try { await Promise.all([db.query("SELECT 1"), redis.ping()]); res.json({ status: "ready", postgres: "ok", redis: "ok" }); }
@@ -411,6 +419,41 @@ app.post("/work-schedules",auth,permit("users:manage"),async(req,res)=>{
   res.status(201).json(shift);
 });
 
+app.post("/work-schedules/recurring",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({
+    userId:z.string().uuid(),locationId:z.string().uuid(),from:z.string().date(),to:z.string().date(),
+    weekdays:z.array(z.number().int().min(1).max(7)).min(1).max(7),
+    startsAt:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),endsAt:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    responsibility:z.string().trim().min(1).max(300),
+  }).safeParse(req.body);
+  if(!parsed.success || parsed.data.from>parsed.data.to || parsed.data.endsAt<=parsed.data.startsAt) return res.status(400).json({error:"INVALID_INPUT"});
+  const input=parsed.data;
+  const first=new Date(`${input.from}T00:00:00Z`),last=new Date(`${input.to}T00:00:00Z`);
+  if((last-first)/86_400_000>366) return res.status(400).json({error:"DATE_RANGE_TOO_LONG"});
+  if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.userId])).rowCount) return res.status(404).json({error:"USER_NOT_FOUND"});
+  const dates=[];
+  for(let date=first;date<=last;date=new Date(date.getTime()+86_400_000)) {
+    const weekday=date.getUTCDay()===0?7:date.getUTCDay();
+    if(input.weekdays.includes(weekday)) dates.push(date.toISOString().slice(0,10));
+  }
+  const client=await db.connect();let created=0,skipped=0;
+  try{
+    await client.query("BEGIN");
+    for(const date of dates){
+      const bounds=(await client.query(`SELECT (($1::date+$2::time) AT TIME ZONE timezone) starts_at,(($1::date+$3::time) AT TIME ZONE timezone) ends_at FROM locations WHERE id=$4`,[date,input.startsAt,input.endsAt,input.locationId])).rows[0];
+      if(!bounds) { await client.query("ROLLBACK"); return res.status(404).json({error:"LOCATION_NOT_FOUND"}); }
+      const overlap=(await client.query("SELECT 1 FROM work_shifts WHERE user_id=$1 AND starts_at<$3 AND ends_at>$2",[input.userId,bounds.starts_at,bounds.ends_at])).rowCount;
+      if(overlap){skipped++;continue;}
+      await client.query("INSERT INTO work_shifts(user_id,location_id,starts_at,ends_at,responsibility,created_by) VALUES($1,$2,$3,$4,$5,$6)",[input.userId,input.locationId,bounds.starts_at,bounds.ends_at,input.responsibility,req.user.sub]);
+      created++;
+    }
+    await client.query("COMMIT");
+    await audit(req,"work_shift.recurring.create","work_shift",null,null,{...input,created,skipped});
+    res.status(201).json({created,skipped});
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+});
+
 app.delete("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
   const shift=(await db.query("SELECT * FROM work_shifts WHERE id=$1",[req.params.id])).rows[0];
   if(!shift) return res.status(404).json({error:"SHIFT_NOT_FOUND"});
@@ -568,12 +611,20 @@ async function timeToGrowAppFetch(path, init = {}) {
 
 const timeToGrowId = z.string().regex(/^[a-z0-9]{26}$/);
 const CHECKIN_MAX_TOTAL_GUESTS = 10_000;
+const isValidCheckinBirthday = (value, now = new Date()) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year,month,day]=value.split("-").map(Number);
+  const birthday=new Date(Date.UTC(year,month-1,day));
+  if(birthday.getUTCFullYear()!==year||birthday.getUTCMonth()!==month-1||birthday.getUTCDate()!==day) return false;
+  const latest=new Date(Date.UTC(now.getUTCFullYear()-10,now.getUTCMonth(),now.getUTCDate()));
+  return birthday<=latest;
+};
 const checkinParticipantInput = z.object({
   firstName: z.string().trim().min(1).max(120),
   lastName: z.string().trim().min(1).max(120),
   email: z.string().trim().email().max(254),
   phone: z.string().trim().max(30).default(""),
-  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  birthday: z.string().refine(isValidCheckinBirthday,{message:"Participant must be at least 10 years old"}),
   gender: z.enum(["male", "female", "non-binary"]),
   allowMarketingMaterials: z.boolean().default(false),
   acceptWaiver: z.literal(true),
@@ -786,23 +837,37 @@ app.post("/reception/checkin/:token/extra-guests", auth, rateLimit({ windowMs: 6
 
 app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000, limit: 20 }), async (req, res) => {
   const parsed = checkinParticipantInput.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
+  const signedToken=readCheckinToken(req.params.token,env.JWT_ACCESS_SECRET);
+  if (!parsed.success) {
+    await recordCheckinFailure(req,signedToken?.bookingId,{
+      code:"INVALID_INPUT",
+      fields:[...new Set(parsed.error.issues.map(issue=>String(issue.path[0]||"form")))],
+    });
+    return res.status(400).json({ error: "INVALID_INPUT" });
+  }
   const input = parsed.data;
   let submissionKey=null;
   try {
     const resolved = await checkinReservationFromToken(req.params.token);
-    if (!resolved) return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
+    if (!resolved) {
+      await recordCheckinFailure(req,signedToken?.bookingId,{code:"CHECKIN_LINK_INVALID",participantNumber:input.participantNumber||null});
+      return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
+    }
     const { clubId,reservation } = resolved;
     const guestLimit=checkinGuestLimit(req.params.token,reservation,input.extraAuthorization);
     const participantNumber=input.participantNumber || (resolved.booking?.players?.length || 0)+1;
     const totalGuests=input.totalGuests || reservation.guests;
     if(totalGuests>guestLimit || participantNumber>totalGuests) {
+      await recordCheckinFailure(req,reservation.bookingId,{code:"EXTRA_GUEST_AUTHORIZATION_REQUIRED",participantNumber,totalGuests,clubId});
       return res.status(403).json({error:"EXTRA_GUEST_AUTHORIZATION_REQUIRED"});
     }
     const tokenHash=crypto.createHash("sha256").update(req.params.token,"utf8").digest("hex");
     submissionKey=`checkin-submission:${tokenHash}:${participantNumber}`;
     const claimed=await redis.set(submissionKey,req.requestId,"EX",48*60*60,"NX");
-    if(claimed!=="OK") return res.status(409).json({error:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED"});
+    if(claimed!=="OK") {
+      await recordCheckinFailure(req,reservation.bookingId,{code:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED",participantNumber,totalGuests,clubId});
+      return res.status(409).json({error:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED"});
+    }
 
     const response = await timeToGrowAppFetch(
       `/api/v1/app/clubs/${encodeURIComponent(clubId)}/booking-members`,
@@ -825,6 +890,7 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
     if (!response.ok) {
       await redis.del(submissionKey);
       const status = response.status === 409 || response.status === 422 ? response.status : 502;
+      await recordCheckinFailure(req,reservation.bookingId,{code:"TIME_TO_GROW_SUBMISSION_FAILED",participantNumber,totalGuests,clubId,upstreamStatus:response.status});
       return res.status(status).json({ error: "TIME_TO_GROW_SUBMISSION_FAILED" });
     }
     const payload = await response.json().catch(() => null);
@@ -833,6 +899,7 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
     if(submissionKey) await redis.del(submissionKey).catch(()=>{});
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
+    await recordCheckinFailure(req,signedToken?.bookingId,{code,participantNumber:input.participantNumber||null,totalGuests:input.totalGuests||null,upstreamStatus:error?.upstreamStatus||null});
     res.status(status).json({ error: code });
   }
 });
@@ -1130,6 +1197,28 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       [clubId,bookings.map(booking=>booking.id)]
     )).rows : [];
     const confirmationsById=new Map(confirmationRows.map(row=>[row.external_booking_id,row.confirmed]));
+    const checkinFailureRows=bookings.length ? (await db.query(`
+      SELECT entity_id,request_id,after_state,created_at
+      FROM audit_logs
+      WHERE action='checkin.participant.submit.failed'
+        AND entity_type='external_booking'
+        AND entity_id=ANY($1::text[])
+        AND created_at>now()-interval '14 days'
+      ORDER BY created_at DESC
+    `,[bookings.map(booking=>booking.id)])).rows : [];
+    const checkinFailuresByBooking=new Map();
+    for(const row of checkinFailureRows) {
+      const current=checkinFailuresByBooking.get(row.entity_id)||[];
+      if(current.length<10) current.push({
+        code:row.after_state?.code||"UNKNOWN",
+        participantNumber:row.after_state?.participantNumber||null,
+        fields:Array.isArray(row.after_state?.fields)?row.after_state.fields:[],
+        upstreamStatus:row.after_state?.upstreamStatus||null,
+        requestId:row.request_id,
+        createdAt:row.created_at,
+      });
+      checkinFailuresByBooking.set(row.entity_id,current);
+    }
 
     res.json({
       data: bookings.map(booking => ({
@@ -1160,6 +1249,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         checkedIn: booking.check_in_status?.checked_in ?? 0,
         checkInTotal: booking.check_in_status?.total ?? booking.size,
         checkInPath: `/reception/checkin/${createCheckinToken(env.JWT_ACCESS_SECRET,clubId,booking.id)}`,
+        checkInErrors: checkinFailuresByBooking.get(booking.id)||[],
         checkedInPlayers: (booking.players || []).map(player => {
           const age = playerAgeAtBooking(player.birthday, booking.start.date);
           return {

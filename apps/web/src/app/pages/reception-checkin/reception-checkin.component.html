@@ -22,7 +22,7 @@
             <label><span>{{t().lastName}} *</span><input required name="lastName" [ngModel]="draft().lastName" (ngModelChange)="updateDraft({lastName:$event})" autocomplete="family-name"></label>
             <label><span>{{t().email}} *</span><input required type="email" name="email" [ngModel]="draft().email" (ngModelChange)="updateDraft({email:$event})" autocomplete="email"></label>
             <label><span>{{t().phone}}</span><input type="tel" name="phone" [ngModel]="draft().phone" (ngModelChange)="updateDraft({phone:$event})" autocomplete="tel"></label>
-            <label class="birth"><span>{{t().birthDate}} *</span><input required type="date" name="birthDate" [max]="maxBirthDate" [ngModel]="draft().birthDate" (ngModelChange)="updateDraft({birthDate:$event})"><small>{{t().birthdayHint}}</small></label>
+            <label class="birth"><span>{{t().birthDate}} *</span><input required type="date" name="birthDate" [max]="maxBirthDate" [ngModel]="draft().birthDate" (ngModelChange)="updateDraft({birthDate:$event})"><small>{{birthDateError()?t().birthDateError:t().birthdayHint}}</small></label>
             <label><span>{{t().gender}} *</span><select required name="gender" [ngModel]="draft().gender" (ngModelChange)="updateDraft({gender:$event})"><option value="">—</option><option value="female">{{t().female}}</option><option value="male">{{t().male}}</option><option value="non-binary">{{t().diverse}}</option></select></label>
           </div>
           <label class="consent optional"><input type="checkbox" name="marketing" [ngModel]="draft().allowMarketingMaterials" (ngModelChange)="updateDraft({allowMarketingMaterials:$event})"><span class="toggle"></span><span>{{t().marketing}}</span></label>

@@ -31,6 +31,14 @@ type CheckedInPlayer = {
   birthdayDaysAgo: number | null;
   waiverAccepted: boolean;
 };
+type CheckInError = {
+  code: string;
+  participantNumber: number | null;
+  fields: string[];
+  upstreamStatus: number | null;
+  requestId: string;
+  createdAt: string;
+};
 type Game = {
   id: string;
   name: string;
@@ -65,6 +73,7 @@ type ExternalBooking = {
   checkedIn: number;
   checkInTotal: number;
   checkInPath: string;
+  checkInErrors: CheckInError[];
   checkedInPlayers: CheckedInPlayer[];
   confirmed: boolean;
 };
@@ -350,6 +359,17 @@ type ExternalClub = {
                         </p>
                       }
                     </div>
+                    @if (b.checkInErrors.length) {
+                      <div class="checkin-errors">
+                        <strong>Ошибки отправки за последние 14 дней</strong>
+                        @for (failure of b.checkInErrors; track failure.requestId) {
+                          <div class="checkin-error-row">
+                            <span>{{ checkInErrorLabel(failure) }}</span>
+                            <small>{{ failure.createdAt | date:"dd.MM, HH:mm" }} · ID {{ failure.requestId }}</small>
+                          </div>
+                        }
+                      </div>
+                    }
                   </section>
                   <section class="booking-controls">
                     <h4>Управление бронью</h4>
@@ -1106,6 +1126,21 @@ type ExternalClub = {
         font-weight: 800;
         white-space: nowrap;
       }
+      .checkin-errors {
+        display: grid;
+        gap: 7px;
+        grid-column: 1/-1;
+        margin-top: 10px;
+        padding: 12px;
+        border: 1px solid #f0b59f;
+        border-radius: 10px;
+        background: #fff7f3;
+      }
+      .checkin-errors > strong { color: #9b3416; font-size: 11px; }
+      .checkin-error-row { padding-top: 7px; border-top: 1px solid #f3d7cd; }
+      .checkin-error-row span,.checkin-error-row small { display: block; }
+      .checkin-error-row span { color: #6e2b16; font-size: 11px; font-weight: 700; }
+      .checkin-error-row small { margin-top: 3px; color: #8b6d63; overflow-wrap: anywhere; }
       .session-actions {
         display: flex;
         align-items: center;
@@ -1615,6 +1650,21 @@ export class BookingsComponent {
       : daysAgo === 1
         ? "🎂 День рождения вчера"
         : `🎂 День рождения ${daysAgo} дн. назад`;
+  }
+  checkInErrorLabel(failure: CheckInError) {
+    const labels: Record<string,string> = {
+      INVALID_INPUT: `Некорректно заполнены поля${failure.fields.length ? `: ${failure.fields.join(", ")}` : ""}`,
+      CHECKIN_LINK_INVALID: "Ссылка check-in недействительна или устарела",
+      EXTRA_GUEST_AUTHORIZATION_REQUIRED: "Нет разрешения для дополнительного гостя",
+      CHECKIN_PARTICIPANT_ALREADY_SUBMITTED: "Этот участник уже был отправлен",
+      TIME_TO_GROW_SUBMISSION_FAILED: `Time to Grow отклонил данные${failure.upstreamStatus ? ` (HTTP ${failure.upstreamStatus})` : ""}`,
+      TIME_TO_GROW_TIMEOUT: "Time to Grow не ответил вовремя",
+      TIME_TO_GROW_NOT_CONFIGURED: "Интеграция Time to Grow не настроена",
+      TIME_TO_GROW_REQUEST_FAILED: "Не удалось получить бронь из Time to Grow",
+      TIME_TO_GROW_INVALID_RESPONSE: "Time to Grow вернул некорректный ответ",
+    };
+    const participant=failure.participantNumber?`Участник ${failure.participantNumber}: `:"";
+    return participant+(labels[failure.code]||`Ошибка ${failure.code}`);
   }
   sessionStatusLabel(status: string | null) {
     return status === "RUNNING"

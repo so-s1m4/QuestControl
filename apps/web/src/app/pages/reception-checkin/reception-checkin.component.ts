@@ -13,8 +13,8 @@ type Participant={firstName:string;lastName:string;email:string;phone:string;bir
 
 const emptyParticipant=():Participant=>({firstName:"",lastName:"",email:"",phone:"+43 ",birthDate:"",gender:"",allowMarketingMaterials:false,waiver:false,privacy:false,submitted:false});
 const copy={
-  de:{index:"QuestControl",title:"Check-in",select:"Sicherer Check-in",guests:"Wie viele Gäste sind angekommen?",booked:"gebucht",confirm:"Check-in bestätigen",details:"Bitte fülle deine Daten aus",participant:"Teilnehmer",progress:"übermittelt",firstName:"Vorname",lastName:"Nachname",email:"E-Mail",phone:"Telefonnummer",birthDate:"Geburtsdatum",birthdayHint:"Geburtsdatum eintragen und eine Geburtstagsüberraschung erhalten 🎁",gender:"Geschlecht",female:"Weiblich",male:"Männlich",diverse:"Nicht-binär",marketing:"Ich möchte Marketing-Neuigkeiten erhalten",waiver:"Ich stimme dem",waiverLabel:"Haftungsausschluss",privacy:"Ich stimme der",privacyLabel:"Datenschutzerklärung",medical:"Bitte sprich vor der Nutzung eines VR-Headsets mit deinem Arzt, wenn du schwanger bist, an einer Herzerkrankung, Epilepsie oder einer anderen relevanten Erkrankung leidest.",next:"Senden & nächste Person",finish:"Check-in abschließen",online:"Online Check-in",scan:"Scannen und die Daten dieser Person am Handy ausfüllen.",group:"Eure Gruppe",success:"Der Check-in ist erledigt!",successNote:"Die Daten wurden an Time to Grow übermittelt. Unser Game Master ist gleich für Sie da.",another:"",language:"English",eyebrow:"Self Check-in · Traisenpark",loading:"Sicherer Check-in wird geladen…",empty:"",retry:"Erneut versuchen",loadError:"Dieser Check-in-Link ist ungültig, abgelaufen oder noch nicht aktiv.",sending:"Wird gesendet…",submitError:"Das Formular konnte nicht gesendet werden. Bitte erneut versuchen oder unser Team fragen."},
-  en:{index:"QuestControl",title:"Check-in",select:"Secure check-in",guests:"How many guests have arrived?",booked:"booked",confirm:"Confirm check-in",details:"Please fill out your details",participant:"Participant",progress:"submitted",firstName:"First name",lastName:"Last name",email:"Email",phone:"Phone number",birthDate:"Date of birth",birthdayHint:"Enter your birthday and receive a birthday gift from us 🎁",gender:"Gender",female:"Female",male:"Male",diverse:"Non-binary",marketing:"I would like to receive marketing updates",waiver:"I agree to the",waiverLabel:"Waiver",privacy:"I agree to the",privacyLabel:"Privacy policy",medical:"Please consult your doctor before using a VR headset if you are pregnant, have a heart condition, epilepsy, or another relevant medical condition.",next:"Submit & next participant",finish:"Complete check-in",online:"Online check-in",scan:"Scan to fill this participant’s form on a phone.",group:"Your group",success:"You’re all checked in!",successNote:"The details were sent to Time to Grow. Our game master will meet you here shortly.",another:"",language:"Deutsch",eyebrow:"Self Check-in · Traisenpark",loading:"Loading secure check-in…",empty:"",retry:"Try again",loadError:"This check-in link is invalid, expired, or not active yet.",sending:"Sending…",submitError:"The form could not be submitted. Please try again or ask our team for help."},
+  de:{index:"QuestControl",title:"Check-in",select:"Sicherer Check-in",guests:"Wie viele Gäste sind angekommen?",booked:"gebucht",confirm:"Check-in bestätigen",details:"Bitte fülle deine Daten aus",participant:"Teilnehmer",progress:"übermittelt",firstName:"Vorname",lastName:"Nachname",email:"E-Mail",phone:"Telefonnummer",birthDate:"Geburtsdatum",birthdayHint:"Geburtsdatum eintragen und eine Geburtstagsüberraschung erhalten 🎁",birthDateError:"Bitte gib ein gültiges Geburtsdatum ein. Das Mindestalter beträgt 10 Jahre.",gender:"Geschlecht",female:"Weiblich",male:"Männlich",diverse:"Nicht-binär",marketing:"Ich möchte Marketing-Neuigkeiten erhalten",waiver:"Ich stimme dem",waiverLabel:"Haftungsausschluss",privacy:"Ich stimme der",privacyLabel:"Datenschutzerklärung",medical:"Bitte sprich vor der Nutzung eines VR-Headsets mit deinem Arzt, wenn du schwanger bist, an einer Herzerkrankung, Epilepsie oder einer anderen relevanten Erkrankung leidest.",next:"Senden & nächste Person",finish:"Check-in abschließen",online:"Online Check-in",scan:"Scannen und die Daten dieser Person am Handy ausfüllen.",group:"Eure Gruppe",success:"Der Check-in ist erledigt!",successNote:"Die Daten wurden an Time to Grow übermittelt. Unser Game Master ist gleich für Sie da.",another:"",language:"English",eyebrow:"Self Check-in · Traisenpark",loading:"Sicherer Check-in wird geladen…",empty:"",retry:"Erneut versuchen",loadError:"Dieser Check-in-Link ist ungültig, abgelaufen oder noch nicht aktiv.",sending:"Wird gesendet…",submitError:"Das Formular konnte nicht gesendet werden. Bitte erneut versuchen oder unser Team fragen."},
+  en:{index:"QuestControl",title:"Check-in",select:"Secure check-in",guests:"How many guests have arrived?",booked:"booked",confirm:"Confirm check-in",details:"Please fill out your details",participant:"Participant",progress:"submitted",firstName:"First name",lastName:"Last name",email:"Email",phone:"Phone number",birthDate:"Date of birth",birthdayHint:"Enter your birthday and receive a birthday gift from us 🎁",birthDateError:"Enter a valid date of birth. The minimum age is 10.",gender:"Gender",female:"Female",male:"Male",diverse:"Non-binary",marketing:"I would like to receive marketing updates",waiver:"I agree to the",waiverLabel:"Waiver",privacy:"I agree to the",privacyLabel:"Privacy policy",medical:"Please consult your doctor before using a VR headset if you are pregnant, have a heart condition, epilepsy, or another relevant medical condition.",next:"Submit & next participant",finish:"Complete check-in",online:"Online check-in",scan:"Scan to fill this participant’s form on a phone.",group:"Your group",success:"You’re all checked in!",successNote:"The details were sent to Time to Grow. Our game master will meet you here shortly.",another:"",language:"Deutsch",eyebrow:"Self Check-in · Traisenpark",loading:"Loading secure check-in…",empty:"",retry:"Try again",loadError:"This check-in link is invalid, expired, or not active yet.",sending:"Sending…",submitError:"The form could not be submitted. Please try again or ask our team for help."},
 };
 
 @Component({
@@ -46,12 +46,13 @@ export class ReceptionCheckinComponent implements OnInit{
   draft=signal<Participant>(emptyParticipant());
   submitting=signal(false);
   submitError=signal(false);
+  birthDateError=signal(false);
   qrDataUrl=signal("");
   extraAuthorization=signal("");
   extraError=signal(false);
   authorizingExtra=signal(false);
   hasStaffSession=Boolean(sessionStorage.getItem("access_token"));
-  maxBirthDate=new Date().toISOString().slice(0,10);
+  maxBirthDate=this.dateYearsAgo(10);
 
   ngOnInit(){this.checkinToken=this.route.snapshot.paramMap.get("token")||"";this.extraAuthorization.set(new URLSearchParams(location.search).get("extraAuthorization")||"");this.loadReservation()}
   toggleLanguage(){this.language.update(value=>value==="de"?"en":"de")}
@@ -77,10 +78,11 @@ export class ReceptionCheckinComponent implements OnInit{
     });
   }
   startDetails(){this.participants.set(Array.from({length:this.guestCount()},emptyParticipant));this.participantIndex.set(0);this.draft.set(emptyParticipant());this.submitError.set(false);this.step.set("details");void this.refreshQr()}
-  updateDraft(patch:Partial<Participant>){this.draft.update(value=>({...value,...patch}));this.submitError.set(false)}
+  updateDraft(patch:Partial<Participant>){this.draft.update(value=>({...value,...patch}));this.submitError.set(false);if("birthDate" in patch)this.birthDateError.set(false)}
   async submitParticipant(){
     const reservation=this.selected();const draft=this.draft();
     if(!reservation||this.submitting()||draft.submitted)return;
+    if(!draft.birthDate||draft.birthDate>this.maxBirthDate){this.birthDateError.set(true);return}
     this.submitting.set(true);this.submitError.set(false);
     this.http.post(`/api/reception/checkin/${encodeURIComponent(this.checkinToken)}/participants`,{firstName:draft.firstName,lastName:draft.lastName,email:draft.email,phone:draft.phone,birthday:draft.birthDate,gender:draft.gender,allowMarketingMaterials:draft.allowMarketingMaterials,acceptWaiver:draft.waiver,acceptPrivacyPolicy:draft.privacy,participantNumber:this.participantIndex()+1,totalGuests:this.guestCount(),extraAuthorization:this.extraAuthorization()}).subscribe({
       next:()=>{
@@ -92,6 +94,7 @@ export class ReceptionCheckinComponent implements OnInit{
       error:()=>{this.submitting.set(false);this.submitError.set(true)},
     });
   }
+  private dateYearsAgo(years:number){const date=new Date();date.setFullYear(date.getFullYear()-years);return date.toISOString().slice(0,10)}
   reset(){const url=new URL(location.href);url.search="";history.replaceState({},"",url);this.participants.set([]);this.participantIndex.set(0);this.draft.set(emptyParticipant());this.qrDataUrl.set("");this.extraAuthorization.set("");this.loadReservation()}
   submittedCount(){return this.participants().filter(item=>item.submitted).length}
   submitLabel(){return this.submitting()?this.t().sending:(this.participantIndex()<this.guestCount()-1?this.t().next:this.t().finish)}
