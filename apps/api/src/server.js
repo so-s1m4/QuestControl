@@ -1253,6 +1253,19 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED", upstreamStatus: response.status });
     }
     const payload = await response.json();
+    const sourceBookings=Array.isArray(payload?.data)?payload.data:[];
+    const normalizedBookings=parsed.data.date?sourceBookings:sourceBookings
+      .filter(booking=>booking?.id&&booking?.start?.date&&booking?.start?.time)
+      .map(booking=>({
+        ...booking,
+        end:{...booking.end,time:firstText(booking.end?.time,booking.start?.time)||booking.start.time},
+        status:{...booking.status,id:firstText(booking.status?.id,"reserved")||"reserved",name:firstText(booking.status?.name,"Reserved")||"Reserved"},
+        owner:{...booking.owner,name:firstText(booking.owner?.name,booking.customer?.name,"Бронь")||"Бронь"},
+        product:{...booking.product,effective_name:firstText(booking.product?.effective_name,booking.product_name,"Бронь")||"Бронь"},
+        size:Number.isInteger(Number(booking.size))&&Number(booking.size)>=0?Number(booking.size):0,
+        order:{...booking.order,total_amount:Number(booking.order?.total_amount)||0,payment_status:firstText(booking.order?.payment_status,"unknown")||"unknown",payment_status_display:firstText(booking.order?.payment_status_display,"—")||"—"},
+        players:[],
+      }));
     const bookings = z.array(z.object({
       id: z.string(),
       start: z.object({ date: z.string(), time: z.string() }),
@@ -1283,7 +1296,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         birthday: z.string().nullable().optional(),
         accept_waiver: z.boolean().optional(),
       }).passthrough()).optional(),
-    }).passthrough()).parse(payload.data);
+    }).passthrough()).parse(normalizedBookings);
 
     const playerAgeAtBooking = (birthday, bookingDate) => {
       if (!birthday) return { age: null, birthdayDaysAgo: null };
