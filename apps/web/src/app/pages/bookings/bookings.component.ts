@@ -117,7 +117,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
           <h2>Бронирования</h2>
           <p>Расписание гостей из подключённых систем бронирования</p>
         </div>
-        <div class="view-switch">
+        <div class="header-tools">@if(isOwner()){<button type="button" class="sheets-settings" (click)="openGoogleSheetsSettings()">Google Sheets</button>}<div class="view-switch">
           <button
             [class.active]="viewMode() === 'calendar'"
             (click)="viewMode.set('calendar')"
@@ -129,7 +129,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
           >
             Список
           </button>
-        </div>
+        </div></div>
       </header>
       @if (isManagement()) {
         <div class="archive-import" [class.mobile-open]="showArchiveImport()">
@@ -509,6 +509,10 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
       @if(magnetEditorOpen()){<div class="magnet-list">@for(item of sessionInventory();track item.id){<div [class.recommended]="item.recommended"><span><b>{{item.name}}</b><small>{{item.recommended?'Подходит к игре · ':''}}остаток {{item.quantity}} {{item.unit}}</small></span><div class="stepper"><button type="button" (click)="changeDeduction(item,-1)">−</button><b>{{recordDeductions[item.id]||0}}</b><button type="button" (click)="changeDeduction(item,1)">+</button></div></div>}@empty{<p>На этой локации магнитов на складе нет.</p>}<button type="button" class="no-deduction" (click)="clearDeductions()">Не списывать магниты</button></div>}
       @if(recordError()){<p class="record-error">{{recordError()}}</p>}<footer><button type="button" class="secondary" (click)="closeSessionRecord()">Отмена</button><button type="button" [disabled]="recordSaving()" (click)="saveSessionRecord()">{{recordSaving()?'Записываем…':'Записать сессию'}}</button></footer>
     </div></section></div>}
+  @if(googleSheetsOpen()){<div class="record-backdrop" (click)="googleSheetsOpen.set(false)"><section class="record-dialog sheets-dialog" role="dialog" aria-modal="true" aria-labelledby="sheets-title" (click)="$event.stopPropagation()">
+    <header><div><small>Интеграция владельца</small><h3 id="sheets-title">Google Sheets</h3><p>Автоматическая запись завершённых игр</p></div><button type="button" aria-label="Закрыть" (click)="googleSheetsOpen.set(false)">×</button></header>
+    <div class="record-form"><label>URL веб-приложения<input type="url" [(ngModel)]="googleSheetsDraft.url" placeholder="https://script.google.com/macros/s/…/exec"></label><label>Секретный ключ<input type="password" [(ngModel)]="googleSheetsDraft.secret" placeholder="Введите ключ"></label><p class="settings-hint">Ключ хранится зашифрованно. Для изменения подключения введите его заново.</p>@if(googleSheetsNotice()){<p class="record-error" [class.success]="googleSheetsSuccess()">{{googleSheetsNotice()}}</p>}<footer><button type="button" class="secondary" [disabled]="googleSheetsBusy()" (click)="testGoogleSheets()">Проверить</button><button type="button" [disabled]="googleSheetsBusy()" (click)="saveGoogleSheets()">{{googleSheetsBusy()?'Сохраняем…':'Сохранить'}}</button></footer></div>
+  </section></div>}
   `,
   styles: [
     `
@@ -518,6 +522,7 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
         background: #e9edf5;
         border-radius: 11px;
       }
+      .header-tools{display:flex;align-items:center;gap:10px}.sheets-settings{padding:10px 14px;background:#fff;color:#344054;border:1px solid var(--line);box-shadow:none}.sheets-dialog{width:min(560px,calc(100vw - 28px))}.settings-hint{margin:0;color:var(--muted);font-size:12px}.record-error.success{background:#ecfdf3;color:#067647}
       .mobile-booking-controls { display: none; }
       .view-switch button {
         padding: 8px 14px;
@@ -1367,6 +1372,8 @@ export class BookingsComponent {
   recordBooking=signal<ExternalBooking|null>(null);
   sessionInventory=signal<SessionInventoryItem[]>([]);
   recordSaving=signal(false);recordError=signal("");recordDeductions:Record<string,number>={};
+  googleSheetsOpen=signal(false);googleSheetsBusy=signal(false);googleSheetsNotice=signal("");googleSheetsSuccess=signal(false);
+  googleSheetsDraft={url:"",secret:""};
   magnetEditorOpen=signal(false);gameSearch="";
   recordDraft={gameId:"",startedAt:"",endedAt:"",playerCount:0};
   confirmingId = signal<string | null>(null);
@@ -1826,6 +1833,22 @@ export class BookingsComponent {
     } catch {
       return false;
     }
+  }
+  isOwner(){
+    try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="OWNER";}catch{return false;}
+  }
+  openGoogleSheetsSettings(){
+    this.googleSheetsOpen.set(true);this.googleSheetsNotice.set("");this.googleSheetsDraft.secret="";
+    this.http.get<{configured:boolean;url:string}>(`/api/settings/google-sheets?clubId=${encodeURIComponent(this.externalClubId)}`).subscribe({next:value=>{this.googleSheetsDraft.url=value.url||"";if(value.configured){this.googleSheetsNotice.set("Подключение сохранено для выбранного клуба.");this.googleSheetsSuccess.set(true);}},error:()=>{this.googleSheetsNotice.set("Не удалось загрузить настройки.");this.googleSheetsSuccess.set(false);}});
+  }
+  saveGoogleSheets(){
+    if(!this.googleSheetsDraft.url||this.googleSheetsDraft.secret.length<32){this.googleSheetsNotice.set("Укажите URL и секретный ключ.");this.googleSheetsSuccess.set(false);return;}
+    this.googleSheetsBusy.set(true);this.googleSheetsNotice.set("");
+    this.http.put<{configured:boolean;url:string}>("/api/settings/google-sheets",{...this.googleSheetsDraft,clubId:this.externalClubId}).subscribe({next:()=>{this.googleSheetsBusy.set(false);this.googleSheetsDraft.secret="";this.googleSheetsNotice.set("Подключение сохранено для выбранного клуба.");this.googleSheetsSuccess.set(true);},error:()=>{this.googleSheetsBusy.set(false);this.googleSheetsNotice.set("Не удалось сохранить подключение.");this.googleSheetsSuccess.set(false);}});
+  }
+  testGoogleSheets(){
+    this.googleSheetsBusy.set(true);this.googleSheetsNotice.set("");
+    this.http.post<{ok:boolean}>("/api/settings/google-sheets/test",{clubId:this.externalClubId}).subscribe({next:()=>{this.googleSheetsBusy.set(false);this.googleSheetsNotice.set("Google Sheets отвечает — всё работает.");this.googleSheetsSuccess.set(true);},error:()=>{this.googleSheetsBusy.set(false);this.googleSheetsNotice.set("Нет соединения. Сначала сохраните URL и ключ.");this.googleSheetsSuccess.set(false);}});
   }
   start(b: Booking) {
     this.http

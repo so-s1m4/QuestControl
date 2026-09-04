@@ -95,6 +95,20 @@ const server = http.createServer(app);
 const vrVncServer = new WebSocketServer({ noServer:true });
 const io = new Server(server, { path: "/socket.io", cors: { origin: env.CORS_ORIGIN.split(","), credentials: true }, maxHttpBufferSize: 1e6 });
 const key = (v) => new TextEncoder().encode(v);
+const settingsKey=crypto.createHash("sha256").update(env.JWT_ACCESS_SECRET,"utf8").digest();
+function encryptSetting(value){
+  const iv=crypto.randomBytes(12);
+  const cipher=crypto.createCipheriv("aes-256-gcm",settingsKey,iv);
+  const encrypted=Buffer.concat([cipher.update(JSON.stringify(value),"utf8"),cipher.final()]);
+  return Buffer.concat([iv,cipher.getAuthTag(),encrypted]);
+}
+function decryptSetting(value){
+  if(!value)return null;
+  const buffer=Buffer.from(value),iv=buffer.subarray(0,12),tag=buffer.subarray(12,28),encrypted=buffer.subarray(28);
+  const decipher=crypto.createDecipheriv("aes-256-gcm",settingsKey,iv);
+  decipher.setAuthTag(tag);
+  return JSON.parse(Buffer.concat([decipher.update(encrypted),decipher.final()]).toString("utf8"));
+}
 const normalizeEmail = (email) => email.trim().normalize("NFKC").toLowerCase();
 const identityToken = (email) => crypto
   .createHmac("sha256", env.PSEUDONYMIZATION_SECRET)
@@ -1640,13 +1654,54 @@ app.get("/time-to-grow/session-record-options",auth,permit("sessions:create"),as
   res.json(rows);
 });
 
+async function googleSheetsConfig(clubId){
+  const row=(await db.query("SELECT encrypted_value FROM app_settings WHERE key=$1",[`google_sheets:${clubId}`])).rows[0];
+  try{return decryptSetting(row?.encrypted_value);}catch(error){console.error("Unable to decrypt Google Sheets settings",error);return null;}
+}
+async function sendSessionToGoogleSheets(clubId,payload){
+  const config=await googleSheetsConfig(clubId);
+  if(!config?.url||!config?.secret)return {configured:false};
+  const response=await fetch(config.url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...payload,secret:config.secret}),signal:AbortSignal.timeout(12000)});
+  const result=await response.json().catch(()=>null);
+  if(!response.ok||!result?.ok)throw new Error(`GOOGLE_SHEETS_SYNC_FAILED:${response.status}:${result?.error||"INVALID_RESPONSE"}`);
+  return {configured:true,...result};
+}
+
+app.get("/settings/google-sheets",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const {clubId}=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/)}).parse(req.query);
+  const config=await googleSheetsConfig(clubId);
+  res.json({configured:Boolean(config?.url&&config?.secret),url:config?.url||""});
+});
+
+app.put("/settings/google-sheets",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const input=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/),url:z.string().url().refine(value=>value.startsWith("https://script.google.com/macros/s/")&&value.endsWith("/exec")),secret:z.string().min(32).max(256)}).parse(req.body);
+  const settingKey=`google_sheets:${input.clubId}`;
+  await db.query(`INSERT INTO app_settings(key,encrypted_value,updated_by,updated_at) VALUES($1,$2,$3,now())
+    ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[settingKey,encryptSetting({url:input.url,secret:input.secret}),req.user.sub]);
+  await audit(req,"settings.google_sheets.update","app_setting",settingKey,null,{url:input.url,clubId:input.clubId});
+  res.json({configured:true,url:input.url});
+});
+
+app.post("/settings/google-sheets/test",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const {clubId}=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/)}).parse(req.body);
+  const config=await googleSheetsConfig(clubId);
+  if(!config?.url)return res.status(409).json({error:"GOOGLE_SHEETS_NOT_CONFIGURED"});
+  const response=await fetch(config.url,{signal:AbortSignal.timeout(10000)});
+  const result=await response.json().catch(()=>null);
+  if(!response.ok||!result?.ok)return res.status(502).json({error:"GOOGLE_SHEETS_UNAVAILABLE"});
+  res.json({ok:true});
+});
+
 app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(req,res)=>{
   const input=z.object({
     clubId:z.string().regex(/^[a-z0-9]{26}$/),date:z.string().date(),bookingId:z.string(),gameId:z.string().uuid(),
     startedAt:z.string().datetime({offset:true}),endedAt:z.string().datetime({offset:true}),playerCount:z.number().int().min(0).max(1000),
     deductions:z.array(z.object({itemId:z.string().uuid(),quantity:z.number().int().positive().max(1000)})).max(20)
   }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).parse(req.body);
-  const location=(await db.query("SELECT id,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
+  const location=(await db.query("SELECT id,name,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
   if(!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
   if(!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   const externalBooking=(await fetchTimeToGrowBookings(input.clubId,input.date)).find(item=>item.id===input.bookingId);
@@ -1670,7 +1725,23 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     }
     await client.query("COMMIT");
     await audit(req,"session.record","session",session.id,null,{...session,deductions:input.deductions});
-    res.status(201).json(session);
+    const [details,user]=await Promise.all([
+      db.query("SELECT r.name room_name,g.name game_name FROM rooms r JOIN games g ON g.id=$2 WHERE r.id=$1",[imported.booking.room_id,input.gameId]),
+      db.query("SELECT display_name FROM users WHERE id=$1",[req.user.sub]),
+    ]);
+    const durationMinutes=Math.round((new Date(input.endedAt)-new Date(input.startedAt))/60000);
+    const startTime=new Intl.DateTimeFormat("de-AT",{timeZone:location.timezone,hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(input.startedAt));
+    let sheetSync={configured:false};
+    try{
+      sheetSync=await sendSessionToGoogleSheets(input.clubId,{
+        type:"session.recorded",sessionId:session.id,bookingId:input.bookingId,date:input.date,
+        locationName:location.name,roomName:details.rows[0]?.room_name||"",game:details.rows[0]?.game_name||externalBooking.product.effective_name,
+        startTime,durationMinutes,players:input.playerCount,total:externalBooking.order.total_amount,
+        onlineAmount:externalBooking.order.total_amount,price:input.playerCount?externalBooking.order.total_amount/input.playerCount:externalBooking.order.total_amount,
+        phone:externalBooking.owner?.phone||"",administrator:user.rows[0]?.display_name||"",comments:`QuestControl · ${input.bookingId}`,
+      });
+    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false};}
+    res.status(201).json({...session,sheetSync});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 });
 
@@ -3304,6 +3375,7 @@ app.use((err, req, res, _next) => {
   if (err instanceof z.ZodError) return res.status(400).json({ error:"INVALID_INPUT",details:err.flatten(),requestId:req.requestId });
   res.status(500).json({ error:"INTERNAL_ERROR",requestId:req.requestId });
 });
+await db.query("CREATE TABLE IF NOT EXISTS app_settings(key text PRIMARY KEY,encrypted_value bytea NOT NULL,updated_by uuid REFERENCES users(id) ON DELETE SET NULL,updated_at timestamptz NOT NULL DEFAULT now())");
 await db.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS external_id text");
 await db.query("CREATE UNIQUE INDEX IF NOT EXISTS locations_external_id_idx ON locations(external_id) WHERE external_id IS NOT NULL");
 await db.query("CREATE TABLE IF NOT EXISTS user_locations(user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,PRIMARY KEY(user_id,location_id))");
