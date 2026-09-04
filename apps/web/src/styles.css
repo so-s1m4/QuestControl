@@ -39,6 +39,10 @@ main > aside {
   background: linear-gradient(180deg, #101827, #111c2f);
   box-shadow: 12px 0 35px #15203612;
   color: #fff;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #34415a transparent;
 }
 main > aside > h1 {
   margin: 0 10px;
@@ -51,21 +55,43 @@ main > aside > h1 span {
   font-size: 12px;
   letter-spacing: 2.4px;
 }
-main > aside > nav { display: grid; gap: 5px; margin-top: 36px; }
+main > aside > nav { display: grid; gap: 4px; margin-top: 30px; padding-bottom: 126px; }
 main > aside > nav a {
-  padding: 12px 14px;
-  border-radius: 10px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid transparent;
+  border-radius: 11px;
   color: #9da9bc;
   font-weight: 600;
   text-decoration: none;
-  transition: .18s;
+  transition: background .18s, color .18s, border-color .18s, transform .18s;
 }
+main > aside > nav a::before { display: grid; flex: 0 0 27px; width: 27px; height: 27px; place-items: center; border-radius: 8px; background: #ffffff0a; color: #c4ccda; font-size: 14px; content: "•"; }
+main > aside > nav a[href="/"]::before { content: "⌂"; }
+main > aside > nav a[href="/bookings"]::before { content: "▦"; }
+main > aside > nav a[href="/sessions"]::before { content: "▶"; font-size: 10px; }
+main > aside > nav a[href="/work-schedules"]::before { content: "◷"; }
+main > aside > nav a[href="/locations"]::before { content: "⌖"; }
+main > aside > nav a[href="/rooms"]::before { content: "□"; }
+main > aside > nav a[href="/cameras"]::before { content: "◉"; }
+main > aside > nav a[href="/inventory"]::before { content: "◇"; }
+main > aside > nav a[href="/users"]::before { content: "♙"; }
+main > aside > nav a[href^="/reception/checkin"]::before { content: "↗"; }
+main > aside > nav a[href="/locations"], main > aside > nav a[href="/inventory"] { margin-top: 10px; }
+main > aside > nav a[href="/locations"]::after, main > aside > nav a[href="/inventory"]::after { position: absolute; right: 0; bottom: calc(100% + 5px); left: 0; height: 1px; background: #ffffff12; content: ""; }
 main > aside > nav a:hover,
 main > aside > nav a.active {
-  background: #ffffff12;
-  box-shadow: inset 3px 0 #7c83ff;
+  border-color: #ffffff12;
+  background: #ffffff10;
   color: #fff;
 }
+main > aside > nav a:hover { transform: translateX(2px); }
+main > aside > nav a.active { border-color: #747cff55; background: linear-gradient(100deg,#6269e92b,#ffffff0b); box-shadow: inset 3px 0 #8188ff,0 7px 20px #05091420; }
+main > aside > nav a.active::before { background: #6971e8; box-shadow: 0 5px 13px #4d54c655; color: #fff; }
 main > aside > nav a.sessions-nav { display: none; }
 .management-user main > aside > nav a.sessions-nav { display: block; }
 
@@ -192,6 +218,13 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
   }
   main:not(.checkin-page) > section > form { grid-template-columns: 1fr 1fr; }
   .cards, .rooms { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-height: 760px) and (min-width: 761px) {
+  main > aside { padding-top: 20px; }
+  main > aside > nav { margin-top: 18px; gap: 2px; }
+  main > aside > nav a { min-height: 39px; padding-block: 7px; }
+  main > aside > nav a[href="/locations"], main > aside > nav a[href="/inventory"] { margin-top: 5px; }
 }
 
 @media (max-width: 760px) {

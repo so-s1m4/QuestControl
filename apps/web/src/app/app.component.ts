@@ -28,6 +28,9 @@ type InstallPromptEvent = Event & {
           <a routerLink="/bookings" routerLinkActive="active">
             <i class="mobile-tab-icon bookings-icon" aria-hidden="true"></i><span>Брони</span>
           </a>
+          @if(isAdmin()) {<a routerLink="/work-schedules" routerLinkActive="active">
+            <i class="mobile-tab-icon schedule-icon" aria-hidden="true"></i><span>Смены</span>
+          </a>}
           <a routerLink="/cameras" routerLinkActive="active">
             <i class="mobile-tab-icon cameras-icon" aria-hidden="true"></i><span>Камеры</span>
           </a>
@@ -48,7 +51,6 @@ type InstallPromptEvent = Event & {
             <div class="mobile-menu-links">
               @if (isAdmin()) {
                 <a routerLink="/sessions" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Сессии</b><span>История игр и статистика</span></a>
-                <a routerLink="/work-schedules" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Графики работы</b><span>Кто, когда и за что отвечает</span></a>
               }
               <a routerLink="/locations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Локации</b><span>Площадки и контакты</span></a>
               <a routerLink="/rooms" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Комнаты</b><span>Зоны, игры и устройства</span></a>
@@ -80,7 +82,7 @@ type InstallPromptEvent = Event & {
     @media(max-width:760px){
       .account-actions{display:none}
       .mobile-nav-layer{position:fixed!important;z-index:950;inset:auto 0 0;display:flex;justify-content:center;padding:0 max(12px,env(safe-area-inset-right,0px)) 0 max(12px,env(safe-area-inset-left,0px));background:#0d1524;pointer-events:none;isolation:isolate}
-      .mobile-nav{position:relative!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:430px;gap:4px;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));border:1px solid #ffffff1c;border-bottom:0;border-radius:20px 20px 0 0;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);pointer-events:auto}
+      .mobile-nav{position:relative!important;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);width:100%;max-width:520px;gap:4px;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));border:1px solid #ffffff1c;border-bottom:0;border-radius:20px 20px 0 0;background:linear-gradient(145deg,#151f33f7,#0d1524fa);box-shadow:0 18px 50px #10182745,0 2px 0 #ffffff0d inset;backdrop-filter:blur(18px);pointer-events:auto}
       .mobile-nav a,.mobile-nav>button{position:relative;display:grid;min-width:0;min-height:56px;place-items:center;align-content:center;gap:4px;padding:5px 3px;border:0;border-radius:14px;background:transparent;box-shadow:none;color:#8f9db3;text-decoration:none;transform:none;transition:background .18s,color .18s,transform .15s,box-shadow .18s}
       .mobile-nav a:hover,.mobile-nav>button:hover:not(:disabled){background:#ffffff0a;box-shadow:none;transform:none}
       .mobile-nav a:active,.mobile-nav>button:active{transform:scale(.96)}
@@ -93,6 +95,7 @@ type InstallPromptEvent = Event & {
       .home-icon:after{position:absolute;left:8px;bottom:5px;width:10px;height:9px;border:2px solid currentColor;border-top:0;border-radius:0 0 2px 2px;content:""}
       .bookings-icon:before{position:absolute;inset:6px 5px 5px;border:2px solid currentColor;border-radius:4px;content:""}
       .bookings-icon:after{position:absolute;top:10px;left:9px;width:3px;height:3px;border-radius:1px;background:currentColor;box-shadow:6px 0 currentColor,0 6px currentColor,6px 6px currentColor;content:""}
+      .schedule-icon:before{position:absolute;inset:6px 5px 5px;border:2px solid currentColor;border-radius:4px;content:""}.schedule-icon:after{position:absolute;top:11px;left:8px;width:12px;height:2px;background:currentColor;box-shadow:0 5px currentColor,0 10px currentColor;content:""}
       .cameras-icon:before{position:absolute;inset:7px 4px;border:2px solid currentColor;border-radius:5px;content:""}
       .cameras-icon:after{position:absolute;top:11px;left:11px;width:6px;height:6px;border:2px solid currentColor;border-radius:50%;content:""}
       .more-icon:before{position:absolute;top:12px;left:6px;width:4px;height:4px;border-radius:50%;background:currentColor;box-shadow:6px 0 currentColor,12px 0 currentColor;content:""}
@@ -146,7 +149,7 @@ export class AppComponent {
 
   moreActive() {
     const [path, query = ""] = this.currentUrl().split("?");
-    return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/cameras"].includes(path);
+    return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/work-schedules", "/cameras"].includes(path);
   }
 
   logout() {
