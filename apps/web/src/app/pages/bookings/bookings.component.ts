@@ -83,6 +83,7 @@ type ExternalClub = {
   timezone: string;
   address: string | null;
 };
+type SessionInventoryItem={id:string;name:string;category:string;unit:string;quantity:number;game_id:string|null;recommended:boolean};
 
 @Component({
   selector: "app-bookings",
@@ -404,13 +405,7 @@ type ExternalClub = {
                           <button class="danger" (click)="sessionExternal(b, 'FINISH')">Завершить сессию</button>
                         }
                       } @else {
-                        <select class="game-select" [(ngModel)]="selectedGames[b.id]">
-                          <option value="">{{ b.requiresGameSelection ? "Выберите игру" : "Оставить выбранную игру" }}</option>
-                          @for (game of gamesForZone(b.zoneName); track game.id) {
-                            <option [value]="game.id">{{ game.name }}</option>
-                          }
-                        </select>
-                        <button class="start-session" [disabled]="importingId() === b.id" (click)="startExternal(b)">{{ importingId() === b.id ? "Запускаем…" : "Запустить сессию" }}</button>
+                        <button class="start-session" (click)="openSessionRecord(b)">Записать игру</button>
                       }
                     </div>
                   </section>
@@ -503,7 +498,9 @@ type ExternalClub = {
         </div>
       </div>
     </div>
-  }`,
+  }
+  @if(recordBooking();as booking){<div class="record-backdrop" (click)="closeSessionRecord()"><section class="record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-title" (click)="$event.stopPropagation()"><header><div><small>Завершённая сессия</small><h3 id="record-title">Записать игру</h3><p>{{booking.customerName}} · {{booking.date}}</p></div><button type="button" aria-label="Закрыть" (click)="closeSessionRecord()">×</button></header><div class="record-form"><label>Игра<select [(ngModel)]="recordDraft.gameId" (ngModelChange)="loadSessionInventory()"><option value="">Выберите игру</option>@for(game of gamesForZone(booking.zoneName);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label><label>Игроков<input type="number" min="0" step="1" [(ngModel)]="recordDraft.playerCount"></label><label>Начало<input type="datetime-local" [(ngModel)]="recordDraft.startedAt"></label><label>Окончание<input type="datetime-local" [(ngModel)]="recordDraft.endedAt"></label><div class="record-duration"><span>Фактическая длительность</span><b>{{recordDuration()}}</b></div><div class="magnet-title"><div><h4>Списание магнитов</h4><p>Нужно для {{recordDraft.playerCount}} игроков · выберите, что уменьшить</p></div><b [class.complete]="deductionTotal()===recordDraft.playerCount">{{deductionTotal()}} / {{recordDraft.playerCount}}</b></div><div class="magnet-list">@for(item of sessionInventory();track item.id){<label [class.recommended]="item.recommended"><span><b>{{item.name}}</b><small>{{item.recommended?'Подходит к выбранной игре · ':''}}в наличии {{item.quantity}} {{item.unit}}</small></span><input type="number" min="0" [max]="item.quantity" step="1" [ngModel]="recordDeductions[item.id]||0" (ngModelChange)="setDeduction(item,$event)"></label>}@empty{<p>На этой локации магнитов на складе нет. Сессию можно записать без списания.</p>}</div>@if(recordError()){<p class="record-error">{{recordError()}}</p>}<footer><button type="button" class="secondary" (click)="closeSessionRecord()">Отмена</button><button type="button" [disabled]="recordSaving()" (click)="saveSessionRecord()">{{recordSaving()?'Записываем…':'Записать сессию'}}</button></footer></div></section></div>}
+  `,
   styles: [
     `
       .view-switch {
@@ -1327,11 +1324,12 @@ type ExternalClub = {
         }
         .booking-controls button,
         .booking-controls .control-link,
-        .booking-controls select {
+      .booking-controls select {
           width: 100%;
           min-height: 44px;
         }
       }
+      .record-backdrop{position:fixed;z-index:2200;inset:0;display:grid;place-items:center;padding:18px;background:#101828aa;backdrop-filter:blur(5px)}.record-dialog{width:min(650px,100%);max-height:calc(100vh - 36px);overflow:auto;border-radius:20px;background:#fff;box-shadow:0 30px 90px #10182855}.record-dialog>header{display:flex;justify-content:space-between;padding:24px 26px 18px;border-bottom:1px solid #eaecf0}.record-dialog>header small{color:#4f46e5;font-weight:800;text-transform:uppercase}.record-dialog h3{margin:4px 0;font-size:23px}.record-dialog header p{margin:0;color:#667085}.record-dialog>header button{padding:0;width:36px;height:36px;background:#f2f4f7;color:#475467;box-shadow:none;font-size:23px}.record-form{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:22px 26px}.record-form label{display:grid;gap:6px;font-weight:700}.record-duration{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:11px;background:#f5f7fa}.magnet-title{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;margin-top:5px}.magnet-title h4,.magnet-title p{margin:0}.magnet-title p{margin-top:3px;color:#667085;font-size:11px}.magnet-title>b{padding:7px 10px;border-radius:9px;background:#fff1f2;color:#b42318}.magnet-title>b.complete{background:#ecfdf3;color:#067647}.magnet-list{grid-column:1/-1;display:grid;gap:7px}.magnet-list>label{display:grid;grid-template-columns:1fr 90px;align-items:center;padding:11px 13px;border:1px solid #e4e7ec;border-radius:11px}.magnet-list>label.recommended{border-color:#a7c8ff;background:#f5f8ff}.magnet-list span b,.magnet-list span small{display:block}.magnet-list span small{margin-top:3px;color:#667085;font-weight:400}.record-error{grid-column:1/-1;margin:0;color:#b42318}.record-form footer{grid-column:1/-1;display:flex;justify-content:flex-end;gap:9px;padding-top:8px}@media(max-width:650px){.record-form{grid-template-columns:1fr;padding:18px}.record-form>*{grid-column:1/-1}.record-dialog>header{padding:20px 18px}}
     `,
   ],
 })
@@ -1356,6 +1354,10 @@ export class BookingsComponent {
   extraGuestMessages = signal<Record<string, { text: string; error: boolean }>>({});
   extraGuestBusyId = signal<string | null>(null);
   importingId = signal<string | null>(null);
+  recordBooking=signal<ExternalBooking|null>(null);
+  sessionInventory=signal<SessionInventoryItem[]>([]);
+  recordSaving=signal(false);recordError=signal("");recordDeductions:Record<string,number>={};
+  recordDraft={gameId:"",startedAt:"",endedAt:"",playerCount:0};
   confirmingId = signal<string | null>(null);
   externalDate = this.localDate(new Date());
   games = signal<Game[]>([]);
@@ -1682,6 +1684,16 @@ export class BookingsComponent {
       (game) => game.room_name.toLowerCase() === zoneName.toLowerCase(),
     );
   }
+  openSessionRecord(booking:ExternalBooking){
+    const start=`${booking.date}T${booking.startsAt.slice(0,5)}`,endDate=booking.endsAt.slice(0,5)<booking.startsAt.slice(0,5)?this.localDate(new Date(new Date(`${booking.date}T12:00:00`).getTime()+86400000)):booking.date;
+    this.recordBooking.set(booking);this.recordDraft={gameId:booking.gameId||this.gamesForZone(booking.zoneName).find(game=>game.name===booking.suggestedGameName)?.id||"",startedAt:start,endedAt:`${endDate}T${booking.endsAt.slice(0,5)}`,playerCount:booking.checkedIn};this.recordDeductions={};this.recordError.set("");this.loadSessionInventory();
+  }
+  closeSessionRecord(){if(!this.recordSaving()){this.recordBooking.set(null);this.sessionInventory.set([])}}
+  loadSessionInventory(){if(!this.recordBooking()||!this.externalClubId)return;const query=new URLSearchParams({clubId:this.externalClubId});if(this.recordDraft.gameId)query.set("gameId",this.recordDraft.gameId);this.http.get<SessionInventoryItem[]>(`/api/time-to-grow/session-record-options?${query}`).subscribe({next:items=>{this.sessionInventory.set(items);this.recordDeductions={};let remaining=this.recordDraft.playerCount;for(const item of items){if(remaining<=0)break;const quantity=Math.min(Number(item.quantity),remaining);if(quantity>0){this.recordDeductions[item.id]=quantity;remaining-=quantity}}},error:()=>this.recordError.set("Не удалось загрузить магниты со склада.")})}
+  setDeduction(item:SessionInventoryItem,value:unknown){this.recordDeductions[item.id]=Math.max(0,Math.min(Math.floor(Number(value)||0),Number(item.quantity)))}
+  deductionTotal(){return Object.values(this.recordDeductions).reduce((sum,value)=>sum+value,0)}
+  recordDuration(){const start=new Date(this.recordDraft.startedAt),end=new Date(this.recordDraft.endedAt),minutes=Math.round((end.getTime()-start.getTime())/60000);return Number.isFinite(minutes)&&minutes>0?`${Math.floor(minutes/60)} ч ${minutes%60} мин`:"—"}
+  saveSessionRecord(){const booking=this.recordBooking();if(!booking)return;if(!this.recordDraft.gameId){this.recordError.set("Выберите игру.");return}if(new Date(this.recordDraft.endedAt)<=new Date(this.recordDraft.startedAt)){this.recordError.set("Окончание должно быть позже начала.");return}if(this.deductionTotal()!==0&&this.deductionTotal()!==this.recordDraft.playerCount){this.recordError.set("Спишите магниты для всех игроков или оставьте все значения нулевыми.");return}this.recordSaving.set(true);this.recordError.set("");const deductions=Object.entries(this.recordDeductions).filter(([,quantity])=>quantity>0).map(([itemId,quantity])=>({itemId,quantity}));this.http.post("/api/time-to-grow/sessions/record",{clubId:this.externalClubId,date:booking.date,bookingId:booking.id,gameId:this.recordDraft.gameId,startedAt:new Date(this.recordDraft.startedAt).toISOString(),endedAt:new Date(this.recordDraft.endedAt).toISOString(),playerCount:this.recordDraft.playerCount,deductions}).subscribe({next:()=>{this.recordSaving.set(false);this.closeSessionRecord();this.loadExternal()},error:({error})=>{this.recordSaving.set(false);this.recordError.set(error?.error==="SESSION_ALREADY_RECORDED"?"Для этой брони сессия уже записана.":error?.error==="INSUFFICIENT_STOCK"?"Магнитов уже недостаточно — обновите выбор.":"Не удалось записать сессию.")}})}
   startExternal(b: ExternalBooking) {
     const selectedGameId = this.selectedGames[b.id] || null;
     if (b.requiresGameSelection && !selectedGameId) {

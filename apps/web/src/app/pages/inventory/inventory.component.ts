@@ -5,6 +5,7 @@ import { RouterLink } from "@angular/router";
 import { buildInventoryPdf, type InventoryPdfItem } from "./inventory-pdf";
 
 type Location = { id: string; name: string };
+type Game={id:string;name:string;location_id:string};
 type InventoryItem = {
   id: string;
   location_id: string;
@@ -18,6 +19,7 @@ type InventoryItem = {
   low_stock: boolean;
   created_at: string;
   updated_at: string;
+  game_id:string|null;
 };
 type InventoryMovement = {
   id: string;
@@ -104,6 +106,7 @@ type InventoryHistoryItem = {
             </label>
             <label>Текущий остаток *<input name="quantity" [(ngModel)]="draft.quantity" type="number" min="0" step="0.01" required /></label>
             <label>Минимальный остаток *<input name="minimumQuantity" [(ngModel)]="draft.minimumQuantity" type="number" min="0" step="0.01" required /></label>
+            @if(draft.category==='Магниты'){<label>Для игры<select name="gameId" [(ngModel)]="draft.gameId"><option value="">Универсальный магнит</option>@for(game of gamesForLocation(draft.locationId);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label>}
             <label class="notes">Комментарий<input name="notes" [(ngModel)]="draft.notes" placeholder="Размер, поставщик или место хранения" /></label>
             <button class="save" [disabled]="saving()">{{ saving() ? "Сохраняем…" : "Добавить" }}</button>
           </form>
@@ -146,6 +149,7 @@ type InventoryHistoryItem = {
                 <button type="button" (click)="customAdjust(item, 1)" [disabled]="busyId() === item.id">Приход</button>
               </div>
               <div class="item-management">
+                @if(item.category==='Магниты'){<label>Игра<select [ngModel]="item.game_id||''" (ngModelChange)="changeGame(item,$event)" [disabled]="busyId()===item.id"><option value="">Универсальный</option>@for(game of gamesForLocation(item.location_id);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label>}
                 <button type="button" class="minimum-edit" (click)="changeMinimum(item)" [disabled]="busyId() === item.id">Изменить минимум</button>
                 <button type="button" class="remove-item" (click)="removeItem(item)" [disabled]="busyId() === item.id">Удалить позицию</button>
               </div>
@@ -235,10 +239,11 @@ export class InventoryComponent {
   historyError = signal("");
   historyMovements = signal<InventoryMovement[]>([]);
   historyItem = signal<InventoryHistoryItem | null>(null);
+  games=signal<Game[]>([]);
   error = signal("");
   categories = ["Магниты", "Батарейки", "Крепёж", "Электроника", "Одноразовые расходники", "Другое"];
   units = ["шт.", "уп.", "м", "л", "кг"];
-  draft = { name: "", category: "Магниты", locationId: "", unit: "шт.", quantity: 0, minimumQuantity: 10, notes: "" };
+  draft = { name: "", category: "Магниты", locationId: "", unit: "шт.", quantity: 0, minimumQuantity: 10, notes: "",gameId:"" };
 
   categoryOptions = computed(() => [...new Set(this.items().map(item => item.category).filter(Boolean))].sort((a, b) => this.compareCategories(a, b)));
   filtersActive = computed(() => Boolean(this.search().trim() || this.categoryFilter()));
@@ -267,10 +272,12 @@ export class InventoryComponent {
       next: (locations) => { this.locations.set(locations); if (locations.length === 1) this.draft.locationId = locations[0].id; },
       error: () => this.error.set("Не удалось загрузить список клубов."),
     });
+    this.http.get<Game[]>("/api/games").subscribe({next:games=>this.games.set(games)});
     this.load();
   }
 
   number(value: number | string) { return Number(value) || 0; }
+  gamesForLocation(locationId:string){return this.games().filter(game=>game.location_id===locationId).sort((a,b)=>a.name.localeCompare(b.name,"ru"))}
   abs(value: number | string) { return Math.abs(this.number(value)); }
   displayNumber(value: number | string) { return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(this.number(value)); }
   formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value)); }
@@ -350,7 +357,7 @@ export class InventoryComponent {
     this.http.post("/api/inventory", this.draft).subscribe({
       next: () => {
         const locationId = this.draft.locationId;
-        this.draft = { name: "", category: "Магниты", locationId, unit: "шт.", quantity: 0, minimumQuantity: 10, notes: "" };
+        this.draft = { name: "", category: "Магниты", locationId, unit: "шт.", quantity: 0, minimumQuantity: 10, notes: "",gameId:"" };
         this.saving.set(false);
         this.formOpen.set(false);
         this.load();
@@ -393,6 +400,7 @@ export class InventoryComponent {
       error: () => { this.busyId.set(""); this.error.set("Не удалось изменить минимальный остаток."); },
     });
   }
+  changeGame(item:InventoryItem,gameId:string){this.busyId.set(item.id);this.http.patch(`/api/inventory/${item.id}`,{gameId:gameId||null}).subscribe({next:()=>{this.busyId.set("");this.load()},error:()=>{this.busyId.set("");this.error.set("Не удалось привязать магнит к игре.")}})}
 
   removeItem(item: InventoryItem) {
     if (!confirm(`Удалить позицию «${item.name}»? Она исчезнет из инвентаря, но история операций сохранится.`)) return;

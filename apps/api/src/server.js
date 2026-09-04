@@ -1512,7 +1512,7 @@ app.get("/sessions", auth, permit("sessions:read"), async (req, res) => {
   }
   const { rows } = await db.query(`
     SELECT s.*,r.name room_name,r.location_id,l.name location_name,g.name game_name,
-           count(sp.person_id)::int player_count,
+           COALESCE(s.manual_player_count,count(sp.person_id)::int) player_count,
            count(sp.person_id) FILTER (WHERE p.identity_type='EMAIL_HMAC')::int identified_player_count,
            count(sp.person_id) FILTER (WHERE p.identity_type='BOOKING_RANDOM')::int anonymous_player_count,
            CASE WHEN s.started_at IS NULL THEN NULL
@@ -1607,6 +1607,52 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+app.get("/time-to-grow/session-record-options",auth,permit("sessions:create"),async(req,res)=>{
+  const input=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/),gameId:z.string().uuid().optional()}).parse(req.query);
+  const location=(await db.query("SELECT id FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
+  if(!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
+  if(!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const {rows}=await db.query(`SELECT id,name,category,unit,quantity,game_id,
+    (game_id=$2::uuid) recommended FROM inventory_items
+    WHERE location_id=$1 AND is_active=true AND lower(category) LIKE '%магнит%'
+    ORDER BY (game_id=$2::uuid) DESC,quantity DESC,lower(name)`,[location.id,input.gameId||null]);
+  res.json(rows);
+});
+
+app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(req,res)=>{
+  const input=z.object({
+    clubId:z.string().regex(/^[a-z0-9]{26}$/),date:z.string().date(),bookingId:z.string(),gameId:z.string().uuid(),
+    startedAt:z.string().datetime({offset:true}),endedAt:z.string().datetime({offset:true}),playerCount:z.number().int().min(0).max(1000),
+    deductions:z.array(z.object({itemId:z.string().uuid(),quantity:z.number().int().positive().max(1000)})).max(20)
+  }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).parse(req.body);
+  const location=(await db.query("SELECT id,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
+  if(!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
+  if(!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const externalBooking=(await fetchTimeToGrowBookings(input.clubId,input.date)).find(item=>item.id===input.bookingId);
+  if(!externalBooking) return res.status(404).json({error:"EXTERNAL_BOOKING_NOT_FOUND"});
+  const client=await db.connect();
+  try{
+    await client.query("BEGIN");
+    const imported=await importTimeToGrowBooking(client,location,externalBooking,false);
+    if(!(await client.query("SELECT 1 FROM games WHERE id=$1 AND room_id=$2 AND is_active=true",[input.gameId,imported.booking.room_id])).rowCount){await client.query("ROLLBACK");return res.status(400).json({error:"GAME_NOT_IN_ZONE"});}
+    if((await client.query("SELECT 1 FROM sessions WHERE booking_id=$1",[imported.booking.id])).rowCount){await client.query("ROLLBACK");return res.status(409).json({error:"SESSION_ALREADY_RECORDED"});}
+    const session=(await client.query(`INSERT INTO sessions(booking_id,room_id,game_id,status,started_at,ended_at,remaining_seconds,manual_player_count)
+      VALUES($1,$2,$3,'FINISHED',$4,$5,0,$6) RETURNING *`,[imported.booking.id,imported.booking.room_id,input.gameId,input.startedAt,input.endedAt,input.playerCount])).rows[0];
+    await client.query(`INSERT INTO session_participants(session_id,person_id,participant_role,category_at_play,age_band_at_play)
+      SELECT $1,person_id,participant_role,category_at_booking,age_band_at_booking FROM booking_participants WHERE booking_id=$2 ON CONFLICT DO NOTHING`,[session.id,imported.booking.id]);
+    for(const deduction of input.deductions){
+      const item=(await client.query("SELECT * FROM inventory_items WHERE id=$1 AND location_id=$2 AND is_active=true FOR UPDATE",[deduction.itemId,location.id])).rows[0];
+      if(!item||Number(item.quantity)<deduction.quantity){await client.query("ROLLBACK");return res.status(409).json({error:"INSUFFICIENT_STOCK",itemId:deduction.itemId});}
+      const next=Number(item.quantity)-deduction.quantity;
+      await client.query("UPDATE inventory_items SET quantity=$1,updated_by=$2,updated_at=now() WHERE id=$3",[next,req.user.sub,item.id]);
+      await client.query("INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by) VALUES($1,$2,$3,$4,$5)",[item.id,-deduction.quantity,next,`Сессия ${externalBooking.product.effective_name} · ${externalBooking.owner?.name||externalBooking.owner?.email||externalBooking.id}`,req.user.sub]);
+    }
+    await client.query("COMMIT");
+    await audit(req,"session.record","session",session.id,null,{...session,deductions:input.deductions});
+    res.status(201).json(session);
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 });
 
 app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => {
@@ -2082,6 +2128,7 @@ const inventoryItemInput = z.object({
   quantity: z.coerce.number().finite().min(0).max(1_000_000),
   minimumQuantity: z.coerce.number().finite().min(0).max(1_000_000),
   notes: z.string().trim().max(500).default(""),
+  gameId:z.string().uuid().nullable().default(null),
 });
 
 app.get("/inventory", auth, async (req,res) => {
@@ -2149,23 +2196,23 @@ app.post("/inventory", auth, async (req,res) => {
   const input=inventoryItemInput.parse(req.body);
   if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   const {rows}=await db.query(`
-    INSERT INTO inventory_items(location_id,name,category,unit,quantity,minimum_quantity,notes,updated_by)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+    INSERT INTO inventory_items(location_id,name,category,unit,quantity,minimum_quantity,notes,updated_by,game_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
     RETURNING *
-  `,[input.locationId,input.name,input.category,input.unit,input.quantity,input.minimumQuantity,input.notes||null,req.user.sub]);
+  `,[input.locationId,input.name,input.category,input.unit,input.quantity,input.minimumQuantity,input.notes||null,req.user.sub,input.gameId]);
   await audit(req,"inventory.item.create","inventory_item",rows[0].id,null,rows[0]);
   res.status(201).json(rows[0]);
 });
 
 app.patch("/inventory/:id", auth, async (req,res) => {
-  const input=z.object({minimumQuantity:z.coerce.number().finite().min(0).max(1_000_000)}).parse(req.body);
+  const input=z.object({minimumQuantity:z.coerce.number().finite().min(0).max(1_000_000).optional(),gameId:z.string().uuid().nullable().optional()}).refine(value=>Object.keys(value).length>0).parse(req.body);
   const before=(await db.query("SELECT * FROM inventory_items WHERE id=$1 AND is_active=true",[req.params.id])).rows[0];
   if(!before) return res.status(404).json({error:"INVENTORY_ITEM_NOT_FOUND"});
   if(!(await locationAllowed(req,before.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   const item=(await db.query(`
-    UPDATE inventory_items SET minimum_quantity=$1,updated_by=$2,updated_at=now()
-    WHERE id=$3 RETURNING *,(quantity<=minimum_quantity) AS low_stock
-  `,[input.minimumQuantity,req.user.sub,before.id])).rows[0];
+    UPDATE inventory_items SET minimum_quantity=COALESCE($1,minimum_quantity),game_id=CASE WHEN $2 THEN $3::uuid ELSE game_id END,updated_by=$4,updated_at=now()
+    WHERE id=$5 RETURNING *,(quantity<=minimum_quantity) AS low_stock
+  `,[input.minimumQuantity??null,Object.hasOwn(input,"gameId"),input.gameId||null,req.user.sub,before.id])).rows[0];
   await audit(req,"inventory.item.update","inventory_item",before.id,before,item);
   res.json(item);
 });
