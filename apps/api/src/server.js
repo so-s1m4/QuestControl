@@ -1617,7 +1617,7 @@ app.get("/time-to-grow/session-record-options",auth,permit("sessions:create"),as
   const {rows}=await db.query(`SELECT id,name,category,unit,quantity,game_id,
     (game_id=$2::uuid) recommended FROM inventory_items
     WHERE location_id=$1 AND is_active=true AND lower(category) LIKE '%магнит%'
-    ORDER BY (game_id=$2::uuid) DESC,quantity DESC,lower(name)`,[location.id,input.gameId||null]);
+    ORDER BY (game_id=$2::uuid) DESC NULLS LAST,quantity DESC,lower(name)`,[location.id,input.gameId||null]);
   res.json(rows);
 });
 
@@ -2310,7 +2310,7 @@ app.get("/games", auth, permit("rooms:read"), async (req,res) => {
     clause+=` AND g.room_id=$${values.length}`;
   }
   const { rows }=await db.query(`
-    SELECT g.*,r.name room_name,r.location_id,l.name location_name
+    SELECT g.*,r.name room_name,r.location_id,l.name location_name,l.external_id location_external_id
     FROM games g
     JOIN rooms r ON r.id=g.room_id
     JOIN locations l ON l.id=r.location_id

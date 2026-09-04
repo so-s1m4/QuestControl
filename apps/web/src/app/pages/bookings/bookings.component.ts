@@ -45,6 +45,7 @@ type Game = {
   room_id: string;
   room_name: string;
   location_id: string;
+  location_external_id: string | null;
 };
 type ExternalBooking = {
   id: string;
@@ -1692,7 +1693,8 @@ export class BookingsComponent {
   }
   gamesForZone(zoneName: string) {
     return this.games().filter(
-      (game) => game.room_name.toLowerCase() === zoneName.toLowerCase(),
+      (game) => game.room_name.toLowerCase() === zoneName.toLowerCase()
+        && (!this.externalClubId || game.location_external_id === this.externalClubId),
     );
   }
   openSessionRecord(booking:ExternalBooking){

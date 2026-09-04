@@ -134,7 +134,7 @@ type InventoryHistoryItem = {
                   <p>{{ item.location_name }}@if (item.notes) { · {{ item.notes }} }</p>
                   <small class="added-at">Добавлено {{ formatDate(item.created_at) }}</small>
                 </div>
-                <span class="status" [class.ok]="!item.low_stock">{{ item.low_stock ? "Нужно пополнить" : "В наличии" }}</span>
+                <div class="item-head-actions"><span class="status" [class.ok]="!item.low_stock">{{ item.low_stock ? "Нужно пополнить" : "В наличии" }}</span><button type="button" class="item-menu" aria-label="Управление позицией" (click)="openItemMenu(item)">•••</button></div>
               </div>
 
               <div class="stock">
@@ -148,49 +148,6 @@ type InventoryHistoryItem = {
                 <button type="button" class="quick plus" (click)="adjust(item, 1, 'Быстрый приход')" [disabled]="busyId() === item.id">+ 1</button>
                 <button type="button" (click)="customAdjust(item, 1)" [disabled]="busyId() === item.id">Приход</button>
               </div>
-              <div class="item-management">
-                @if(item.category==='Магниты'){<label>Игра<select [ngModel]="item.game_id||''" (ngModelChange)="changeGame(item,$event)" [disabled]="busyId()===item.id"><option value="">Универсальный</option>@for(game of gamesForLocation(item.location_id);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label>}
-                <button type="button" class="minimum-edit" (click)="changeMinimum(item)" [disabled]="busyId() === item.id">Изменить минимум</button>
-                <button type="button" class="remove-item" (click)="removeItem(item)" [disabled]="busyId() === item.id">Удалить позицию</button>
-              </div>
-              <button type="button" class="history-toggle" [class.open]="historyItemId() === item.id" (click)="toggleHistory(item)">
-                <span>История прихода и списаний</span><b>{{ historyItemId() === item.id ? "⌃" : "⌄" }}</b>
-              </button>
-              @if (historyItemId() === item.id) {
-                <div class="history-panel">
-                  @if (historyLoading()) {
-                    <p class="history-state">Загружаем историю…</p>
-                  } @else if (historyError()) {
-                    <p class="history-state error">{{ historyError() }}</p>
-                  } @else {
-                    <div class="movement-list">
-                      @for (movement of historyMovements(); track movement.id) {
-                        <div class="movement" [class.incoming]="number(movement.delta) > 0" [class.outgoing]="number(movement.delta) < 0">
-                          <i>{{ number(movement.delta) > 0 ? "+" : "−" }}</i>
-                          <div>
-                            <strong>{{ number(movement.delta) > 0 ? "Приход" : "Списание" }} · {{ movement.reason }}</strong>
-                            <span>{{ formatDateTime(movement.last_event_at) }} · {{ movement.created_by_name }}</span>
-                            @if (movement.operation_count > 1) {
-                              <small>{{ movement.operation_count }} действия объединены в одну запись</small>
-                            }
-                          </div>
-                          <div class="movement-amount">
-                            <b>{{ number(movement.delta) > 0 ? "+" : "−" }}{{ displayNumber(abs(movement.delta)) }} {{ item.unit }}</b>
-                            <span>остаток {{ displayNumber(movement.quantity_after) }}</span>
-                          </div>
-                        </div>
-                      }
-                      @if (historyItem(); as createdItem) {
-                        <div class="movement created">
-                          <i>●</i>
-                          <div><strong>Позиция добавлена</strong><span>{{ formatDateTime(createdItem.created_at) }}</span></div>
-                          <div class="movement-amount"><b>+{{ displayNumber(createdItem.initial_quantity) }} {{ createdItem.unit }}</b><span>начальный остаток</span></div>
-                        </div>
-                      }
-                    </div>
-                  }
-                </div>
-              }
             </article>
           }
               </div>
@@ -204,6 +161,27 @@ type InventoryHistoryItem = {
             }
           }
         </div>
+        @if (menuItem(); as item) {
+          <div class="item-modal-backdrop" (click)="closeItemMenu()">
+            <section class="item-modal" (click)="$event.stopPropagation()">
+              <header><div><small>{{item.category}}</small><h3>{{item.name}}</h3><p>{{item.location_name}}</p></div><button type="button" class="modal-close" (click)="closeItemMenu()">×</button></header>
+              <div class="item-settings">
+                @if(item.category==='Магниты'){<label>Игра<select [(ngModel)]="menuGameId"><option value="">Универсальный магнит</option>@for(game of gamesForLocation(item.location_id);track game.id){<option [value]="game.id">{{game.name}}</option>}</select></label>}
+                <label>Минимальный остаток<input type="number" min="0" step="0.01" [(ngModel)]="menuMinimum"></label>
+                <button type="button" (click)="saveItemSettings(item)" [disabled]="busyId()===item.id">{{busyId()===item.id?'Сохраняем…':'Сохранить изменения'}}</button>
+              </div>
+              <div class="modal-history"><h4>История прихода и списаний</h4>
+                @if (historyLoading()) {<p class="history-state">Загружаем историю…</p>}
+                @else if (historyError()) {<p class="history-state error">{{historyError()}}</p>}
+                @else {<div class="movement-list">
+                  @for (movement of historyMovements(); track movement.id) {<div class="movement" [class.incoming]="number(movement.delta)>0" [class.outgoing]="number(movement.delta)<0"><i>{{number(movement.delta)>0?'+':'−'}}</i><div><strong>{{number(movement.delta)>0?'Приход':'Списание'}} · {{movement.reason}}</strong><span>{{formatDateTime(movement.last_event_at)}} · {{movement.created_by_name}}</span>@if(movement.operation_count>1){<small>{{movement.operation_count}} действия объединены</small>}</div><div class="movement-amount"><b>{{number(movement.delta)>0?'+':'−'}}{{displayNumber(abs(movement.delta))}} {{item.unit}}</b><span>остаток {{displayNumber(movement.quantity_after)}}</span></div></div>}
+                  @if(historyItem(); as createdItem){<div class="movement created"><i>●</i><div><strong>Позиция добавлена</strong><span>{{formatDateTime(createdItem.created_at)}}</span></div><div class="movement-amount"><b>+{{displayNumber(createdItem.initial_quantity)}} {{createdItem.unit}}</b><span>начальный остаток</span></div></div>}
+                </div>}
+              </div>
+              <footer><button type="button" class="remove-item" (click)="removeItem(item)" [disabled]="busyId()===item.id">Удалить позицию</button></footer>
+            </section>
+          </div>
+        }
       </section>
     </main>
   `,
@@ -212,13 +190,12 @@ type InventoryHistoryItem = {
     .new-item{grid-template-columns:repeat(3,minmax(0,1fr))!important}.form-heading{grid-column:1/-1;display:grid;gap:4px}.form-heading b{font-size:18px}.form-heading span{color:var(--muted);font-size:12px}.notes{grid-column:span 2}.save{min-height:42px;align-self:end}
     .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:20px 0}.summary article{padding:17px 19px;border:1px solid var(--line);border-radius:14px;background:#fff}.summary span{display:block;color:var(--muted);font-size:11px}.summary b{display:block;margin-top:6px;font-size:25px}.summary .warning{border-color:#f4c7a4;background:#fff8f1}.summary .warning b{color:#c04f18}
     .category-groups{display:grid;gap:24px}.category-group{min-width:0}.category-heading{display:flex;align-items:center;justify-content:space-between;margin:0 2px 10px}.category-heading h3{margin:0;font-size:17px}.category-heading span{padding:5px 9px;border-radius:999px;background:#eef0ff;color:#4f46e5;font-size:10px;font-weight:800}.inventory-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.inventory-list>article{padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 24px #19213a08}.inventory-list>article.low{border-color:#f1bc93;box-shadow:0 8px 24px #d3601710}
-    .item-main{display:flex;align-items:start;justify-content:space-between;gap:14px}.category{color:var(--primary);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.item-title h3{margin:5px 0 4px;font-size:18px}.item-title p{margin:0;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.added-at{display:block;margin-top:6px;color:#98a2b3;font-size:9px}.status{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:#fff0e5;color:#b54708;font-size:9px;font-weight:800}.status.ok{background:#eaf8f1;color:#087443}
+    .item-main{display:flex;align-items:start;justify-content:space-between;gap:14px}.category{color:var(--primary);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.item-title h3{margin:5px 0 4px;font-size:18px}.item-title p{margin:0;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.added-at{display:block;margin-top:6px;color:#98a2b3;font-size:9px}.item-head-actions{display:flex;align-items:center;gap:7px}.status{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:#fff0e5;color:#b54708;font-size:9px;font-weight:800}.status.ok{background:#eaf8f1;color:#087443}.item-menu{width:34px;height:30px;padding:0;border:1px solid #dfe3ea;background:#fff;box-shadow:none;color:#667085;font-size:13px;letter-spacing:1px}.item-menu:hover{transform:none;background:#f5f7fa;box-shadow:none}
     .stock{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:17px 0;padding:14px;border-radius:12px;background:#f5f7fa}.stock small{display:block;color:var(--muted);font-size:10px}.stock strong{display:block;margin-top:4px;font-size:25px}.stock strong.minimum{color:#667085}.stock em{font-size:11px;font-style:normal;font-weight:700}
     .item-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.item-actions button{min-width:0;padding:10px 6px;font-size:11px}.quick{border:1px solid #d7dce5;background:#fff;box-shadow:none;color:#344054}.quick.minus{color:#b42336}.quick.plus{color:#087443}
-    .item-management{display:flex;justify-content:flex-end;gap:12px;margin-top:11px}.item-management button{padding:3px 0;border:0;background:transparent;box-shadow:none;color:#667085;font-size:10px}.item-management button:hover{box-shadow:none;transform:none;color:#344054}.item-management .remove-item{color:#b42336}.item-management .remove-item:hover{color:#8f1425}
-    .history-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 12px;border:1px solid #e0e4eb;background:#f7f8fa;box-shadow:none;color:#344054;font-size:11px}.history-toggle:hover{transform:none;box-shadow:none}.history-toggle.open{border-color:#c7cdf9;background:#f0f2ff;color:#3f46b5}.history-toggle b{font-size:15px}.history-panel{margin-top:8px;padding:4px 12px;border:1px solid #e0e4eb;border-radius:12px;background:#fbfcfe}.history-state{margin:0;padding:18px 4px;color:var(--muted);text-align:center}.movement-list{display:grid}.movement{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px 0;border-bottom:1px solid #e8ebf0}.movement:last-child{border-bottom:0}.movement>i{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#eef1f6;color:#667085;font-style:normal;font-weight:900}.movement.incoming>i{background:#dcfae6;color:#087443}.movement.outgoing>i{background:#fff0e5;color:#b54708}.movement strong,.movement span,.movement small{display:block}.movement strong{font-size:11px}.movement span{margin-top:4px;color:#7a8495;font-size:9px}.movement small{margin-top:5px;color:#9a6700;font-size:8px}.movement-amount{text-align:right}.movement-amount b{font-size:12px;white-space:nowrap}.incoming .movement-amount b{color:#087443}.outgoing .movement-amount b{color:#b54708}.movement.created>i{background:#eef0ff;color:#4f46e5;font-size:9px}
+    .item-modal-backdrop{position:fixed;z-index:2500;inset:0;display:grid;place-items:center;padding:20px;background:#101828a6;backdrop-filter:blur(4px)}.item-modal{width:min(650px,100%);max-height:calc(100vh - 40px);overflow:auto;padding:0;border-radius:20px;background:#fff;box-shadow:0 30px 90px #10182855}.item-modal>header{display:flex;align-items:start;justify-content:space-between;padding:22px 24px;border-bottom:1px solid #eaecf0}.item-modal header small{color:var(--primary);font-size:10px;font-weight:800;text-transform:uppercase}.item-modal header h3{margin:5px 0 3px;font-size:22px}.item-modal header p{margin:0;color:var(--muted);font-size:11px}.modal-close{width:36px;height:36px;padding:0;background:#f2f4f7;box-shadow:none;color:#475467;font-size:22px}.item-settings{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:20px 24px;border-bottom:1px solid #eaecf0}.item-settings label{display:grid;gap:6px;color:#475467;font-size:11px;font-weight:700}.item-settings button{grid-column:1/-1;justify-self:end}.modal-history{padding:20px 24px}.modal-history h4{margin:0 0 8px}.history-state{margin:0;padding:18px 4px;color:var(--muted);text-align:center}.movement-list{display:grid}.movement{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px 0;border-bottom:1px solid #e8ebf0}.movement:last-child{border-bottom:0}.movement>i{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#eef1f6;color:#667085;font-style:normal;font-weight:900}.movement.incoming>i{background:#dcfae6;color:#087443}.movement.outgoing>i{background:#fff0e5;color:#b54708}.movement strong,.movement span,.movement small{display:block}.movement strong{font-size:11px}.movement span{margin-top:4px;color:#7a8495;font-size:9px}.movement small{margin-top:5px;color:#9a6700;font-size:8px}.movement-amount{text-align:right}.movement-amount b{font-size:12px;white-space:nowrap}.incoming .movement-amount b{color:#087443}.outgoing .movement-amount b{color:#b54708}.movement.created>i{background:#eef0ff;color:#4f46e5;font-size:9px}.item-modal>footer{display:flex;justify-content:flex-end;padding:15px 24px;border-top:1px solid #eaecf0}.item-modal .remove-item{border:0;background:transparent;box-shadow:none;color:#b42336}
     @media(max-width:1100px){.inventory-list{grid-template-columns:1fr}.new-item{grid-template-columns:repeat(2,minmax(0,1fr))!important}.notes{grid-column:1/-1}}
-    @media(max-width:760px){section{padding-bottom:105px!important}.toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}.toolbar label,.toolbar .club-filter,.toolbar .category-filter,.toolbar .search-filter{width:100%;min-width:0}.toolbar .club-filter{grid-column:1;grid-row:1}.toolbar .category-filter{grid-column:2;grid-row:1}.toolbar .search-filter{grid-column:1/-1;grid-row:2}.toolbar .secondary{grid-column:1;grid-row:3}.toolbar .export{grid-column:2;grid-row:3}.toolbar .clear-filters{grid-column:1/-1;grid-row:3}.toolbar .clear-filters~.secondary,.toolbar .clear-filters~.export{grid-row:4}.toolbar label{gap:4px;font-size:10px}.toolbar input,.toolbar select{min-height:40px!important}.toolbar button{width:100%;min-height:40px}.toolbar .clear-filters{padding-inline:4px}.new-item{grid-template-columns:1fr!important;padding:16px!important}.new-item>*{grid-column:1!important}.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.summary article{padding:12px 10px}.summary b{font-size:20px}.inventory-list>article{padding:16px}.item-main{display:grid}.status{justify-self:start}.item-actions{grid-template-columns:1fr 1fr}.item-management{justify-content:space-between}.item-management button{min-height:36px;font-size:11px}.history-toggle{min-height:44px}.history-panel{padding-inline:10px}.movement{grid-template-columns:28px minmax(0,1fr)}.movement-amount{grid-column:2;text-align:left}.movement-amount span{display:inline;margin-left:6px}}
+    @media(max-width:760px){section{padding-bottom:105px!important}.toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}.toolbar label,.toolbar .club-filter,.toolbar .category-filter,.toolbar .search-filter{width:100%;min-width:0}.toolbar .club-filter{grid-column:1;grid-row:1}.toolbar .category-filter{grid-column:2;grid-row:1}.toolbar .search-filter{grid-column:1/-1;grid-row:2}.toolbar .secondary{grid-column:1;grid-row:3}.toolbar .export{grid-column:2;grid-row:3}.toolbar .clear-filters{grid-column:1/-1;grid-row:3}.toolbar .clear-filters~.secondary,.toolbar .clear-filters~.export{grid-row:4}.toolbar label{gap:4px;font-size:10px}.toolbar input,.toolbar select{min-height:40px!important}.toolbar button{width:100%;min-height:40px}.toolbar .clear-filters{padding-inline:4px}.new-item{grid-template-columns:1fr!important;padding:16px!important}.new-item>*{grid-column:1!important}.summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.summary article{padding:12px 10px}.summary b{font-size:20px}.inventory-list>article{padding:16px}.item-main{display:flex}.item-actions{grid-template-columns:1fr 1fr}.item-modal-backdrop{padding:10px}.item-settings{grid-template-columns:1fr}.item-settings>*{grid-column:1!important}.item-settings button{width:100%}.movement{grid-template-columns:28px minmax(0,1fr)}.movement-amount{grid-column:2;text-align:left}.movement-amount span{display:inline;margin-left:6px}}
     @media(max-width:390px){.summary{grid-template-columns:1fr}.summary article{display:flex;align-items:center;justify-content:space-between}.summary b{margin:0}}
   `],
 })
@@ -239,6 +216,9 @@ export class InventoryComponent {
   historyError = signal("");
   historyMovements = signal<InventoryMovement[]>([]);
   historyItem = signal<InventoryHistoryItem | null>(null);
+  menuItem = signal<InventoryItem | null>(null);
+  menuGameId = "";
+  menuMinimum: number | string = 0;
   games=signal<Game[]>([]);
   error = signal("");
   categories = ["Магниты", "Батарейки", "Крепёж", "Электроника", "Одноразовые расходники", "Другое"];
@@ -403,6 +383,17 @@ export class InventoryComponent {
   }
   changeGame(item:InventoryItem,gameId:string){this.busyId.set(item.id);this.http.patch(`/api/inventory/${item.id}`,{gameId:gameId||null}).subscribe({next:()=>{this.busyId.set("");this.load()},error:()=>{this.busyId.set("");this.error.set("Не удалось привязать магнит к игре.")}})}
 
+  openItemMenu(item:InventoryItem){this.menuItem.set(item);this.menuGameId=item.game_id||"";this.menuMinimum=this.number(item.minimum_quantity);this.historyItemId.set(item.id);this.loadHistory(item)}
+  closeItemMenu(){if(this.busyId())return;this.menuItem.set(null);this.historyItemId.set("")}
+  saveItemSettings(item:InventoryItem){
+    const minimumQuantity=Number(String(this.menuMinimum).replace(",","."));
+    if(!Number.isFinite(minimumQuantity)||minimumQuantity<0){this.historyError.set("Минимальный остаток должен быть не меньше нуля.");return}
+    const payload:{minimumQuantity:number;gameId?:string|null}={minimumQuantity};
+    if(item.category==="Магниты")payload.gameId=this.menuGameId||null;
+    this.busyId.set(item.id);this.historyError.set("");
+    this.http.patch(`/api/inventory/${item.id}`,payload).subscribe({next:()=>{this.busyId.set("");this.menuItem.set(null);this.historyItemId.set("");this.load()},error:()=>{this.busyId.set("");this.historyError.set("Не удалось сохранить изменения.")}})
+  }
+
   removeItem(item: InventoryItem) {
     if (!confirm(`Удалить позицию «${item.name}»? Она исчезнет из инвентаря, но история операций сохранится.`)) return;
     this.busyId.set(item.id);
@@ -411,6 +402,7 @@ export class InventoryComponent {
       next: () => {
         this.busyId.set("");
         if (this.historyItemId() === item.id) this.historyItemId.set("");
+        if (this.menuItem()?.id === item.id) this.menuItem.set(null);
         this.load();
       },
       error: () => { this.busyId.set(""); this.error.set("Не удалось удалить позицию."); },
