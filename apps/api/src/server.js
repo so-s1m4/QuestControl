@@ -1716,10 +1716,13 @@ app.get("/settings/google-sheets",auth,async(req,res)=>{
 
 app.put("/settings/google-sheets",auth,async(req,res)=>{
   if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
-  const input=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/),url:z.string().url().refine(value=>value.startsWith("https://script.google.com/macros/s/")&&value.endsWith("/exec")),secret:z.string().min(32).max(256)}).parse(req.body);
+  const input=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/),url:z.string().url().refine(value=>value.startsWith("https://script.google.com/macros/s/")&&value.endsWith("/exec")),secret:z.string().max(256).optional().default("")}).parse(req.body);
+  const current=await googleSheetsConfig(input.clubId);
+  const secret=input.secret||current?.secret;
+  if(!secret)return res.status(400).json({error:"GOOGLE_SHEETS_SECRET_REQUIRED"});
   const settingKey=`google_sheets:${input.clubId}`;
   await db.query(`INSERT INTO app_settings(key,encrypted_value,updated_by,updated_at) VALUES($1,$2,$3,now())
-    ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[settingKey,encryptSetting({url:input.url,secret:input.secret}),req.user.sub]);
+    ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[settingKey,encryptSetting({url:input.url,secret}),req.user.sub]);
   await audit(req,"settings.google_sheets.update","app_setting",settingKey,null,{url:input.url,clubId:input.clubId});
   res.json({configured:true,url:input.url});
 });
@@ -1799,8 +1802,10 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
   const input=z.object({
     clubId:z.string().regex(/^[a-z0-9]{26}$/),date:z.string().date(),bookingId:z.string(),gameId:z.string().uuid(),
     startedAt:z.string().datetime({offset:true}),endedAt:z.string().datetime({offset:true}),playerCount:z.number().int().min(0).max(1000),
+    pricePerPerson:z.union([z.literal(0),z.literal(35),z.literal(40),z.literal(50)]),
+    discountAmount:z.number().min(0).max(100000).default(0),discountReason:z.string().trim().max(300).default(""),promoCode:z.string().trim().max(100).default(""),
     deductions:z.array(z.object({itemId:z.string().uuid(),quantity:z.number().int().positive().max(1000)})).max(20)
-  }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).parse(req.body);
+  }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).refine(value=>value.discountAmount<=value.pricePerPerson*value.playerCount,{path:["discountAmount"],message:"Discount exceeds total"}).parse(req.body);
   const location=(await db.query("SELECT id,name,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
   if(!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
   if(!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
@@ -1821,7 +1826,8 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
       if(!item||Number(item.quantity)<deduction.quantity){await client.query("ROLLBACK");return res.status(409).json({error:"INSUFFICIENT_STOCK",itemId:deduction.itemId});}
       const next=Number(item.quantity)-deduction.quantity;
       await client.query("UPDATE inventory_items SET quantity=$1,updated_by=$2,updated_at=now() WHERE id=$3",[next,req.user.sub,item.id]);
-      await client.query("INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by) VALUES($1,$2,$3,$4,$5)",[item.id,-deduction.quantity,next,`Сессия ${externalBooking.product.effective_name} · ${externalBooking.owner?.name||externalBooking.owner?.email||externalBooking.id}`,req.user.sub]);
+      await client.query("INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by) VALUES($1,$2,$3,$4,$5)",[item.id,-deduction.quantity,next,`Сессия ${session.id} · ${externalBooking.product.effective_name}`,req.user.sub]);
+      await client.query("INSERT INTO session_inventory_deductions(session_id,item_id,quantity) VALUES($1,$2,$3)",[session.id,item.id,deduction.quantity]);
     }
     await client.query("COMMIT");
     await audit(req,"session.record","session",session.id,null,{...session,deductions:input.deductions});
@@ -1830,12 +1836,14 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
       db.query("SELECT display_name FROM users WHERE id=$1",[req.user.sub]),
     ]);
     const durationMinutes=Math.round((new Date(input.endedAt)-new Date(input.startedAt))/60000);
-    const startTime=new Intl.DateTimeFormat("de-AT",{timeZone:location.timezone,hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(input.startedAt));
+    const bookingStartTime=String(externalBooking.start.time||"").slice(0,5);
+    const grossAmount=input.pricePerPerson*input.playerCount;
+    const totalAmount=Math.max(0,grossAmount-input.discountAmount);
     const sheetPayload={
       type:"session.recorded",sessionId:session.id,bookingId:input.bookingId,date:input.date,
       locationName:location.name,roomName:details.rows[0]?.room_name||"",game:details.rows[0]?.game_name||externalBooking.product.effective_name,
-      startTime,durationMinutes,players:input.playerCount,total:externalBooking.order.total_amount,
-      onlineAmount:externalBooking.order.total_amount,price:input.playerCount?externalBooking.order.total_amount/input.playerCount:externalBooking.order.total_amount,
+      startTime:bookingStartTime,durationMinutes,players:input.playerCount,total:totalAmount,onlineAmount:totalAmount,price:input.pricePerPerson,
+      discountAmount:input.discountAmount,discountReason:input.discountReason,promoCode:input.promoCode,
       phone:externalBooking.owner?.phone||"",administrator:user.rows[0]?.display_name||"",comments:`QuestControl · ${input.bookingId}`,
     };
     await db.query("UPDATE sessions SET sheet_sync_status='PENDING',sheet_sync_payload=$2 WHERE id=$1",[session.id,JSON.stringify({clubId:input.clubId,payload:sheetPayload})]);
@@ -1845,6 +1853,35 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false,status:"FAILED"};}
     res.status(201).json({...session,sheetSync});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+});
+
+app.post("/sessions/:id/booking-record/rollback",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const client=await db.connect();let stored=null;
+  try{
+    await client.query("BEGIN");
+    const session=(await client.query(`SELECT s.*,r.location_id FROM sessions s JOIN rooms r ON r.id=s.room_id WHERE s.id=$1 FOR UPDATE`,[req.params.id])).rows[0];
+    if(!session)return res.status(404).json({error:"SESSION_NOT_FOUND"});
+    if(!session.booking_id)return res.status(409).json({error:"BOOKING_SESSION_REQUIRED"});
+    if(!(await locationAllowed(req,session.location_id))){await client.query("ROLLBACK");return res.status(403).json({error:"LOCATION_FORBIDDEN"});}
+    const deductions=(await client.query(`SELECT d.item_id,d.quantity AS deduction_quantity,i.name FROM session_inventory_deductions d JOIN inventory_items i ON i.id=d.item_id WHERE d.session_id=$1 FOR UPDATE`,[session.id])).rows;
+    for(const deduction of deductions){
+      const item=(await client.query("SELECT quantity FROM inventory_items WHERE id=$1 FOR UPDATE",[deduction.item_id])).rows[0];
+      const restored=Number(item.quantity)+Number(deduction.deduction_quantity);
+      await client.query("UPDATE inventory_items SET quantity=$1,updated_by=$2,updated_at=now() WHERE id=$3",[restored,req.user.sub,deduction.item_id]);
+      await client.query("INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by) VALUES($1,$2,$3,$4,$5)",[deduction.item_id,deduction.deduction_quantity,restored,`Откат записи сессии ${session.id}`,req.user.sub]);
+    }
+    stored=session.sheet_sync_payload;
+    await client.query("DELETE FROM sessions WHERE id=$1",[session.id]);
+    await client.query("COMMIT");
+    await audit(req,"session.booking_record.rollback","session",req.params.id,session,{restoredMagnets:deductions.length});
+    let sheetRollback={skipped:true};
+    if(session.sheet_sync_status==="SYNCED"&&stored?.clubId&&stored?.payload){
+      try{sheetRollback=await sendSessionToGoogleSheets(stored.clubId,{type:"session.rolled_back",sessionId:req.params.id,date:stored.payload.date,onlineAmount:stored.payload.onlineAmount});}
+      catch(error){console.error("Google Sheets rollback failed",req.params.id,error);sheetRollback={ok:false};}
+    }
+    res.json({ok:true,restoredMagnets:deductions.length,sheetRollback});
+  }catch(error){try{await client.query("ROLLBACK");}catch(_){}throw error;}finally{client.release();}
 });
 
 app.post("/sessions/:id/google-sheets/retry",auth,async(req,res)=>{
