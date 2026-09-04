@@ -3,6 +3,9 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { io } from "socket.io-client";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+
+const agentVersion=JSON.parse(readFileSync(new URL("../package.json",import.meta.url),"utf8")).version;
 
 const config = z.object({
   VPS_URL:z.string().url(), AGENT_ID:z.string().min(3), AGENT_TOKEN:z.string().min(16), ROOM_ID:z.string().uuid(),
@@ -173,6 +176,6 @@ socket.on("proxy",async(message,ack)=>{
 });
 setInterval(()=>socket.connected && socket.emit("heartbeat",{
   roomId:config.ROOM_ID,hostname:os.hostname(),uptime:Math.floor(os.uptime()),load:os.loadavg()[0],
-  freeMemory:os.freemem(),version:"0.1.0",timestamp:new Date().toISOString()
+  freeMemory:os.freemem(),version:agentVersion,timestamp:new Date().toISOString()
 }),config.HEARTBEAT_MS).unref();
 process.on("SIGTERM",()=>{stopVoice();socket.close();process.exit(0)});
