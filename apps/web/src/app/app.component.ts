@@ -16,6 +16,7 @@ type InstallPromptEvent = Event & {
   template: `
     @if (showLogout()) {
       <div class="account-actions">
+        @if(isAdmin()) {<a class="integrations" routerLink="/integrations">Интеграции API</a>}
         <button class="password" (click)="changePassword()">Сменить пароль</button>
         <button class="logout" (click)="logout()">Выйти</button>
       </div>
@@ -58,6 +59,7 @@ type InstallPromptEvent = Event & {
               <a routerLink="/users" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Пользователи</b><span>Доступ команды</span></a>
               @if (isAdmin()) {
                 <a routerLink="/camera-settings" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Настройки камер</b><span>Планы и привязка камер</span></a>
+                <a routerLink="/integrations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Интеграции API</b><span>Источники и форматы бронирований</span></a>
                 <a routerLink="/bookings" [queryParams]="{ history: '1' }" (click)="mobileMenuOpen.set(false)"><b>Импорт истории</b><span>Служебная загрузка старых броней</span></a>
               }
               @if (!isStandalone()) {
@@ -77,7 +79,7 @@ type InstallPromptEvent = Event & {
     <router-outlet />
   `,
   styles: [`
-    .account-actions{position:fixed;z-index:1000;left:22px;bottom:24px;display:grid;width:236px;gap:7px}.account-actions button{width:100%;padding:10px 12px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}
+    .account-actions{position:fixed;z-index:1000;left:22px;bottom:24px;display:grid;width:236px;gap:7px}.account-actions button,.account-actions .integrations{width:100%;padding:10px 12px;box-sizing:border-box;border-radius:10px;box-shadow:none;text-align:center}.account-actions .integrations{border:1px solid #344054;background:#182235;color:#fff;text-decoration:none;font-weight:750}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}
     .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .account-actions{display:none}

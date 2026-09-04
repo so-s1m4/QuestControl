@@ -656,16 +656,31 @@ app.post("/bookings/:id/participants", auth, permit("bookings:manage"), async (r
 
 let timeToGrowJwt = env.TIME_TO_GROW_JWT;
 let timeToGrowAccessToken = null;
+const defaultTimeToGrowConfig={
+  baseUrl:env.TIME_TO_GROW_BASE_URL,email:env.TIME_TO_GROW_EMAIL||"",password:env.TIME_TO_GROW_PASSWORD||"",jwt:env.TIME_TO_GROW_JWT||"",
+  defaultClubId:env.TIME_TO_GROW_CLUB_ID||"",viennaClubId:env.TIME_TO_GROW_VIENNA_CLUB_ID||"",
+  paths:{login:"/api/auth/login",clubs:"/api/admin/clubs",bookings:"/api/admin/clubs/{clubId}/bookings",calendar:"/api/admin/clubs/{clubId}/visits/calendar",appVisits:"/api/v1/app/clubs/{clubId}/visits",appClub:"/api/v1/app/clubs/{clubId}",appBookingMembers:"/api/v1/app/clubs/{clubId}/booking-members"},
+};
+let timeToGrowConfigCache=null;
+async function timeToGrowConfig(force=false){
+  if(!force&&timeToGrowConfigCache&&Date.now()-timeToGrowConfigCache.at<60_000)return timeToGrowConfigCache.value;
+  const row=(await db.query("SELECT encrypted_value FROM app_settings WHERE key='time_to_grow'")).rows[0];
+  let saved={};try{saved=decryptSetting(row?.encrypted_value)||{};}catch(error){console.error("Unable to decrypt Time to Grow settings",error);}
+  const value={...defaultTimeToGrowConfig,...saved,paths:{...defaultTimeToGrowConfig.paths,...saved.paths}};
+  timeToGrowConfigCache={at:Date.now(),value};return value;
+}
+const timeToGrowPath=(template,clubId)=>template.replaceAll("{clubId}",encodeURIComponent(clubId||""));
 async function refreshTimeToGrowSession() {
-  if (!env.TIME_TO_GROW_EMAIL || !env.TIME_TO_GROW_PASSWORD) {
+  const config=await timeToGrowConfig();
+  if (!config.email || !config.password) {
     const error = new Error("Time to Grow credentials are not configured");
     error.code = "TIME_TO_GROW_NOT_CONFIGURED";
     throw error;
   }
-  const response = await fetch(`${env.TIME_TO_GROW_BASE_URL}/api/auth/login`, {
+  const response = await fetch(`${config.baseUrl}${config.paths.login}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({ email: env.TIME_TO_GROW_EMAIL, password: env.TIME_TO_GROW_PASSWORD }),
+    body: JSON.stringify({ email: config.email, password: config.password }),
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
@@ -689,6 +704,8 @@ async function refreshTimeToGrowSession() {
 }
 
 async function timeToGrowLogin(force = false) {
+  const config=await timeToGrowConfig();
+  if(!force&&!timeToGrowJwt&&config.jwt)timeToGrowJwt=config.jwt;
   if (timeToGrowJwt && !force) return timeToGrowJwt;
   await refreshTimeToGrowSession();
   if (!timeToGrowJwt) {
@@ -711,14 +728,15 @@ async function timeToGrowAppLogin(force = false) {
 }
 
 async function timeToGrowFetch(path) {
+  const config=await timeToGrowConfig();
   let jwt = await timeToGrowLogin();
-  let response = await fetch(`${env.TIME_TO_GROW_BASE_URL}${path}`, {
+  let response = await fetch(`${config.baseUrl}${path}`, {
     headers: { accept: "application/json", cookie: `jwt=${jwt}` },
     signal: AbortSignal.timeout(10_000),
   });
-  if (response.status === 401 && env.TIME_TO_GROW_EMAIL && env.TIME_TO_GROW_PASSWORD) {
+  if (response.status === 401 && config.email && config.password) {
     jwt = await timeToGrowLogin(true);
-    response = await fetch(`${env.TIME_TO_GROW_BASE_URL}${path}`, {
+    response = await fetch(`${config.baseUrl}${path}`, {
       headers: { accept: "application/json", cookie: `jwt=${jwt}` },
       signal: AbortSignal.timeout(10_000),
     });
@@ -727,8 +745,9 @@ async function timeToGrowFetch(path) {
 }
 
 async function timeToGrowAppFetch(path, init = {}) {
+  const config=await timeToGrowConfig();
   let accessToken = await timeToGrowAppLogin();
-  const request = (token) => fetch(`${env.TIME_TO_GROW_BASE_URL}${path}`, {
+  const request = (token) => fetch(`${config.baseUrl}${path}`, {
     ...init,
     headers: {
       accept: "application/json",
@@ -739,7 +758,7 @@ async function timeToGrowAppFetch(path, init = {}) {
     signal: AbortSignal.timeout(10_000),
   });
   let response = await request(accessToken);
-  if (response.status === 401 && env.TIME_TO_GROW_EMAIL && env.TIME_TO_GROW_PASSWORD) {
+  if (response.status === 401 && config.email && config.password) {
     accessToken = await timeToGrowAppLogin(true);
     response = await request(accessToken);
   }
@@ -771,10 +790,11 @@ const checkinParticipantInput = z.object({
   extraAuthorization: z.string().max(300).optional().default(""),
 });
 
-const timeToGrowAppVisitsPath = (clubId, filtering) => {
+const timeToGrowAppVisitsPath = async (clubId, filtering) => {
+  const config=await timeToGrowConfig();
   const query = new URLSearchParams({ filtering: JSON.stringify(filtering) });
   if (filtering.upcoming) query.set("pagination", JSON.stringify({ page: 1, size: 30 }));
-  return `/api/v1/app/clubs/${encodeURIComponent(clubId)}/visits?${query}`;
+  return `${timeToGrowPath(config.paths.appVisits,clubId)}?${query}`;
 };
 
 const timeToGrowDataRows = (payload) => Array.isArray(payload?.data)
@@ -835,16 +855,16 @@ const checkinDocumentTranslations = (value) => Object.fromEntries(["de","en"].fl
   }
 }));
 
-const configuredCheckinLocations = () => [
-  { location:"st-poelten", clubId:env.TIME_TO_GROW_CLUB_ID },
-  { location:"vienna", clubId:env.TIME_TO_GROW_VIENNA_CLUB_ID },
-].filter(item => item.clubId);
+const configuredCheckinLocations = async () => {
+  const config=await timeToGrowConfig();
+  return [{location:"st-poelten",clubId:config.defaultClubId},{location:"vienna",clubId:config.viennaClubId}].filter(item=>item.clubId);
+};
 
 async function resolveCheckinToken(token) {
   if (!isCheckinToken(token)) return null;
   const signed = readCheckinToken(token,env.JWT_ACCESS_SECRET);
   if (signed) {
-    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(signed.clubId,{ upcoming:true }));
+    const response = await timeToGrowAppFetch(await timeToGrowAppVisitsPath(signed.clubId,{ upcoming:true }));
     if (!response.ok) {
       const error = new Error("Time to Grow visits request failed");
       error.code = "TIME_TO_GROW_REQUEST_FAILED";
@@ -853,11 +873,12 @@ async function resolveCheckinToken(token) {
     const visits = timeToGrowDataRows(await response.json());
     const visit = visits.find(item => String(item?.booking_id || item?.booking?.id || "") === signed.bookingId);
     if (!visit) return null;
-    const viennaClubIds = new Set([env.TIME_TO_GROW_VIENNA_CLUB_ID,"01js42s5vwvwrx3fme9zvgdj1v"]);
+    const config=await timeToGrowConfig();
+    const viennaClubIds = new Set([config.viennaClubId].filter(Boolean));
     return { location:viennaClubIds.has(signed.clubId) ? "vienna" : "st-poelten",clubId:signed.clubId,visit };
   }
-  const results = await Promise.all(configuredCheckinLocations().map(async ({ location,clubId }) => {
-    const response = await timeToGrowAppFetch(timeToGrowAppVisitsPath(clubId, { upcoming:true }));
+  const results = await Promise.all((await configuredCheckinLocations()).map(async ({ location,clubId }) => {
+    const response = await timeToGrowAppFetch(await timeToGrowAppVisitsPath(clubId, { upcoming:true }));
     if (!response.ok) {
       const error = new Error("Time to Grow visits request failed");
       error.code = "TIME_TO_GROW_REQUEST_FAILED";
@@ -884,7 +905,7 @@ async function checkinReservationFromToken(token) {
   const date = visitDate(visit);
   const [bookings,clubResponse] = await Promise.all([
     date ? fetchTimeToGrowBookings(clubId,date) : [],
-    timeToGrowAppFetch(`/api/v1/app/clubs/${encodeURIComponent(clubId)}`),
+    timeToGrowConfig().then(config=>timeToGrowAppFetch(timeToGrowPath(config.paths.appClub,clubId))),
   ]);
   if (!clubResponse.ok) {
     const error = new Error("Time to Grow club request failed");
@@ -1006,8 +1027,9 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
       return res.status(409).json({error:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED"});
     }
 
+    const config=await timeToGrowConfig();
     const response = await timeToGrowAppFetch(
-      `/api/v1/app/clubs/${encodeURIComponent(clubId)}/booking-members`,
+      timeToGrowPath(config.paths.appBookingMembers,clubId),
       {
         method: "POST",
         body: JSON.stringify({
@@ -1042,12 +1064,13 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
 });
 
 async function fetchTimeToGrowBookings(clubId,date) {
+  const config=await timeToGrowConfig();
   const query = new URLSearchParams({
     filtering: JSON.stringify({ status:"reserved",start_date:date,view_mode:"bookings" }),
     pagination: JSON.stringify({ page:1,size:100 }),
     sorting: JSON.stringify([{ name:"smart",direction:"desc" }]),
   });
-  const response = await timeToGrowFetch(`/api/admin/clubs/${encodeURIComponent(clubId)}/bookings?${query}`);
+  const response = await timeToGrowFetch(`${timeToGrowPath(config.paths.bookings,clubId)}?${query}`);
   if (!response.ok) {
     const error=new Error("Time to Grow booking request failed");
     error.code="TIME_TO_GROW_REQUEST_FAILED";
@@ -1191,7 +1214,8 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
 
 app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => {
   try {
-    const response = await timeToGrowFetch("/api/admin/clubs");
+    const config=await timeToGrowConfig();
+    const response = await timeToGrowFetch(config.paths.clubs);
     if (!response.ok) {
       return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED", upstreamStatus: response.status });
     }
@@ -1224,7 +1248,7 @@ app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => 
         phone: club.phone || null,
         email: club.email || null,
       })),
-      defaultClubId: visibleClubs.some(club=>club.id===env.TIME_TO_GROW_CLUB_ID) ? env.TIME_TO_GROW_CLUB_ID : visibleClubs[0]?.id || null,
+      defaultClubId: visibleClubs.some(club=>club.id===config.defaultClubId) ? config.defaultClubId : visibleClubs[0]?.id || null,
     });
   } catch (error) {
     if (error?.code === "TIME_TO_GROW_NOT_CONFIGURED") return res.status(503).json({ error: error.code });
@@ -1234,7 +1258,8 @@ app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => 
 });
 
 app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res) => {
-  if (!timeToGrowJwt && (!env.TIME_TO_GROW_EMAIL || !env.TIME_TO_GROW_PASSWORD)) {
+  const config=await timeToGrowConfig();
+  if (!timeToGrowJwt && !config.jwt && (!config.email || !config.password)) {
     return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
   }
   const parsed = z.object({
@@ -1244,7 +1269,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
     clubId: z.string().regex(/^[a-z0-9]{26}$/).optional(),
   }).refine(value=>Boolean(value.date||(value.from&&value.to)),{message:"Date or range required"}).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_DATE" });
-  const clubId = parsed.data.clubId || env.TIME_TO_GROW_CLUB_ID;
+  const clubId = parsed.data.clubId || config.defaultClubId;
   if (!clubId) return res.status(400).json({ error: "CLUB_REQUIRED" });
   if (!isOwner(req)) {
     const allowed = await db.query("SELECT 1 FROM user_locations ul JOIN locations l ON l.id=ul.location_id WHERE ul.user_id=$1 AND l.external_id=$2", [req.user.sub,clubId]);
@@ -1261,8 +1286,8 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
   if(parsed.data.date) query.set("sorting",JSON.stringify([{name:"smart",direction:"desc"}]));
 
   try {
-    const resource=parsed.data.date?"bookings":"visits/calendar";
-    const response = await timeToGrowFetch(`/api/admin/clubs/${encodeURIComponent(clubId)}/${resource}?${query}`);
+    const requestPath=timeToGrowPath(parsed.data.date?config.paths.bookings:config.paths.calendar,clubId);
+    const response = await timeToGrowFetch(`${requestPath}?${query}`);
     if (!response.ok) {
       return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED", upstreamStatus: response.status });
     }
@@ -1693,6 +1718,66 @@ app.post("/settings/google-sheets/test",auth,async(req,res)=>{
   const result=await response.json().catch(()=>null);
   if(!response.ok||!result?.ok)return res.status(502).json({error:"GOOGLE_SHEETS_UNAVAILABLE"});
   res.json({ok:true});
+});
+
+const timeToGrowSettingsInput=z.object({
+  baseUrl:z.string().url().refine(value=>value.startsWith("https://")),email:z.union([z.string().email(),z.literal("")]),password:z.string().max(500).optional(),jwt:z.string().max(4000).optional(),
+  defaultClubId:z.string().max(100).default(""),viennaClubId:z.string().max(100).default(""),
+  paths:z.object({login:z.string().startsWith("/"),clubs:z.string().startsWith("/"),bookings:z.string().startsWith("/"),calendar:z.string().startsWith("/"),appVisits:z.string().startsWith("/"),appClub:z.string().startsWith("/"),appBookingMembers:z.string().startsWith("/")}),
+});
+app.get("/settings/time-to-grow",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const config=await timeToGrowConfig(true);
+  res.json({...config,password:"",jwt:"",hasPassword:Boolean(config.password),hasJwt:Boolean(config.jwt||timeToGrowJwt)});
+});
+app.put("/settings/time-to-grow",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const input=timeToGrowSettingsInput.parse(req.body),current=await timeToGrowConfig(true);
+  const saved={...input,password:input.password||current.password,jwt:input.jwt||current.jwt};
+  await db.query(`INSERT INTO app_settings(key,encrypted_value,updated_by,updated_at) VALUES('time_to_grow',$1,$2,now()) ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[encryptSetting(saved),req.user.sub]);
+  timeToGrowConfigCache=null;timeToGrowJwt=saved.jwt||null;timeToGrowAccessToken=null;
+  await audit(req,"settings.time_to_grow.update","app_setting","time_to_grow",null,{baseUrl:saved.baseUrl,defaultClubId:saved.defaultClubId,viennaClubId:saved.viennaClubId,paths:saved.paths});
+  res.json({ok:true});
+});
+app.post("/settings/time-to-grow/test",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  try{const config=await timeToGrowConfig(true);const response=await timeToGrowFetch(config.paths.clubs);if(!response.ok)return res.status(502).json({error:"UPSTREAM_ERROR",status:response.status});const payload=await response.json();res.json({ok:true,clubs:Array.isArray(payload?.data)?payload.data.length:0});}
+  catch(error){res.status(502).json({error:error.code||"CONNECTION_FAILED"});}
+});
+
+const bookingSourceInput=z.object({
+  id:z.string().uuid().optional(),name:z.string().trim().min(1).max(100),enabled:z.boolean().default(true),locationExternalId:z.string().min(1).max(100),baseUrl:z.string().url().refine(value=>value.startsWith("https://")),
+  bookingsPath:z.string().startsWith("/"),authType:z.enum(["NONE","BEARER","COOKIE","BASIC"]).default("NONE"),authName:z.string().max(100).default("Authorization"),secret:z.string().max(4000).optional(),username:z.string().max(300).optional(),
+  dateParam:z.string().max(100).default("date"),fromParam:z.string().max(100).default("from"),toParam:z.string().max(100).default("to"),staticQuery:z.record(z.string(),z.string()).default({}),
+  arrayPath:z.string().max(300).default("data"),mapping:z.object({id:z.string(),date:z.string(),startTime:z.string(),endTime:z.string(),customerName:z.string(),phone:z.string().default(""),email:z.string().default(""),productName:z.string(),players:z.string(),amount:z.string(),currency:z.string().default(""),status:z.string().default(""),paymentStatus:z.string().default("")}),
+});
+async function bookingSources(){const row=(await db.query("SELECT encrypted_value FROM app_settings WHERE key='booking_sources'")).rows[0];try{return decryptSetting(row?.encrypted_value)||[];}catch{return [];}}
+async function saveBookingSources(sources,userId){await db.query(`INSERT INTO app_settings(key,encrypted_value,updated_by,updated_at) VALUES('booking_sources',$1,$2,now()) ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[encryptSetting(sources),userId]);}
+const publicBookingSource=source=>({...source,secret:"",username:source.username||"",hasSecret:Boolean(source.secret)});
+const pathValue=(value,path)=>String(path||"").split(".").filter(Boolean).reduce((current,key)=>current==null?undefined:current[Array.isArray(current)&&/^\d+$/.test(key)?Number(key):key],value);
+async function fetchBookingSource(source,query){
+  const url=new URL(source.bookingsPath,source.baseUrl);for(const [key,value] of Object.entries(source.staticQuery||{}))url.searchParams.set(key,value);
+  if(query.date&&source.dateParam)url.searchParams.set(source.dateParam,query.date);if(query.from&&source.fromParam)url.searchParams.set(source.fromParam,query.from);if(query.to&&source.toParam)url.searchParams.set(source.toParam,query.to);
+  const headers={accept:"application/json"};if(source.authType==="BEARER"&&source.secret)headers[source.authName||"Authorization"]=`Bearer ${source.secret}`;if(source.authType==="COOKIE"&&source.secret)headers.cookie=`${source.authName||"token"}=${source.secret}`;if(source.authType==="BASIC")headers.authorization=`Basic ${Buffer.from(`${source.username||""}:${source.secret||""}`).toString("base64")}`;
+  const response=await fetch(url,{headers,signal:AbortSignal.timeout(12000)});if(!response.ok){const error=new Error("BOOKING_SOURCE_FAILED");error.status=response.status;throw error;}
+  const payload=await response.json(),rows=pathValue(payload,source.arrayPath);if(!Array.isArray(rows))throw new Error("BOOKING_SOURCE_ARRAY_NOT_FOUND");
+  return rows.map(row=>Object.fromEntries(Object.entries(source.mapping).map(([field,path])=>[field,path?pathValue(row,path):null])));
+}
+app.get("/settings/booking-sources",auth,async(req,res)=>{if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});res.json((await bookingSources()).map(publicBookingSource));});
+app.post("/settings/booking-sources",auth,async(req,res)=>{if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});const input=bookingSourceInput.parse(req.body),sources=await bookingSources();const source={...input,id:crypto.randomUUID()};sources.push(source);await saveBookingSources(sources,req.user.sub);res.status(201).json(publicBookingSource(source));});
+app.put("/settings/booking-sources/:id",auth,async(req,res)=>{if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});const input=bookingSourceInput.parse({...req.body,id:req.params.id}),sources=await bookingSources(),index=sources.findIndex(item=>item.id===req.params.id);if(index<0)return res.status(404).json({error:"SOURCE_NOT_FOUND"});sources[index]={...input,secret:input.secret||sources[index].secret,username:input.username||sources[index].username};await saveBookingSources(sources,req.user.sub);res.json(publicBookingSource(sources[index]));});
+app.delete("/settings/booking-sources/:id",auth,async(req,res)=>{if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});const sources=await bookingSources(),next=sources.filter(item=>item.id!==req.params.id);if(next.length===sources.length)return res.status(404).json({error:"SOURCE_NOT_FOUND"});await saveBookingSources(next,req.user.sub);res.status(204).end();});
+app.post("/settings/booking-sources/:id/test",auth,async(req,res)=>{if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});const source=(await bookingSources()).find(item=>item.id===req.params.id);if(!source)return res.status(404).json({error:"SOURCE_NOT_FOUND"});try{const rows=await fetchBookingSource(source,{date:req.body?.date||new Date().toISOString().slice(0,10)});res.json({ok:true,count:rows.length,sample:rows.slice(0,3)});}catch(error){res.status(502).json({error:error.message,status:error.status});}});
+app.get("/booking-sources",auth,permit("bookings:read"),async(req,res)=>{
+  const sources=(await bookingSources()).filter(source=>source.enabled),visible=[];
+  for(const source of sources){const location=(await db.query("SELECT id,name FROM locations WHERE external_id=$1",[source.locationExternalId])).rows[0];if(location&&await locationAllowed(req,location.id))visible.push({id:source.id,name:source.name,locationExternalId:source.locationExternalId,locationName:location.name});}
+  res.json(visible);
+});
+app.get("/booking-sources/:id/bookings",auth,permit("bookings:read"),async(req,res)=>{
+  const input=z.object({date:z.string().date().optional(),from:z.string().date().optional(),to:z.string().date().optional()}).refine(value=>value.date||(value.from&&value.to)).parse(req.query);
+  const source=(await bookingSources()).find(item=>item.id===req.params.id&&item.enabled);if(!source)return res.status(404).json({error:"SOURCE_NOT_FOUND"});
+  const location=(await db.query("SELECT id,name FROM locations WHERE external_id=$1",[source.locationExternalId])).rows[0];if(!location)return res.status(409).json({error:"SOURCE_LOCATION_NOT_FOUND"});if(!(await locationAllowed(req,location.id)))return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  try{const rows=await fetchBookingSource(source,input);res.json({data:rows.map(row=>({id:String(row.id||""),date:String(row.date||""),startsAt:String(row.startTime||"").slice(0,5),endsAt:String(row.endTime||"").slice(0,5),customerName:String(row.customerName||"Бронь"),customerPhone:row.phone?String(row.phone):null,customerEmail:row.email?String(row.email):null,productName:String(row.productName||"Бронь"),zoneName:location.name,players:Number(row.players)||0,amountCents:Math.round((Number(row.amount)||0)*100),currency:String(row.currency||"EUR"),status:String(row.status||"reserved"),statusDisplay:String(row.status||"Reserved"),paymentStatus:String(row.paymentStatus||"unknown"),paymentStatusDisplay:String(row.paymentStatus||"—"),checkedIn:0,checkInTotal:Number(row.players)||0,checkedInPlayers:[],checkInErrors:[],confirmed:false,sourceType:"GENERIC",sourceId:source.id,sourceName:source.name}))});}catch(error){res.status(502).json({error:error.message,status:error.status});}
 });
 
 app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(req,res)=>{
