@@ -41,7 +41,7 @@ TARGET=${RELEASES_DIR}/${VERSION}
 [[ ! -e ${TARGET} ]] || { echo "Release directory already exists: ${TARGET}"; exit 1; }
 install -d -m 0755 "${RELEASES_DIR}" "${TARGET}"
 tar -xzf "${TEMP_DIR}/release.tar.gz" -C "${TARGET}"
-(cd "${TARGET}" && npm ci --omit=dev --ignore-scripts)
+[[ -r ${TARGET}/package.json && -r ${TARGET}/src/index.js && -d ${TARGET}/node_modules ]] || { echo "Incomplete release archive"; exit 1; }
 chown -R root:root "${TARGET}"
 
 PREVIOUS=$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)

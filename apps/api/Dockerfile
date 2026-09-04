@@ -10,7 +10,7 @@ COPY apps/api/package*.json ./
 COPY apps/api/src ./src
 COPY agents/room-agent/package.json agents/room-agent/package-lock.json /tmp/room-agent-release/
 COPY agents/room-agent/src /tmp/room-agent-release/src
-RUN mkdir -p /app/releases && tar -czf /app/releases/room-agent.tar.gz -C /tmp/room-agent-release . && rm -rf /tmp/room-agent-release
+RUN cd /tmp/room-agent-release && npm ci --omit=dev --ignore-scripts && mkdir -p /app/releases && tar -czf /app/releases/room-agent.tar.gz -C /tmp/room-agent-release . && rm -rf /tmp/room-agent-release
 COPY agents/room-agent/package.json /app/releases/room-agent-package.json
 USER node
 EXPOSE 3000
