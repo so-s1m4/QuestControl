@@ -3,7 +3,6 @@ import { DatePipe } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import { HttpClient } from "@angular/common/http";
 import { ActivatedRoute, Router, RouterLink } from "@angular/router";
-import { catchError, forkJoin, of } from "rxjs";
 import QRCode from "qrcode";
 
 type Booking = {
@@ -1510,27 +1509,15 @@ export class BookingsComponent {
     if (!this.externalClubId) return;
     const month = this.calendarMonth(),
       days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+    const from=this.localDate(new Date(month.getFullYear(),month.getMonth(),1));
+    const to=this.localDate(new Date(month.getFullYear(),month.getMonth(),days));
     this.calendarLoading.set(true);
     this.externalError.set("");
-    const requests = Array.from({ length: days }, (_, index) => {
-      const date = this.localDate(
-        new Date(month.getFullYear(), month.getMonth(), index + 1),
-      );
-      return this.http
-        .get<{ data: ExternalBooking[] }>(
-          `/api/time-to-grow/bookings?date=${date}&clubId=${encodeURIComponent(this.externalClubId)}`,
-        )
-        .pipe(catchError(() => of({ data: [] })));
-    });
-    forkJoin(requests).subscribe({
-      next: (responses) => {
+    this.http.get<{data:ExternalBooking[]}>(`/api/time-to-grow/bookings?from=${from}&to=${to}&clubId=${encodeURIComponent(this.externalClubId)}`).subscribe({
+      next: (response) => {
         const byDate: Record<string, ExternalBooking[]> = {};
-        responses.forEach((response, index) => {
-          const date = this.localDate(
-            new Date(month.getFullYear(), month.getMonth(), index + 1),
-          );
-          byDate[date] = response.data;
-        });
+        for(let index=0;index<days;index++)byDate[this.localDate(new Date(month.getFullYear(),month.getMonth(),index+1))]=[];
+        for(const booking of response.data)(byDate[booking.date]??=[]).push(booking);
         this.calendarBookings.set(byDate);
         this.calendarLoading.set(false);
       },

@@ -1224,9 +1224,11 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
     return res.status(503).json({ error: "TIME_TO_GROW_NOT_CONFIGURED" });
   }
   const parsed = z.object({
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     clubId: z.string().regex(/^[a-z0-9]{26}$/).optional(),
-  }).safeParse(req.query);
+  }).refine(value=>Boolean(value.date||(value.from&&value.to)),{message:"Date or range required"}).safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_DATE" });
   const clubId = parsed.data.clubId || env.TIME_TO_GROW_CLUB_ID;
   if (!clubId) return res.status(400).json({ error: "CLUB_REQUIRED" });
@@ -1235,14 +1237,18 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
     if (!allowed.rowCount) return res.status(403).json({ error:"LOCATION_FORBIDDEN" });
   }
 
+  const dateFilter=parsed.data.date
+    ? {start_date:parsed.data.date,view_mode:"bookings"}
+    : {month_with_buffer:parsed.data.from};
   const query = new URLSearchParams({
-    filtering: JSON.stringify({ status: "reserved", start_date: parsed.data.date, view_mode: "bookings" }),
-    pagination: JSON.stringify({ page: 1, size: 100 }),
-    sorting: JSON.stringify([{ name: "smart", direction: "desc" }]),
+    filtering: JSON.stringify({ status: "reserved", ...dateFilter }),
+    pagination: JSON.stringify({ page: 1, size: parsed.data.date ? 100 : 1000 }),
   });
+  if(parsed.data.date) query.set("sorting",JSON.stringify([{name:"smart",direction:"desc"}]));
 
   try {
-    const response = await timeToGrowFetch(`/api/admin/clubs/${encodeURIComponent(clubId)}/bookings?${query}`);
+    const resource=parsed.data.date?"bookings":"visits/calendar";
+    const response = await timeToGrowFetch(`/api/admin/clubs/${encodeURIComponent(clubId)}/${resource}?${query}`);
     if (!response.ok) {
       return res.status(502).json({ error: "TIME_TO_GROW_REQUEST_FAILED", upstreamStatus: response.status });
     }
