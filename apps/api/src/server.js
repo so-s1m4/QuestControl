@@ -1686,7 +1686,7 @@ async function googleSheetsConfig(clubId){
 async function sendSessionToGoogleSheets(clubId,payload){
   const config=await googleSheetsConfig(clubId);
   if(!config?.url||!config?.secret)return {configured:false};
-  const response=await fetch(config.url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...payload,secret:config.secret}),signal:AbortSignal.timeout(12000)});
+  const response=await fetch(config.url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...payload,secret:config.secret}),redirect:"follow",signal:AbortSignal.timeout(30000)});
   const result=await response.json().catch(()=>null);
   if(!response.ok||!result?.ok)throw new Error(`GOOGLE_SHEETS_SYNC_FAILED:${response.status}:${result?.error||"INVALID_RESPONSE"}`);
   return {configured:true,...result};
@@ -1714,7 +1714,7 @@ app.post("/settings/google-sheets/test",auth,async(req,res)=>{
   const {clubId}=z.object({clubId:z.string().regex(/^[a-z0-9]{26}$/)}).parse(req.body);
   const config=await googleSheetsConfig(clubId);
   if(!config?.url)return res.status(409).json({error:"GOOGLE_SHEETS_NOT_CONFIGURED"});
-  const response=await fetch(config.url,{signal:AbortSignal.timeout(10000)});
+  const response=await fetch(config.url,{redirect:"follow",signal:AbortSignal.timeout(30000)});
   const result=await response.json().catch(()=>null);
   if(!response.ok||!result?.ok)return res.status(502).json({error:"GOOGLE_SHEETS_UNAVAILABLE"});
   res.json({ok:true});
