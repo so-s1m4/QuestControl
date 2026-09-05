@@ -250,13 +250,17 @@ async function telegramHandleConfirmation(query) {
   if (booking.confirmed) return telegramBot.answerCallbackQuery(query.id, "Бронь уже подтверждена.");
   await db.query("UPDATE bookings SET confirmed=true WHERE id=$1", [booking.id]);
   await db.query("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,request_id,before_state,after_state) VALUES($1,'booking.confirmation.update','booking',$2,$3,$4,$5)", [connection.user_id, booking.id, crypto.randomUUID(), { confirmed: false, source: "telegram" }, { confirmed: true, source: "telegram" }]);
-  return telegramBot.answerCallbackQuery(query.id, "Бронь подтверждена ✅");
+  await telegramBot.answerCallbackQuery(query.id, "Бронь подтверждена ✅");
+  await telegramBot.clearInlineKeyboard(query.message.chat.id, query.message.message_id).catch(error => console.error("Telegram confirmation button cleanup failed", error.message));
 }
 async function telegramHandleUpdate(update) {
   try {
     if (update.message) await telegramHandleMessage(update.message);
     if (update.callback_query) await telegramHandleConfirmation(update.callback_query);
-  } catch (error) { console.error("Telegram update processing failed", error.message); }
+  } catch (error) {
+    console.error("Telegram update processing failed", error.message);
+    if (update.callback_query?.id) await telegramBot.answerCallbackQuery(update.callback_query.id, "Не удалось подтвердить бронь. Попробуйте ещё раз.").catch(()=>{});
+  }
 }
 async function telegramNotificationsOnce() {
   if (!telegramBot?.enabled) return;

@@ -43,6 +43,9 @@ export class TelegramBot {
   async start() {
     if (!this.enabled) return;
     try {
+      // QuestControl receives button presses through getUpdates. A webhook left
+      // from an earlier setup makes Telegram reject polling with HTTP 409.
+      await this.request("deleteWebhook", { drop_pending_updates: false });
       const me = await this.request("getMe");
       this.username = me.username || null;
       this.logger.info(`Telegram bot @${this.username || "unknown"} is ready`);
@@ -81,5 +84,13 @@ export class TelegramBot {
 
   async answerCallbackQuery(callbackQueryId, text) {
     return this.request("answerCallbackQuery", { callback_query_id: callbackQueryId, text, show_alert: false });
+  }
+
+  async clearInlineKeyboard(chatId, messageId) {
+    return this.request("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [] },
+    });
   }
 }
