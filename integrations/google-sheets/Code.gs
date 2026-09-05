@@ -212,7 +212,17 @@ function helperColumn_(sheet) {
 }
 
 function writeRecordId_(sheet, row, sessionId, bookingId) {
-  sheet.getRange(row, helperColumn_(sheet)).setValue(qcId_(sessionId, bookingId));
+  const column = helperColumn_(sheet);
+  const value = qcId_(sessionId, bookingId);
+  sheet.getRange(row, column).setValue(value);
+  const written = sheet.getRange(row, column).getDisplayValue();
+  console.log(JSON.stringify({
+    action: 'qc_id_written', sheet: sheet.getName(), row: row,
+    column: column, expected: value, actual: written
+  }));
+  if (written !== value) {
+    throw new Error('QC_ID_WRITE_FAILED: ' + sheet.getName() + ' row ' + row + ', column ' + column);
+  }
 }
 
 function findSessionRow_(sheet, sessionId, bookingId) {
