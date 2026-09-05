@@ -810,14 +810,22 @@ function timeToGrowBookingPricing(booking){
   const order=booking.order||{},discount=booking.discount||{},promotion=booking.promotion||{},coupon=booking.coupon||{};
   const paid=firstNumber(order.total_amount,order.total,booking.total_amount,booking.total,0)||0;
   const players=Math.max(1,Number(booking.size)||0);
-  const discountAmount=firstNumber(order.discount_amount,order.discount_total,order.discount,booking.discount_amount,booking.discount_total,discount.amount,discount.value,0)||0;
-  const gross=firstNumber(order.original_amount,order.subtotal_amount,order.total_before_discount,order.full_amount,booking.original_amount,booking.subtotal_amount,paid+discountAmount)||paid+discountAmount;
-  const rawPrice=firstNumber(order.price_per_person,order.unit_price,booking.price_per_person,booking.unit_price,booking.product?.price_per_person,booking.product?.price);
+  const promoCode=firstText(order.promo_code,order.promocode,order.promotion_code,order.coupon_code,booking.promo_code,booking.promocode,booking.promotion_code,booking.coupon_code,discount.code,promotion.code,coupon.code)||"";
+  const discountReason=firstText(order.discount_reason,order.discount_name,order.promotion_name,booking.discount_reason,discount.reason,discount.name,promotion.name,coupon.name)||"";
+  const reportedDiscount=firstNumber(order.discount_amount,order.discount_total,order.discount,order.promo_discount_amount,order.promocode_discount_amount,booking.discount_amount,booking.discount_total,discount.amount,discount.value,0)||0;
+  // A time tariff is already baked into the final unit price. Only export a
+  // discount when Time to Grow explicitly identifies a promo/manual discount.
+  const hasExplicitDiscount=Boolean(promoCode||discountReason);
+  const discountAmount=hasExplicitDiscount?reportedDiscount:0;
+  const gross=paid+discountAmount;
+  const rawPrice=discountAmount>0
+    ? gross/players
+    : firstNumber(order.price_per_person,order.unit_price,booking.price_per_person,booking.unit_price,booking.product?.price_per_person,booking.product?.price);
   return {
     pricePerPerson:rawPrice??gross/players,
     discountAmount,
-    discountReason:firstText(order.discount_reason,order.discount_name,booking.discount_reason,discount.reason,discount.name,promotion.name,coupon.name)||"",
-    promoCode:firstText(order.promo_code,order.promocode,booking.promo_code,booking.promocode,discount.code,promotion.code,coupon.code)||"",
+    discountReason:discountReason||(promoCode?`Promocode ${promoCode}`:""),
+    promoCode,
     total:paid,
   };
 }
