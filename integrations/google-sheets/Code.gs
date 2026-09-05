@@ -181,12 +181,28 @@ function helperColumn_(sheet) {
   const preferred = comments ? comments + 1 : lastColumn + 1;
   if (existing) {
     if (existing !== preferred && !sheet.getRange(1, preferred).getValue()) {
+      // These workbooks contain merged monthly headings. copyTo() over a whole
+      // column fails as soon as one of those rows is merged, so move only the
+      // actual non-empty QC_ID cells and leave presentation-only merged cells
+      // untouched.
       const height = Math.max(sheet.getLastRow(), 1);
-      sheet.getRange(1, existing, height, 1).copyTo(sheet.getRange(1, preferred, height, 1));
-      sheet.getRange(1, existing, height, 1).clearContent();
-      existing = preferred;
+      const ids = sheet.getRange(1, existing, height, 1).getDisplayValues();
+      let moved = true;
+      for (let index = 0; index < ids.length; index++) {
+        if (!ids[index][0]) continue;
+        const from = sheet.getRange(index + 1, existing);
+        const to = sheet.getRange(index + 1, preferred);
+        if (from.isPartOfMerge() || to.isPartOfMerge()) {
+          moved = false;
+          continue;
+        }
+        to.setValue(ids[index][0]);
+        from.clearContent();
+      }
+      if (moved || !ids.some(function(row) { return row[0]; })) existing = preferred;
     }
-    sheet.getRange(1, existing).setValue(QC_ID_HEADER);
+    const header = sheet.getRange(1, existing);
+    if (!header.isPartOfMerge()) header.setValue(QC_ID_HEADER);
     sheet.showColumns(existing);
     return existing;
   }
