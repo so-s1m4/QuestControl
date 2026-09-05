@@ -78,6 +78,7 @@ function recordSession_(body) {
   if (!kasseRow) return json_({ ok: false, error: 'DATE_NOT_FOUND_IN_KASSE' });
   const payment = addPaymentToKasse_(ss, body.date, number_(body.onlineAmount, body.total), body.paymentStatus, kasseRow);
   const row = existingRow || addSessionRow_(target, targetName, body);
+  if (existingRow) writeRecordId_(target, row, body.sessionId, body.bookingId);
   props.setProperty(eventKey, JSON.stringify({
     sheet: targetName, row: row, bookingId: body.bookingId || '', date: body.date,
     kasseRow: payment.row, kasseColumn: payment.column, amount: payment.amount, at: new Date().toISOString()
