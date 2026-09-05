@@ -38,6 +38,10 @@ CREATE INDEX session_participants_person_idx ON session_participants(person_id,s
 CREATE INDEX sessions_started_at_idx ON sessions(started_at DESC);
 CREATE INDEX voice_hints_room_name_idx ON voice_hints(room_id, lower(name), created_at);
 CREATE INDEX doorbell_calls_room_rang_idx ON doorbell_calls(room_id,rang_at DESC);
+CREATE TABLE telegram_connections (user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, telegram_user_id bigint UNIQUE NOT NULL, chat_id bigint UNIQUE NOT NULL, username text, first_name text, linked_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE telegram_link_codes (code_hash text PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX telegram_link_codes_expires_at_idx ON telegram_link_codes(expires_at);
+CREATE TABLE telegram_notification_log (user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, notification_key text NOT NULL, sent_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(user_id,notification_key));
 INSERT INTO roles(name, permissions) VALUES
  ('OWNER','["*"]'), ('ADMIN','["bookings:*","rooms:*","locations:read","sessions:*","devices:read","cameras:*","statistics:read"]'),
  ('OPERATOR','["bookings:read","rooms:read","locations:read","sessions:*","devices:read","devices:command","cameras:read","local_sites:open"]'),

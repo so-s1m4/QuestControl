@@ -29,6 +29,10 @@
 `docker-compose.portainer.yml` и инструкцию
 [`docs/DEPLOY_OVH_PORTAINER.md`](docs/DEPLOY_OVH_PORTAINER.md).
 
+## Telegram-уведомления
+
+Создайте бота через @BotFather и добавьте его новый токен в `TELEGRAM_BOT_TOKEN` файла `.env`; имя бота без `@` добавьте в `TELEGRAM_BOT_USERNAME`. После перезапуска API владелец сможет отредактировать шаблоны в разделе «Интеграции», а каждый сотрудник — привязать личный Telegram в разделе «Telegram». Токен не должен попадать в Git или в настройки, доступные через браузер.
+
 Для локальной проверки можно временно оставить HTTP и `CORS_ORIGIN=http://localhost`.
 
 ## Raspberry Pi

@@ -19,6 +19,7 @@ import { CameraWatchComponent } from "./pages/camera-watch/camera-watch.componen
 import { RoomControlComponent } from "./pages/room-control/room-control.component";
 import { WorkSchedulesComponent } from "./pages/work-schedules/work-schedules.component";
 import { IntegrationsComponent } from "./pages/integrations/integrations.component";
+import { TelegramComponent } from "./pages/telegram/telegram.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
   { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
@@ -48,6 +49,7 @@ export const routes: Routes = [
   { path: "rooms", component: RoomsComponent, canActivate: [authGuard] },
   { path: "rooms/:id/control", component: RoomControlComponent, canActivate: [authGuard] },
   { path: "inventory", component: InventoryComponent, canActivate: [authGuard] },
+  { path: "telegram", component: TelegramComponent, canActivate: [authGuard] },
   { path: "integrations", component: IntegrationsComponent, canActivate: [authGuard, adminGuard] },
   {
     path: "vr-sankt-poelten/logs",

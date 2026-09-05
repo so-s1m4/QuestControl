@@ -45,6 +45,8 @@ TUYA_CLIENT_ID=<tuya-client-id>
 TUYA_CLIENT_SECRET=<tuya-client-secret>
 BOOTSTRAP_ADMIN_EMAIL=<email-владельца>
 BOOTSTRAP_ADMIN_PASSWORD=<одноразовый-сложный-пароль>
+TELEGRAM_BOT_TOKEN=<новый токен от BotFather>
+TELEGRAM_BOT_USERNAME=<имя бота без @>
 ```
 
 Секреты должны находиться только в Portainer. Не добавляйте их в GitHub или
