@@ -133,12 +133,14 @@ function helperColumn_(sheet) {
   const headers = sheet.getRange(1, 1, rows, lastColumn).getDisplayValues();
   for (let row = 0; row < headers.length; row++) {
     for (let column = 0; column < headers[row].length; column++) {
-      if (String(headers[row][column]).trim() === QC_ID_HEADER) return column + 1;
+      if (String(headers[row][column]).trim() === QC_ID_HEADER) {
+        sheet.showColumns(column + 1);
+        return column + 1;
+      }
     }
   }
   const column = lastColumn + 1;
   sheet.getRange(1, column).setValue(QC_ID_HEADER);
-  sheet.hideColumns(column);
   return column;
 }
 
