@@ -42,16 +42,16 @@ function recordSession_(body) {
   const target = ss.getSheetByName(targetName);
   if (!target) return json_({ ok: false, error: 'SHEET_NOT_FOUND', sheet: targetName });
 
-  const existingRow = findSessionRow_(target, body.sessionId, body.bookingId);
-  if (existingRow) {
-    props.setProperty(eventKey, JSON.stringify({ sheet: targetName, row: existingRow, at: new Date().toISOString() }));
-    return json_({ ok: true, duplicate: true, sheet: targetName, row: existingRow });
+  const stored = props.getProperty(eventKey);
+  if (stored) {
+    const meta = JSON.parse(stored);
+    return json_({ ok: true, duplicate: true, sheet: meta.sheet, row: meta.row });
   }
-
+  const existingRow = findSessionRow_(target, body.sessionId, body.bookingId);
   const kasseRow = findKasseRow_(ss, body.date);
   if (!kasseRow) return json_({ ok: false, error: 'DATE_NOT_FOUND_IN_KASSE' });
-  const row = addSessionRow_(target, targetName, body);
   const payment = addPaymentToKasse_(ss, body.date, number_(body.onlineAmount, body.total), body.paymentStatus, kasseRow);
+  const row = existingRow || addSessionRow_(target, targetName, body);
   props.setProperty(eventKey, JSON.stringify({
     sheet: targetName, row: row, bookingId: body.bookingId || '', date: body.date,
     kasseRow: payment.row, kasseColumn: payment.column, amount: payment.amount, at: new Date().toISOString()
@@ -70,8 +70,9 @@ function rollbackSession_(body) {
   const row = findSessionRow_(target, body.sessionId, body.bookingId || meta.bookingId);
   if (!row) return json_({ ok: false, error: 'SESSION_ROW_NOT_FOUND' });
 
-  const amount = number_(body.onlineAmount, body.total);
-  const payment = addPaymentToKasse_(ss, body.date || meta.date, -amount, body.paymentStatus);
+  const payment = stored
+    ? addPaymentToKasse_(ss, body.date || meta.date, -number_(meta.amount, body.onlineAmount || body.total), body.paymentStatus)
+    : { skipped: true };
   target.deleteRow(row);
   props.deleteProperty(eventKey);
   return json_({ ok: true, removed: true, sheet: meta.sheet, row: row, kasse: payment });
@@ -103,7 +104,7 @@ function addSessionRow_(sheet, sheetName, body) {
   const note = note_(body);
 
   if (sheetName === 'VR_2.0') {
-    const values = [[date, body.game || '', body.startTime || '', price, players, total, discount, body.discountReason || '', body.promoCode || '', '', '', '', total, '', phone, duration, 1, admin, note]];
+    const values = [[date, body.game || '', body.startTime || '', price, players, total, discount, body.discountReason || '', body.promoCode || '', '', '', total, '', phone, duration, 1, admin, note]];
     sheet.getRange(row, 1, 1, values[0].length).setValues(values);
   } else {
     const values = [[date, body.startTime || '', price, players, total, discount, body.discountReason || '', body.promoCode || '', '', '', total, '', phone, duration, 1, admin, note]];
@@ -119,8 +120,6 @@ function note_(body) {
   if (body.discountAmount) details.push('Discount: ' + body.discountAmount);
   if (body.discountReason) details.push('Reason: ' + body.discountReason);
   if (body.promoCode) details.push('Promo: ' + body.promoCode);
-  details.push('QuestControl session:' + body.sessionId);
-  if (body.bookingId) details.push('booking:' + body.bookingId);
   return details.join(' | ');
 }
 
