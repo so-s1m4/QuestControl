@@ -83,7 +83,11 @@ function recordSession_(body) {
   const stored = props.getProperty(eventKey);
   if (stored) {
     const meta = JSON.parse(stored);
-    return json_({ ok: true, duplicate: true, sheet: meta.sheet, row: meta.row });
+    return json_({
+      ok: true, duplicate: true, sheet: meta.sheet, row: meta.row,
+      sessionId: body.sessionId, bookingId: body.bookingId || meta.bookingId || '',
+      qcId: qcId_(body.sessionId, body.bookingId || meta.bookingId || '')
+    });
   }
   const existingRow = findSessionRow_(target, body.sessionId, body.bookingId);
   const kasseRow = findKasseRow_(ss, body.date);
@@ -95,7 +99,11 @@ function recordSession_(body) {
     sheet: targetName, row: row, bookingId: body.bookingId || '', date: body.date,
     kasseRow: payment.row, kasseColumn: payment.column, amount: payment.amount, at: new Date().toISOString()
   }));
-  return json_({ ok: true, sheet: targetName, row: row, kasse: payment });
+  return json_({
+    ok: true, sheet: targetName, row: row, kasse: payment,
+    sessionId: body.sessionId, bookingId: body.bookingId || '',
+    qcId: qcId_(body.sessionId, body.bookingId || '')
+  });
 }
 
 function rollbackSession_(body) {

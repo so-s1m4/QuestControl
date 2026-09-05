@@ -1717,6 +1717,12 @@ async function sendSessionToGoogleSheets(clubId,payload){
   const response=await fetch(config.url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...payload,secret:config.secret}),redirect:"follow",signal:AbortSignal.timeout(30000)});
   const result=await response.json().catch(()=>null);
   if(!response.ok||!result?.ok)throw new Error(`GOOGLE_SHEETS_SYNC_FAILED:${response.status}:${result?.error||"INVALID_RESPONSE"}`);
+  if(payload.type==="session.recorded"&&(
+    result.sessionId!==payload.sessionId||
+    result.bookingId!==payload.bookingId||
+    !String(result.qcId||"").includes(`session:${payload.sessionId}`)||
+    !String(result.qcId||"").includes(`booking:${payload.bookingId}`)
+  ))throw Object.assign(new Error("GOOGLE_SHEETS_IDENTIFIER_MISSING"),{code:"GOOGLE_SHEETS_IDENTIFIER_MISSING"});
   return {configured:true,...result};
 }
 async function syncStoredSessionToGoogleSheets(sessionId){
@@ -1872,7 +1878,13 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     let sheetSync={configured:false,status:"FAILED"};
     try{
       sheetSync=await syncStoredSessionToGoogleSheets(session.id);
-    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false,status:"FAILED"};}
+    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false,status:"FAILED",error:error.code||String(error.message||error)};}
+    if(sheetSync.configured&&!sheetSync.ok)return res.status(502).json({
+      ...session,sheetSync,error:sheetSync.error==="GOOGLE_SHEETS_IDENTIFIER_MISSING"?sheetSync.error:"GOOGLE_SHEETS_SYNC_FAILED",
+      message:sheetSync.error==="GOOGLE_SHEETS_IDENTIFIER_MISSING"
+        ?"Сессия сохранена, но Google Sheets не подтвердила QC_ID. Повторите синхронизацию в разделе «Сессии»."
+        :"Сессия сохранена, но Google Sheets не приняла запись. Повторите синхронизацию в разделе «Сессии»."
+    });
     res.status(201).json({...session,sheetSync});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 });
