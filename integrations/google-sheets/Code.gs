@@ -9,6 +9,32 @@ function doGet() {
   return json_({ ok: true, service: 'QuestControl Google Sheets' });
 }
 
+// Run once from the Apps Script editor to expose QC_ID and backfill it from
+// older visible QuestControl markers. It never changes business cells.
+function installQuestControlIds_() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  ['VR_2.0', 'KrampusHaus', 'Escape Box'].forEach(function(name) {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    const column = helperColumn_(sheet);
+    const last = sheet.getLastRow();
+    if (!last) return;
+    const ids = sheet.getRange(1, column, last, 1).getDisplayValues();
+    const rows = sheet.getRange(1, 1, last, Math.max(column - 1, 1)).getDisplayValues();
+    let changed = false;
+    for (let index = 0; index < last; index++) {
+      if (ids[index][0]) continue;
+      const text = rows[index].join(' | ');
+      const session = text.match(/QuestControl session:([^|\s]+)/);
+      const booking = text.match(/booking:([^|\s]+)/);
+      if (!session && !booking) continue;
+      ids[index][0] = qcId_(session ? session[1] : '', booking ? booking[1] : '');
+      changed = true;
+    }
+    if (changed) sheet.getRange(1, column, last, 1).setValues(ids);
+  });
+}
+
 function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
