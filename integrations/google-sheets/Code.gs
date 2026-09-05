@@ -11,7 +11,7 @@ function doGet() {
 
 // Run once from the Apps Script editor to expose QC_ID and backfill it from
 // older visible QuestControl markers. It never changes business cells.
-function installQuestControlIds_() {
+function installQuestControlIds() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   ['VR_2.0', 'KrampusHaus', 'Escape Box'].forEach(function(name) {
     const sheet = ss.getSheetByName(name);
