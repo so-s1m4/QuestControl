@@ -7,8 +7,9 @@ import { ActivatedRoute } from "@angular/router";
 import { forkJoin } from "rxjs";
 import { buildWorkTimePdf } from "./work-time-pdf";
 
-type User={id:string;display_name:string;is_active:boolean};
+type User={id:string;display_name:string;is_active:boolean;location_ids?:string[]};
 type Location={id:string;name:string};
+type WorkTimeOptions={users:User[];locations:Location[]};
 type Shift={id:string;user_id:string;user_name:string;location_id:string;location_name:string;starts_at:string;ends_at:string;responsibility:string};
 type TimeEntry={id:string;user_id:string;user_name:string;location_id:string;location_name:string;booking_id:string|null;arrived_at:string;left_at:string;note:string|null;customer_name:string|null;product_name:string|null;booking_starts_at:string|null;room_name:string|null};
 type BookingOption={id:string;customer_name:string;product_name:string|null;starts_at:string;ends_at:string;room_name:string;location_id:string};
@@ -34,7 +35,7 @@ type BookingOption={id:string;customer_name:string;product_name:string|null;star
 `]})
 export class WorkSchedulesComponent{
  private http=inject(HttpClient);private route=inject(ActivatedRoute);activeView=signal<"schedule"|"time">("schedule");users=signal<User[]>([]);locations=signal<Location[]>([]);shifts=signal<Shift[]>([]);timeEntries=signal<TimeEntry[]>([]);monthlyEntries=signal<TimeEntry[]>([]);bookingOptions=signal<BookingOption[]>([]);saving=signal(false);savingTime=signal(false);error=signal("");notice=signal("");modalOpen=signal(false);timeModalOpen=signal(false);weekStart=signal(this.monday(new Date()));summaryMonth=this.localDate(new Date()).slice(0,7);userId="";locationId="";startsAt="";endsAt="";responsibility="";recurring=true;repeatFrom=this.localDate(new Date());repeatTo=this.localDate(new Date());startTime="09:00";endTime="18:00";weekdays:number[]=[];timeUserId="";timeLocationId="";timeBookingId="";timeEntryDate="";arrivedTime="";leftTime="";timeNote="";weekdayOptions=[{value:1,label:"Пн"},{value:2,label:"Вт"},{value:3,label:"Ср"},{value:4,label:"Чт"},{value:5,label:"Пт"},{value:6,label:"Сб"},{value:7,label:"Вс"}];
- constructor(){forkJoin({users:this.http.get<User[]>("/api/users"),locations:this.http.get<Location[]>("/api/locations")}).subscribe({next:r=>{this.users.set(r.users.filter(u=>u.is_active));this.locations.set(r.locations);this.locationId=r.locations[0]?.id||"";this.load();this.loadMonthly();if(this.route.snapshot.queryParamMap.get("time")==="1"){this.activeView.set("time");this.openTimeEntry()}},error:()=>this.error.set("Не удалось загрузить сотрудников и локации.")});}
+ constructor(){this.http.get<WorkTimeOptions>("/api/work-time-options").subscribe({next:r=>{this.users.set(r.users.filter(u=>u.is_active));this.locations.set(r.locations);this.locationId=r.locations[0]?.id||"";this.load();this.loadMonthly();if(this.route.snapshot.queryParamMap.get("time")==="1"){this.activeView.set("time");this.openTimeEntry()}},error:()=>this.error.set("Не удалось загрузить сотрудников и локации.")});}
  monday(value:Date){const d=new Date(value);d.setHours(0,0,0,0);return d;}
  localDate(d:Date){const copy=new Date(d.getTime()-d.getTimezoneOffset()*60000);return copy.toISOString().slice(0,10)}
  days(){return Array.from({length:7},(_,i)=>{const date=new Date(this.weekStart());date.setDate(date.getDate()+i);return{date,key:this.localDate(date),today:this.localDate(date)===this.localDate(new Date())}})}
@@ -57,7 +58,9 @@ export class WorkSchedulesComponent{
  shiftsForUserDay(userId:string,day:string){return this.shifts().filter(s=>s.user_id===userId&&this.localDate(new Date(s.starts_at))===day)}
  initials(name:string){return name.split(/\s+/).slice(0,2).map(part=>part[0]).join("").toUpperCase()}
  duration(entry:TimeEntry){return this.formatMinutes(this.entryMinutes(entry))}
- openTimeEntry(){const now=new Date(),left=new Date(now.getTime()+8*3600000);this.timeUserId=this.users()[0]?.id||"";this.timeLocationId=this.locations()[0]?.id||"";this.timeEntryDate=this.localDate(now);this.arrivedTime=this.localTime(now);this.leftTime=this.localTime(left);this.timeBookingId="";this.timeNote="";this.timeModalOpen.set(true);this.loadBookingOptions()}
+ token(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1]))}catch{return {}}}
+ currentUserId(){return String(this.token().sub||"")}
+ openTimeEntry(){const now=new Date(),left=new Date(now.getTime()+8*3600000);this.timeUserId=this.users().find(user=>user.id===this.currentUserId())?.id||this.users()[0]?.id||"";this.timeLocationId=this.locations()[0]?.id||"";this.timeEntryDate=this.localDate(now);this.arrivedTime=this.localTime(now);this.leftTime=this.localTime(left);this.timeBookingId="";this.timeNote="";this.timeModalOpen.set(true);this.loadBookingOptions()}
  localDateTime(date:Date){return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16)}
  localTime(date:Date){return this.localDateTime(date).slice(11,16)}
  dateChanged(){this.timeBookingId="";this.loadBookingOptions()}

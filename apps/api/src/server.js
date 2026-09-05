@@ -625,6 +625,36 @@ app.get("/work-schedules",auth,async(req,res)=>{
   res.json(rows);
 });
 
+const canUseWorkTime = req => ["OWNER","ADMIN","OPERATOR"].includes(req.user?.role);
+const requireWorkTime = (req,res,next) => canUseWorkTime(req) ? next() : res.status(403).json({error:"WORK_TIME_FORBIDDEN"});
+async function canRecordWorkTimeFor(req,userId,locationId) {
+  if (isOwner(req)) return true;
+  if (req.user?.role === "OPERATOR") return userId === req.user.sub;
+  if (req.user?.role !== "ADMIN") return false;
+  return Boolean((await db.query("SELECT 1 FROM user_locations WHERE user_id=$1 AND location_id=$2",[userId,locationId])).rowCount);
+}
+
+app.get("/work-time-options",auth,requireWorkTime,async(req,res)=>{
+  const locations=isOwner(req)
+    ? (await db.query("SELECT id,name FROM locations ORDER BY name")).rows
+    : (await db.query("SELECT l.id,l.name FROM locations l JOIN user_locations ul ON ul.location_id=l.id WHERE ul.user_id=$1 ORDER BY l.name",[req.user.sub])).rows;
+  const users=isOwner(req)
+    ? (await db.query(`SELECT u.id,u.display_name,u.is_active,COALESCE(array_agg(ul.location_id) FILTER (WHERE ul.location_id IS NOT NULL),'{}') location_ids
+        FROM users u LEFT JOIN user_locations ul ON ul.user_id=u.id WHERE u.is_active=true AND u.deleted_at IS NULL GROUP BY u.id ORDER BY u.display_name`)).rows
+    : req.user?.role === "OPERATOR"
+      ? (await db.query(`SELECT u.id,u.display_name,u.is_active,COALESCE(array_agg(ul.location_id) FILTER (WHERE ul.location_id IS NOT NULL),'{}') location_ids
+          FROM users u LEFT JOIN user_locations ul ON ul.user_id=u.id WHERE u.id=$1 AND u.is_active=true GROUP BY u.id`,[req.user.sub])).rows
+      : (await db.query(`SELECT u.id,u.display_name,u.is_active,COALESCE(array_agg(ul.location_id) FILTER (WHERE ul.location_id IS NOT NULL),'{}') location_ids
+          FROM users u LEFT JOIN user_locations ul ON ul.user_id=u.id
+          WHERE u.is_active=true AND u.deleted_at IS NULL AND EXISTS(
+            SELECT 1 FROM user_locations target_location
+            WHERE target_location.user_id=u.id AND target_location.location_id IN (
+              SELECT location_id FROM user_locations WHERE user_id=$1
+            )
+          ) GROUP BY u.id ORDER BY u.display_name`,[req.user.sub])).rows;
+  res.json({users,locations});
+});
+
 app.post("/work-schedules",auth,permit("users:manage"),async(req,res)=>{
   const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300)}).safeParse(req.body);
   if(!parsed.success || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
@@ -673,7 +703,7 @@ app.post("/work-schedules/recurring",auth,permit("users:manage"),async(req,res)=
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 });
 
-app.get("/work-time-entries",auth,permit("users:manage"),async(req,res)=>{
+app.get("/work-time-entries",auth,requireWorkTime,async(req,res)=>{
   const parsed=z.object({from:z.string().date(),to:z.string().date()}).safeParse(req.query);
   if(!parsed.success || parsed.data.from>parsed.data.to) return res.status(400).json({error:"INVALID_DATE_RANGE"});
   const scope=isOwner(req)?{clause:"TRUE",values:[parsed.data.from,parsed.data.to]}:{clause:"e.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$3)",values:[parsed.data.from,parsed.data.to,req.user.sub]};
@@ -690,39 +720,64 @@ app.get("/work-time-entries",auth,permit("users:manage"),async(req,res)=>{
   res.json(rows);
 });
 
-app.get("/work-time-bookings",auth,permit("users:manage"),async(req,res)=>{
+app.get("/work-time-bookings",auth,requireWorkTime,async(req,res)=>{
   const parsed=z.object({from:z.string().date(),to:z.string().date(),locationId:z.string().uuid().optional()}).safeParse(req.query);
   if(!parsed.success || parsed.data.from>parsed.data.to) return res.status(400).json({error:"INVALID_DATE_RANGE"});
-  const values=[parsed.data.from,parsed.data.to],conditions=["b.starts_at<($2::date+interval '1 day')","b.ends_at>=$1::date"];
+  const values=[parsed.data.from,parsed.data.to],conditions=["b.starts_at<($2::date+interval '1 day')","b.ends_at>=$1::date","NOT EXISTS (SELECT 1 FROM work_time_entries e WHERE e.booking_id=b.id)"];
   if(parsed.data.locationId){values.push(parsed.data.locationId);conditions.push(`r.location_id=$${values.length}`);}
   if(!isOwner(req)){values.push(req.user.sub);conditions.push(`r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$${values.length})`);}
-  const {rows}=await db.query(`SELECT b.id::text,b.customer_name,b.product_name,b.starts_at,b.ends_at,r.name room_name,r.location_id FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE ${conditions.join(" AND ")} ORDER BY b.starts_at`,values);
+  // `external_id` lets us recognise an imported Time to Grow booking as the
+  // same reservation as the live Time to Grow result (their primary IDs differ).
+  const {rows}=await db.query(`SELECT b.id::text,b.external_id,b.customer_name,b.product_name,b.starts_at,b.ends_at,r.name room_name,r.location_id FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE ${conditions.join(" AND ")} ORDER BY b.starts_at`,values);
   if(!parsed.data.locationId) return res.json(rows);
   const location=(await db.query("SELECT id,external_id,timezone FROM locations WHERE id=$1",[parsed.data.locationId])).rows[0];
   if(!location?.external_id) return res.json(rows);
   try {
+    // Do not offer a visit again after anyone has already logged work against
+    // it. Entries may refer to a local imported booking or to a Time to Grow
+    // snapshot, so collect both reference forms.
+    const usedRows=(await db.query(`
+      SELECT b.external_id::text AS external_id, NULL::text AS snapshot_reference
+      FROM work_time_entries e JOIN bookings b ON b.id=e.booking_id
+      WHERE e.location_id=$1 AND b.external_id IS NOT NULL
+      UNION
+      SELECT NULL::text AS external_id, e.booking_snapshot->>'reference' AS snapshot_reference
+      FROM work_time_entries e
+      WHERE e.location_id=$1 AND e.booking_snapshot ? 'reference'
+    `,[location.id])).rows;
+    const usedExternalIds=new Set(usedRows.flatMap(row=>[row.external_id,row.snapshot_reference]).filter(Boolean).map(String));
     const dates=[];for(let date=new Date(`${parsed.data.from}T00:00:00Z`),last=new Date(`${parsed.data.to}T00:00:00Z`);date<=last;date=new Date(date.getTime()+86400000))dates.push(date.toISOString().slice(0,10));
     const batches=await Promise.all(dates.map(date=>fetchTimeToGrowBookings(location.external_id,date)));
-    const external=[];
+    const externalById=new Map();
     for(const booking of batches.flat()){
+      // Some upstream filters include an overlap buffer. A multi-day request
+      // can therefore return the exact same booking more than once.
+      if(externalById.has(booking.id)) continue;
       const times=(await db.query(`SELECT (($1::date+$2::time) AT TIME ZONE $4) starts_at,
         (($1::date+$3::time+CASE WHEN $3::time<$2::time THEN interval '1 day' ELSE interval '0' END) AT TIME ZONE $4) ends_at`,[booking.start.date,booking.start.time.slice(0,5),booking.end.time.slice(0,5),location.timezone])).rows[0];
-      external.push({id:`ttg:${booking.id}`,customer_name:booking.owner?.name||booking.owner?.email||"Бронь",product_name:booking.product.effective_name,starts_at:times.starts_at,ends_at:times.ends_at,room_name:booking.product.effective_name,location_id:location.id});
+      externalById.set(booking.id,{id:`ttg:${booking.id}`,customer_name:booking.owner?.name||booking.owner?.email||"Бронь",product_name:booking.product.effective_name,starts_at:times.starts_at,ends_at:times.ends_at,room_name:booking.product.effective_name,location_id:location.id});
     }
-    const localExternalIds=new Set(rows.map(row=>row.id));
-    res.json([...rows,...external.filter(row=>!localExternalIds.has(row.id))].sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)));
+    const external=[...externalById.values()];
+    const localExternalIds=new Set(rows.map(row=>row.external_id).filter(Boolean).map(String));
+    res.json([...rows,...external.filter(row=>{
+      const externalId=row.id.slice(4);
+      return !localExternalIds.has(externalId)
+        && !usedExternalIds.has(externalId)
+        && !usedExternalIds.has(row.id);
+    })].sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)));
   } catch(error) {
     console.error("work time external bookings",error);
     res.json(rows);
   }
 });
 
-app.post("/work-time-entries",auth,permit("users:manage"),async(req,res)=>{
+app.post("/work-time-entries",auth,requireWorkTime,async(req,res)=>{
   const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),bookingId:z.string().max(80).nullable().default(null),bookingSnapshot:z.object({reference:z.string().max(80),customerName:z.string().max(200),productName:z.string().max(300).nullable(),startsAt:z.string().datetime({offset:true}),roomName:z.string().max(300)}).nullable().default(null),arrivedAt:z.string().datetime({offset:true}),leftAt:z.string().datetime({offset:true}),note:z.string().trim().max(300).nullable().default(null)}).safeParse(req.body);
   if(!parsed.success || new Date(parsed.data?.leftAt||0)<=new Date(parsed.data?.arrivedAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
   const input=parsed.data;
   if(!(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   if(!(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.userId])).rowCount) return res.status(404).json({error:"USER_NOT_FOUND"});
+  if(!(await canRecordWorkTimeFor(req,input.userId,input.locationId))) return res.status(403).json({error:"WORK_TIME_USER_FORBIDDEN"});
   const localBookingId=input.bookingId&&!input.bookingId.startsWith("ttg:")?input.bookingId:null;
   if(localBookingId && !z.string().uuid().safeParse(localBookingId).success) return res.status(400).json({error:"INVALID_BOOKING"});
   if(localBookingId && !(await db.query("SELECT 1 FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE b.id=$1 AND r.location_id=$2",[localBookingId,input.locationId])).rowCount) return res.status(400).json({error:"BOOKING_LOCATION_MISMATCH"});
@@ -732,10 +787,11 @@ app.post("/work-time-entries",auth,permit("users:manage"),async(req,res)=>{
   res.status(201).json(entry);
 });
 
-app.delete("/work-time-entries/:id",auth,permit("users:manage"),async(req,res)=>{
+app.delete("/work-time-entries/:id",auth,requireWorkTime,async(req,res)=>{
   const entry=(await db.query("SELECT * FROM work_time_entries WHERE id=$1",[req.params.id])).rows[0];
   if(!entry) return res.status(404).json({error:"TIME_ENTRY_NOT_FOUND"});
   if(!(await locationAllowed(req,entry.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(req.user?.role==="OPERATOR" && entry.user_id!==req.user.sub) return res.status(403).json({error:"WORK_TIME_ENTRY_FORBIDDEN"});
   await db.query("DELETE FROM work_time_entries WHERE id=$1",[entry.id]);
   await audit(req,"work_time_entry.delete","work_time_entry",entry.id,entry,null);
   res.status(204).end();

@@ -9,3 +9,12 @@ export const adminGuard: CanActivateFn = () => {
   } catch {}
   return inject(Router).createUrlTree(["/"]);
 };
+
+export const workTimeGuard: CanActivateFn = () => {
+  try {
+    const token=sessionStorage.getItem("access_token");
+    const role=token ? JSON.parse(atob(token.split(".")[1])).role : null;
+    if (["OWNER","ADMIN","OPERATOR"].includes(role)) return true;
+  } catch {}
+  return inject(Router).createUrlTree(["/"]);
+};

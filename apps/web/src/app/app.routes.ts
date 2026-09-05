@@ -12,7 +12,7 @@ import { CameraSettingsComponent } from "./pages/camera-settings/camera-settings
 import { SessionsComponent } from "./pages/sessions/sessions.component";
 import { VrPoeltenComponent } from "./pages/vr-poelten/vr-poelten.component";
 import { VrSessionLogsComponent } from "./pages/vr-session-logs/vr-session-logs.component";
-import { adminGuard } from "./core/admin.guard";
+import { adminGuard, workTimeGuard } from "./core/admin.guard";
 import { ReceptionCheckinComponent } from "./pages/reception-checkin/reception-checkin.component";
 import { InventoryComponent } from "./pages/inventory/inventory.component";
 import { CameraWatchComponent } from "./pages/camera-watch/camera-watch.component";
@@ -35,7 +35,7 @@ export const routes: Routes = [
   { path: "krampus", component: KrampusComponent, canActivate: [authGuard] },
   { path: "users", component: UsersComponent, canActivate: [authGuard] },
   { path: "bookings", component: BookingsComponent, canActivate: [authGuard] },
-  { path: "work-schedules", component: WorkSchedulesComponent, canActivate: [authGuard, adminGuard] },
+  { path: "work-schedules", component: WorkSchedulesComponent, canActivate: [authGuard, workTimeGuard] },
   {
     path: "sessions",
     component: SessionsComponent,

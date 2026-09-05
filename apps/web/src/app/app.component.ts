@@ -29,7 +29,7 @@ type InstallPromptEvent = Event & {
           <a routerLink="/bookings" routerLinkActive="active">
             <i class="mobile-tab-icon bookings-icon" aria-hidden="true"></i><span>Брони</span>
           </a>
-          @if(isAdmin()) {<a routerLink="/work-schedules" routerLinkActive="active">
+          @if(canUseWorkTime()) {<a routerLink="/work-schedules" routerLinkActive="active">
             <i class="mobile-tab-icon schedule-icon" aria-hidden="true"></i><span>Смены</span>
           </a>}
           <a routerLink="/cameras" routerLinkActive="active">
@@ -120,6 +120,7 @@ export class AppComponent {
   mobileMenuOpen = signal(false);
   currentUrl = signal(this.router.url);
   isAdmin = signal(false);
+  canUseWorkTime = signal(false);
   isCameraViewer = signal(false);
   isStandalone = signal(window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
   installPrompt = signal<InstallPromptEvent | null>(null);
@@ -171,10 +172,12 @@ export class AppComponent {
       const role = token ? JSON.parse(atob(token.split(".")[1])).role : null;
       const admin = role === "OWNER" || role === "ADMIN";
       this.isAdmin.set(admin);
+      this.canUseWorkTime.set(admin || role === "OPERATOR");
       this.isCameraViewer.set(role === "CAMERA_VIEWER");
       document.body.classList.toggle("management-user", admin);
     } catch {
       this.isAdmin.set(false);
+      this.canUseWorkTime.set(false);
       this.isCameraViewer.set(false);
       document.body.classList.remove("management-user");
     }
