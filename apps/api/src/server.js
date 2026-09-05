@@ -1878,12 +1878,13 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     let sheetSync={configured:false,status:"FAILED"};
     try{
       sheetSync=await syncStoredSessionToGoogleSheets(session.id);
-    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false,status:"FAILED",error:error.code||String(error.message||error)};}
+    }catch(error){console.error("Google Sheets session sync failed",session.id,error);sheetSync={configured:true,ok:false,status:"FAILED",error:error.code||String(error.message||error),details:String(error.message||error)};}
     if(sheetSync.configured&&!sheetSync.ok)return res.status(502).json({
       ...session,sheetSync,error:sheetSync.error==="GOOGLE_SHEETS_IDENTIFIER_MISSING"?sheetSync.error:"GOOGLE_SHEETS_SYNC_FAILED",
       message:sheetSync.error==="GOOGLE_SHEETS_IDENTIFIER_MISSING"
         ?"Сессия сохранена, но Google Sheets не подтвердила QC_ID. Повторите синхронизацию в разделе «Сессии»."
-        :"Сессия сохранена, но Google Sheets не приняла запись. Повторите синхронизацию в разделе «Сессии»."
+        :"Сессия сохранена, но Google Sheets не приняла запись. Повторите синхронизацию в разделе «Сессии».",
+      details:sheetSync.details||""
     });
     res.status(201).json({...session,sheetSync});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
