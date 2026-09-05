@@ -1886,6 +1886,20 @@ app.post("/sessions/:id/booking-record/rollback",auth,async(req,res)=>{
     if(!session)return res.status(404).json({error:"SESSION_NOT_FOUND"});
     if(!session.booking_id)return res.status(409).json({error:"BOOKING_SESSION_REQUIRED"});
     if(!(await locationAllowed(req,session.location_id))){await client.query("ROLLBACK");return res.status(403).json({error:"LOCATION_FORBIDDEN"});}
+    stored=session.sheet_sync_payload;
+    let sheetRollback={skipped:true};
+    // Roll back Sheets before removing the local session. The previous flow
+    // discarded a Sheets failure after deleting the only retryable record.
+    if(stored?.clubId&&stored?.payload){
+      try{
+        sheetRollback=await sendSessionToGoogleSheets(stored.clubId,{...stored.payload,type:"session.rolled_back",sessionId:session.id,bookingId:stored.payload.bookingId||session.booking_id});
+        if(sheetRollback.removed===false||sheetRollback.deleted===false||sheetRollback.found===false)throw Object.assign(new Error("GOOGLE_SHEETS_ROW_NOT_FOUND"),{code:"GOOGLE_SHEETS_ROW_NOT_FOUND"});
+      }catch(error){
+        await client.query("ROLLBACK");
+        console.error("Google Sheets rollback failed",session.id,error);
+        return res.status(502).json({error:error.code||"GOOGLE_SHEETS_ROLLBACK_FAILED"});
+      }
+    }
     const deductions=(await client.query(`SELECT d.item_id,d.quantity AS deduction_quantity,i.name FROM session_inventory_deductions d JOIN inventory_items i ON i.id=d.item_id WHERE d.session_id=$1 FOR UPDATE`,[session.id])).rows;
     for(const deduction of deductions){
       const item=(await client.query("SELECT quantity FROM inventory_items WHERE id=$1 FOR UPDATE",[deduction.item_id])).rows[0];
@@ -1893,15 +1907,9 @@ app.post("/sessions/:id/booking-record/rollback",auth,async(req,res)=>{
       await client.query("UPDATE inventory_items SET quantity=$1,updated_by=$2,updated_at=now() WHERE id=$3",[restored,req.user.sub,deduction.item_id]);
       await client.query("INSERT INTO inventory_movements(item_id,delta,quantity_after,reason,created_by) VALUES($1,$2,$3,$4,$5)",[deduction.item_id,deduction.deduction_quantity,restored,`Откат записи сессии ${session.id}`,req.user.sub]);
     }
-    stored=session.sheet_sync_payload;
     await client.query("DELETE FROM sessions WHERE id=$1",[session.id]);
     await client.query("COMMIT");
-    await audit(req,"session.booking_record.rollback","session",req.params.id,session,{restoredMagnets:deductions.length});
-    let sheetRollback={skipped:true};
-    if(session.sheet_sync_status==="SYNCED"&&stored?.clubId&&stored?.payload){
-      try{sheetRollback=await sendSessionToGoogleSheets(stored.clubId,{type:"session.rolled_back",sessionId:req.params.id,date:stored.payload.date,onlineAmount:stored.payload.onlineAmount});}
-      catch(error){console.error("Google Sheets rollback failed",req.params.id,error);sheetRollback={ok:false};}
-    }
+    await audit(req,"session.booking_record.rollback","session",req.params.id,session,{restoredMagnets:deductions.length,sheetRollback});
     res.json({ok:true,restoredMagnets:deductions.length,sheetRollback});
   }catch(error){try{await client.query("ROLLBACK");}catch(_){}throw error;}finally{client.release();}
 });
