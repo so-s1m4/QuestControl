@@ -13,6 +13,7 @@ function doGet() {
 // older visible QuestControl markers. It never changes business cells.
 function installQuestControlIds() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const properties = PropertiesService.getScriptProperties().getProperties();
   ['VR_2.0', 'KrampusHaus', 'Escape Box'].forEach(function(name) {
     const sheet = ss.getSheetByName(name);
     if (!sheet) return;
@@ -32,6 +33,17 @@ function installQuestControlIds() {
       changed = true;
     }
     if (changed) sheet.getRange(1, column, last, 1).setValues(ids);
+
+    Object.keys(properties).forEach(function(key) {
+      if (key.indexOf('questcontrol_session_') !== 0) return;
+      try {
+        const meta = JSON.parse(properties[key]);
+        const row = Number(meta.row);
+        if (meta.sheet === name && row > 0 && row <= sheet.getLastRow()) {
+          writeRecordId_(sheet, row, key.substring('questcontrol_session_'.length), meta.bookingId || '');
+        }
+      } catch (_) {}
+    });
   });
 }
 
@@ -158,15 +170,27 @@ function helperColumn_(sheet) {
   const lastColumn = Math.max(sheet.getLastColumn(), 1);
   const rows = Math.min(Math.max(sheet.getLastRow(), 1), 10);
   const headers = sheet.getRange(1, 1, rows, lastColumn).getDisplayValues();
+  let existing = 0;
+  let comments = 0;
   for (let row = 0; row < headers.length; row++) {
     for (let column = 0; column < headers[row].length; column++) {
-      if (String(headers[row][column]).trim() === QC_ID_HEADER) {
-        sheet.showColumns(column + 1);
-        return column + 1;
-      }
+      if (String(headers[row][column]).trim() === QC_ID_HEADER) existing = column + 1;
+      if (normalized_(headers[row][column]) === 'comments') comments = column + 1;
     }
   }
-  const column = lastColumn + 1;
+  const preferred = comments ? comments + 1 : lastColumn + 1;
+  if (existing) {
+    if (existing !== preferred && !sheet.getRange(1, preferred).getValue()) {
+      const height = Math.max(sheet.getLastRow(), 1);
+      sheet.getRange(1, existing, height, 1).copyTo(sheet.getRange(1, preferred, height, 1));
+      sheet.getRange(1, existing, height, 1).clearContent();
+      existing = preferred;
+    }
+    sheet.getRange(1, existing).setValue(QC_ID_HEADER);
+    sheet.showColumns(existing);
+    return existing;
+  }
+  const column = preferred;
   sheet.getRange(1, column).setValue(QC_ID_HEADER);
   return column;
 }
