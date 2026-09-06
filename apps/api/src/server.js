@@ -192,14 +192,13 @@ function telegramDateKey(value, timezone) {
   const item = type => parts.find(part => part.type === type)?.value || "";
   return `${item("year")}-${item("month")}-${item("day")}`;
 }
-function telegramAddDays(date, days) {
-  const value = new Date(`${date}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-}
 function telegramBookingValues(booking) {
   const dateTime = telegramDateTime(booking.starts_at, booking.timezone);
   return { customerName: booking.customer_name, date: dateTime.date, time: dateTime.time, location: booking.location_name, room: booking.room_name, productName: booking.product_name || "Квест", players: booking.players };
+}
+async function telegramBookingById(bookingId) {
+  return (await db.query(`SELECT b.*,r.name room_name,r.location_id,l.name location_name,l.timezone
+    FROM bookings b JOIN rooms r ON r.id=b.room_id JOIN locations l ON l.id=r.location_id WHERE b.id=$1`, [bookingId])).rows[0] || null;
 }
 async function sendTelegramBookingNotification(booking, templateName, keyPrefix) {
   const settings = await telegramSettings();
@@ -266,12 +265,12 @@ async function telegramNotificationsOnce() {
   if (!telegramBot?.enabled) return;
   const rows = (await db.query(`SELECT b.*,r.name room_name,r.location_id,l.name location_name,l.timezone
     FROM bookings b JOIN rooms r ON r.id=b.room_id JOIN locations l ON l.id=r.location_id
-    WHERE b.starts_at>now()-interval '1 day' AND b.ends_at>now()`)).rows;
+    WHERE b.starts_at>now() AND b.ends_at>now()`)).rows;
+  const now=Date.now();
   for (const booking of rows) {
-    const local = telegramLocalClock(booking.timezone);
-    if (!booking.confirmed && booking.created_at && new Date(booking.created_at) > new Date(Date.now() - 24 * 60 * 60 * 1000)) await sendTelegramBookingNotification(booking, "newBooking", "booking:new");
-    if (!booking.confirmed && local.hour >= 9 && telegramDateKey(booking.starts_at, booking.timezone) === telegramAddDays(local.date, 1)) await sendTelegramBookingNotification(booking, "dayBefore", "booking:day-before");
-    if (!booking.confirmed && new Date(booking.starts_at) <= new Date(Date.now() + 2 * 60 * 60 * 1000) && new Date(booking.starts_at) > new Date()) await sendTelegramBookingNotification(booking, "twoHours", "booking:two-hours");
+    const startsAt=new Date(booking.starts_at).getTime();
+    if (!booking.confirmed && startsAt <= now + 24 * 60 * 60 * 1000) await sendTelegramBookingNotification(booking, "dayBefore", "booking:day-before");
+    if (!booking.confirmed && startsAt <= now + 2 * 60 * 60 * 1000) await sendTelegramBookingNotification(booking, "twoHours", "booking:two-hours");
   }
   const shifts = (await db.query(`SELECT w.*,u.display_name,l.name location_name,l.timezone,tc.chat_id
     FROM work_shifts w JOIN users u ON u.id=w.user_id AND u.is_active=true JOIN locations l ON l.id=w.location_id JOIN telegram_connections tc ON tc.user_id=u.id
@@ -1382,6 +1381,7 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
     ON CONFLICT(room_id,lower(name)) DO UPDATE SET is_active=true
     RETURNING id,name
   `,[room.id,classification.gameName])).rows[0] : null;
+  const existingBooking=(await client.query("SELECT id FROM bookings WHERE external_source='TIME_TO_GROW' AND external_id=$1",[externalBooking.id])).rows[0];
   const booking=(await client.query(`
     INSERT INTO bookings(
       room_id,customer_name,customer_phone,starts_at,ends_at,players,amount_cents,
@@ -1446,7 +1446,7 @@ async function importTimeToGrowBooking(client,location,externalBooking,createSes
       ON CONFLICT(session_id,person_id) DO NOTHING
     `,[session.id,booking.id]);
   }
-  return {booking,session,game,classification};
+  return {booking,session,game,classification,isNew:!existingBooking};
 }
 
 app.get("/time-to-grow/clubs", auth, permit("bookings:read"), async (_, res) => {
@@ -1752,6 +1752,7 @@ app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) 
           gameId:result.booking.game_id||null,
           zoneName:result.classification.zoneName,
           externalId:externalBooking.id,
+          isNew:result.isNew,
         });
         await client.query("RELEASE SAVEPOINT import_booking");
       } catch (error) {
@@ -1764,6 +1765,10 @@ app.post("/time-to-grow/import", auth, permit("bookings:read"), async (req,res) 
       dates:input.dates,imported:imported.length,failedDates:failedDates.length,
       failedBookings:failedBookings.length,createSessions:input.createSessions
     });
+    void Promise.all(imported.filter(item=>item.isNew).map(async item=>{
+      const booking=await telegramBookingById(item.bookingId);
+      if(booking&&!booking.confirmed) await sendTelegramBookingNotification(booking,"newBooking","booking:new");
+    })).catch(error=>console.error("Telegram new booking notification failed",error.message));
     res.status(201).json({
       imported:imported.length,
       items:imported,
