@@ -663,6 +663,7 @@ app.get("/work-schedules",auth,async(req,res)=>{
 
 const canUseWorkTime = req => ["OWNER","ADMIN","OPERATOR"].includes(req.user?.role);
 const requireWorkTime = (req,res,next) => canUseWorkTime(req) ? next() : res.status(403).json({error:"WORK_TIME_FORBIDDEN"});
+const requireScheduleManager = (req,res,next) => req.user?.role === "OPERATOR" ? res.status(403).json({error:"SCHEDULE_EDIT_FORBIDDEN"}) : next();
 async function canRecordWorkTimeFor(req,userId,locationId) {
   if (isOwner(req)) return true;
   if (req.user?.role === "OPERATOR") return userId === req.user.sub;
@@ -691,7 +692,7 @@ app.get("/work-time-options",auth,requireWorkTime,async(req,res)=>{
   res.json({users,locations});
 });
 
-app.post("/work-schedules",auth,permit("users:manage"),async(req,res)=>{
+app.post("/work-schedules",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{
   const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300)}).safeParse(req.body);
   if(!parsed.success || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
   const input=parsed.data;
@@ -704,7 +705,7 @@ app.post("/work-schedules",auth,permit("users:manage"),async(req,res)=>{
   res.status(201).json(shift);
 });
 
-app.patch("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
+app.patch("/work-schedules/:id",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{
   const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300)}).safeParse(req.body);
   if(!parsed.success || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
   const input=parsed.data;
@@ -719,7 +720,7 @@ app.patch("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
   res.json(updated);
 });
 
-app.patch("/work-schedules/:id/series",auth,permit("users:manage"),async(req,res)=>{
+app.patch("/work-schedules/:id/series",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{
   const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300),from:z.string().date(),to:z.string().date(),sourceWeekdays:z.array(z.number().int().min(1).max(7)).min(1).max(7),weekdays:z.array(z.number().int().min(1).max(7)).min(1).max(7)}).safeParse(req.body);
   if(!parsed.success || parsed.data.from>parsed.data.to || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
   const input=parsed.data;
@@ -772,7 +773,7 @@ app.patch("/work-schedules/:id/series",auth,permit("users:manage"),async(req,res
   res.json({updated,created,removed});
 });
 
-app.post("/work-schedules/recurring",auth,permit("users:manage"),async(req,res)=>{
+app.post("/work-schedules/recurring",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{
   const parsed=z.object({
     userId:z.string().uuid(),locationId:z.string().uuid(),from:z.string().date(),to:z.string().date(),
     weekdays:z.array(z.number().int().min(1).max(7)).min(1).max(7),
@@ -901,7 +902,7 @@ app.delete("/work-time-entries/:id",auth,requireWorkTime,async(req,res)=>{
   res.status(204).end();
 });
 
-app.delete("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
+app.delete("/work-schedules/:id",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{
   const shift=(await db.query("SELECT * FROM work_shifts WHERE id=$1",[req.params.id])).rows[0];
   if(!shift) return res.status(404).json({error:"SHIFT_NOT_FOUND"});
   if(!(await locationAllowed(req,shift.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
