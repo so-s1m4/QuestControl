@@ -704,6 +704,61 @@ app.post("/work-schedules",auth,permit("users:manage"),async(req,res)=>{
   res.status(201).json(shift);
 });
 
+app.patch("/work-schedules/:id",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300)}).safeParse(req.body);
+  if(!parsed.success || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
+  const input=parsed.data;
+  const existing=(await db.query("SELECT w.*,l.name location_name FROM work_shifts w JOIN locations l ON l.id=w.location_id WHERE w.id=$1",[req.params.id])).rows[0];
+  if(!existing) return res.status(404).json({error:"SHIFT_NOT_FOUND"});
+  if(!(await locationAllowed(req,existing.location_id)) || !(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.userId])).rowCount) return res.status(404).json({error:"USER_NOT_FOUND"});
+  const overlap=(await db.query("SELECT 1 FROM work_shifts WHERE user_id=$1 AND id<>$4 AND starts_at<$3 AND ends_at>$2",[input.userId,input.startsAt,input.endsAt,existing.id])).rowCount;
+  if(overlap) return res.status(409).json({error:"SHIFT_OVERLAP"});
+  const updated=(await db.query("UPDATE work_shifts SET user_id=$1,location_id=$2,starts_at=$3,ends_at=$4,responsibility=$5 WHERE id=$6 RETURNING *",[input.userId,input.locationId,input.startsAt,input.endsAt,input.responsibility,existing.id])).rows[0];
+  await audit(req,"work_shift.update","work_shift",updated.id,existing,updated);
+  res.json(updated);
+});
+
+app.patch("/work-schedules/:id/series",auth,permit("users:manage"),async(req,res)=>{
+  const parsed=z.object({userId:z.string().uuid(),locationId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),responsibility:z.string().trim().min(1).max(300),from:z.string().date(),to:z.string().date()}).safeParse(req.body);
+  if(!parsed.success || parsed.data.from>parsed.data.to || new Date(parsed.data?.endsAt||0)<=new Date(parsed.data?.startsAt||0)) return res.status(400).json({error:"INVALID_INPUT"});
+  const input=parsed.data;
+  const existing=(await db.query("SELECT w.*,l.timezone FROM work_shifts w JOIN locations l ON l.id=w.location_id WHERE w.id=$1",[req.params.id])).rows[0];
+  if(!existing) return res.status(404).json({error:"SHIFT_NOT_FOUND"});
+  if(!(await locationAllowed(req,existing.location_id)) || !(await locationAllowed(req,input.locationId))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(!(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.userId])).rowCount) return res.status(404).json({error:"USER_NOT_FOUND"});
+  const targetLocation=(await db.query("SELECT timezone FROM locations WHERE id=$1",[input.locationId])).rows[0];
+  if(!targetLocation) return res.status(404).json({error:"LOCATION_NOT_FOUND"});
+  const candidates=(await db.query(`SELECT w.id,(w.starts_at AT TIME ZONE $2)::date AS work_date
+    FROM work_shifts w
+    WHERE w.user_id=$1 AND w.location_id=$3 AND w.responsibility=$4
+      AND (w.starts_at AT TIME ZONE $2)::time=(($5::timestamptz AT TIME ZONE $2)::time)
+      AND (w.ends_at AT TIME ZONE $2)::time=(($6::timestamptz AT TIME ZONE $2)::time)
+      AND EXTRACT(ISODOW FROM w.starts_at AT TIME ZONE $2)=EXTRACT(ISODOW FROM $5::timestamptz AT TIME ZONE $2)
+      AND (w.starts_at AT TIME ZONE $2)::date BETWEEN $7::date AND $8::date`,[existing.user_id,existing.timezone,existing.location_id,existing.responsibility,existing.starts_at,existing.ends_at,input.from,input.to])).rows;
+  if(!candidates.length) return res.status(404).json({error:"SHIFT_SERIES_NOT_FOUND"});
+  const newTimes=(await db.query("SELECT ($1::timestamptz AT TIME ZONE $3)::time AS start_time,($2::timestamptz AT TIME ZONE $3)::time AS end_time",[input.startsAt,input.endsAt,targetLocation.timezone])).rows[0];
+  const startTime=newTimes.start_time,endTime=newTimes.end_time;
+  const targetIds=candidates.map(row=>row.id),bounds=[];
+  for(const candidate of candidates){
+    const value=(await db.query(`SELECT (($1::date+$2::time) AT TIME ZONE $4) starts_at,
+      (($1::date+$3::time+CASE WHEN $3::time<=$2::time THEN interval '1 day' ELSE interval '0' END) AT TIME ZONE $4) ends_at`,[candidate.work_date,startTime,endTime,targetLocation.timezone])).rows[0];
+    bounds.push({id:candidate.id,...value});
+  }
+  for(const bound of bounds){
+    const overlap=(await db.query("SELECT 1 FROM work_shifts WHERE user_id=$1 AND id<>ALL($2::uuid[]) AND starts_at<$4 AND ends_at>$3",[input.userId,targetIds,bound.starts_at,bound.ends_at])).rowCount;
+    if(overlap) return res.status(409).json({error:"SHIFT_OVERLAP"});
+  }
+  const client=await db.connect();
+  try{
+    await client.query("BEGIN");
+    for(const bound of bounds) await client.query("UPDATE work_shifts SET user_id=$1,location_id=$2,starts_at=$3,ends_at=$4,responsibility=$5 WHERE id=$6",[input.userId,input.locationId,bound.starts_at,bound.ends_at,input.responsibility,bound.id]);
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK");throw error}finally{client.release();}
+  await audit(req,"work_shift.series.update",existing.id,{...existing,count:candidates.length},{...input,count:candidates.length,shiftIds:targetIds});
+  res.json({updated:candidates.length});
+});
+
 app.post("/work-schedules/recurring",auth,permit("users:manage"),async(req,res)=>{
   const parsed=z.object({
     userId:z.string().uuid(),locationId:z.string().uuid(),from:z.string().date(),to:z.string().date(),
