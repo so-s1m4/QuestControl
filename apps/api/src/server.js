@@ -16,7 +16,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
-import { TelegramBot, renderTelegramTemplate } from "./telegram.js";
+import { TelegramBot, escapeTelegramHtml, renderTelegramTemplate } from "./telegram.js";
 import { TuyaCloud } from "./tuya.js";
 import { TuyaMessageConsumer } from "./tuya-messages.js";
 import { TuyaWebRTCManager } from "./tuya-webrtc.js";
@@ -162,6 +162,37 @@ async function telegramSettings() {
   catch { telegramSettingsCache = { ...defaultTelegramSettings }; }
   return telegramSettingsCache;
 }
+const telegramImportantLogEvents = ["sessionRecorded","sessionStarted","sessionFinished","sessionCancelled","bookingConfirmed","checkinCompleted"];
+const defaultTelegramImportantLogSettings = {
+  recipientUserId: null,
+  events: { sessionRecorded: true, sessionStarted: false, sessionFinished: true, sessionCancelled: true, bookingConfirmed: true, checkinCompleted: true },
+};
+const telegramImportantLogSettingsInput = z.object({
+  recipientUserId: z.string().uuid().nullable(),
+  events: z.object(Object.fromEntries(telegramImportantLogEvents.map(event => [event, z.boolean()]))),
+});
+let telegramImportantLogSettingsCache = null;
+async function telegramImportantLogSettings() {
+  if (telegramImportantLogSettingsCache) return telegramImportantLogSettingsCache;
+  const row = (await db.query("SELECT encrypted_value FROM app_settings WHERE key='telegram_important_logs'")).rows[0];
+  try {
+    const saved = decryptSetting(row?.encrypted_value) || {};
+    telegramImportantLogSettingsCache = { ...defaultTelegramImportantLogSettings, ...saved, events: { ...defaultTelegramImportantLogSettings.events, ...(saved.events || {}) } };
+  } catch { telegramImportantLogSettingsCache = structuredClone(defaultTelegramImportantLogSettings); }
+  return telegramImportantLogSettingsCache;
+}
+async function sendTelegramImportantLog(event, title, rows = []) {
+  if (!telegramBot?.enabled) return;
+  const settings = await telegramImportantLogSettings();
+  if (!settings.recipientUserId || !settings.events[event]) return;
+  const recipient = (await db.query(`SELECT tc.chat_id FROM telegram_connections tc
+    JOIN users u ON u.id=tc.user_id AND u.is_active=true WHERE tc.user_id=$1`, [settings.recipientUserId])).rows[0];
+  if (!recipient) return;
+  const details = rows.filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([label, value]) => `${escapeTelegramHtml(label)}: <b>${escapeTelegramHtml(value)}</b>`).join("\n");
+  try { await telegramBot.sendMessage(recipient.chat_id, `<b>🔔 ${escapeTelegramHtml(title)}</b>${details ? `\n\n${details}` : ""}`); }
+  catch (error) { console.error("Telegram important log notification failed", { event, userId: settings.recipientUserId, error: error.message }); }
+}
 async function telegramUserCanAccessLocation(userId, role, locationId) {
   if (role === "OWNER") return true;
   return Boolean((await db.query("SELECT 1 FROM user_locations WHERE user_id=$1 AND location_id=$2", [userId, locationId])).rowCount);
@@ -243,12 +274,13 @@ async function telegramHandleConfirmation(query) {
   if (!bookingId || !query.message?.chat?.id) return telegramBot.answerCallbackQuery(query.id, "Кнопка больше не действует.");
   const connection = (await db.query(`SELECT tc.user_id,role.name role FROM telegram_connections tc JOIN users u ON u.id=tc.user_id JOIN roles role ON role.id=u.role_id WHERE tc.telegram_user_id=$1 AND tc.chat_id=$2 AND u.is_active=true`, [query.from.id, query.message.chat.id])).rows[0];
   if (!connection) return telegramBot.answerCallbackQuery(query.id, "Сначала подключите этот Telegram в панели.");
-  const booking = (await db.query("SELECT b.id,b.confirmed,b.starts_at,r.location_id FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE b.id=$1", [bookingId])).rows[0];
+  const booking = (await db.query("SELECT b.id,b.confirmed,b.starts_at,b.customer_name,r.location_id,r.name room_name,l.name location_name FROM bookings b JOIN rooms r ON r.id=b.room_id JOIN locations l ON l.id=r.location_id WHERE b.id=$1", [bookingId])).rows[0];
   if (!booking || !(await telegramUserCanAccessLocation(connection.user_id, connection.role, booking.location_id))) return telegramBot.answerCallbackQuery(query.id, "Нет доступа к этой брони.");
   if (new Date(booking.starts_at) <= new Date()) return telegramBot.answerCallbackQuery(query.id, "Эта бронь уже началась.");
   if (booking.confirmed) return telegramBot.answerCallbackQuery(query.id, "Бронь уже подтверждена.");
   await db.query("UPDATE bookings SET confirmed=true WHERE id=$1", [booking.id]);
   await db.query("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,request_id,before_state,after_state) VALUES($1,'booking.confirmation.update','booking',$2,$3,$4,$5)", [connection.user_id, booking.id, crypto.randomUUID(), { confirmed: false, source: "telegram" }, { confirmed: true, source: "telegram" }]);
+  void sendTelegramImportantLog("bookingConfirmed", "Бронь подтверждена", [["Клиент", booking.customer_name], ["Локация", booking.location_name], ["Комната", booking.room_name], ["Источник", "Telegram"]]);
   await telegramBot.answerCallbackQuery(query.id, "Бронь подтверждена ✅");
   await telegramBot.clearInlineKeyboard(query.message.chat.id, query.message.message_id).catch(error => console.error("Telegram confirmation button cleanup failed", error.message));
 }
@@ -612,11 +644,12 @@ app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
 app.patch("/bookings/:id/confirmation", auth, permit("bookings:read"), async (req,res) => {
   const parsed=z.object({confirmed:z.boolean()}).safeParse(req.body);
   if(!parsed.success) return res.status(400).json({error:"INVALID_INPUT"});
-  const booking=(await db.query(`SELECT b.id,b.confirmed,r.location_id FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE b.id=$1`,[req.params.id])).rows[0];
+  const booking=(await db.query(`SELECT b.id,b.confirmed,b.customer_name,r.location_id,r.name room_name,l.name location_name FROM bookings b JOIN rooms r ON r.id=b.room_id JOIN locations l ON l.id=r.location_id WHERE b.id=$1`,[req.params.id])).rows[0];
   if(!booking) return res.status(404).json({error:"BOOKING_NOT_FOUND"});
   if(!(await locationAllowed(req,booking.location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
   const updated=(await db.query("UPDATE bookings SET confirmed=$1 WHERE id=$2 RETURNING id,confirmed",[parsed.data.confirmed,booking.id])).rows[0];
   await audit(req,"booking.confirmation.update","booking",booking.id,{confirmed:booking.confirmed},updated);
+  if(updated.confirmed&&!booking.confirmed) void sendTelegramImportantLog("bookingConfirmed", "Бронь подтверждена", [["Клиент", booking.customer_name], ["Локация", booking.location_name], ["Комната", booking.room_name]]);
   res.json(updated);
 });
 
@@ -1289,6 +1322,13 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
       return res.status(status).json({ error: "TIME_TO_GROW_SUBMISSION_FAILED" });
     }
     const payload = await response.json().catch(() => null);
+    void sendTelegramImportantLog("checkinCompleted", "Гость прошёл check-in", [
+      ["Гость", `${input.firstName} ${input.lastName}`.trim()],
+      ["Бронь", reservation.name],
+      ["Локация", resolved.location],
+      ["Время", reservation.time],
+      ["Прогресс", `${participantNumber}/${totalGuests}`],
+    ]);
     res.status(201).json({ success: true, participantId: payload?.data?.id || null });
   } catch (error) {
     if(submissionKey) await redis.del(submissionKey).catch(()=>{});
@@ -1704,6 +1744,10 @@ app.patch("/time-to-grow/bookings/:id/confirmation",auth,permit("bookings:read")
     ON CONFLICT(club_id,external_booking_id) DO UPDATE SET confirmed=excluded.confirmed,updated_by=excluded.updated_by,updated_at=now()
     RETURNING external_booking_id AS id,confirmed`,[clubId,req.params.id,confirmed,req.user.sub])).rows[0];
   await audit(req,"booking.confirmation.update","external_booking",req.params.id,before||{confirmed:false},result);
+  if(result.confirmed&&!before?.confirmed) {
+    const location=(await db.query("SELECT name FROM locations WHERE external_id=$1",[clubId])).rows[0];
+    void sendTelegramImportantLog("bookingConfirmed", "Бронь подтверждена", [["Локация", location?.name], ["Бронь", req.params.id], ["Источник", "Time to Grow"]]);
+  }
   res.json(result);
 });
 
@@ -1863,6 +1907,8 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
       VALUES($1,$2,$3,$4,$5,$6) RETURNING *
     `,[input.roomId,input.gameId,input.status,input.startedAt,input.endedAt,input.remainingSeconds]);
     await audit(req,"session.create","session",rows[0].id,null,rows[0]);
+    if(rows[0].status==="RUNNING") void sendTelegramImportantLog("sessionStarted", "Сессия начата", [["Сессия", rows[0].id]]);
+    if(rows[0].status==="FINISHED") void sendTelegramImportantLog("sessionRecorded", "Сессия записана", [["Сессия", rows[0].id]]);
     return res.status(201).json(rows[0]);
   }
   const input = z.object({
@@ -1901,6 +1947,7 @@ app.post("/sessions", auth, permit("sessions:create"), async (req, res) => {
     `,[rows[0].id,booking.id]);
     await client.query("COMMIT");
     await audit(req,"session.start","session",rows[0].id,null,rows[0]);
+    void sendTelegramImportantLog("sessionStarted", "Сессия начата", [["Сессия", rows[0].id]]);
     res.status(201).json(rows[0]);
   } catch (error) {
     await client.query("ROLLBACK");
@@ -2021,6 +2068,26 @@ app.put("/settings/telegram",auth,async(req,res)=>{
   await audit(req,"settings.telegram.update","app_setting","telegram_notifications",null,{templates:Object.keys(input)});
   res.json({ok:true});
 });
+app.get("/settings/telegram/recipients",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const {rows}=await db.query(`SELECT u.id,u.display_name,u.email,tc.username,tc.first_name,tc.linked_at
+    FROM telegram_connections tc JOIN users u ON u.id=tc.user_id AND u.is_active=true
+    ORDER BY lower(u.display_name),lower(u.email)`);
+  res.json(rows);
+});
+app.get("/settings/telegram/important-logs",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  res.json(await telegramImportantLogSettings());
+});
+app.put("/settings/telegram/important-logs",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const input=telegramImportantLogSettingsInput.parse(req.body);
+  if(input.recipientUserId && !(await db.query("SELECT 1 FROM telegram_connections tc JOIN users u ON u.id=tc.user_id AND u.is_active=true WHERE tc.user_id=$1",[input.recipientUserId])).rowCount) return res.status(400).json({error:"TELEGRAM_RECIPIENT_NOT_CONNECTED"});
+  await db.query(`INSERT INTO app_settings(key,encrypted_value,updated_by,updated_at) VALUES('telegram_important_logs',$1,$2,now()) ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[encryptSetting(input),req.user.sub]);
+  telegramImportantLogSettingsCache=input;
+  await audit(req,"settings.telegram.important_logs.update","app_setting","telegram_important_logs",null,{recipientUserId:input.recipientUserId,events:input.events});
+  res.json(input);
+});
 app.get("/telegram/connection",auth,async(req,res)=>{
   const row=(await db.query("SELECT username,first_name,linked_at FROM telegram_connections WHERE user_id=$1",[req.user.sub])).rows[0];
   res.json({configured:Boolean(telegramBot?.enabled),botUsername:telegramBot?.username||env.TELEGRAM_BOT_USERNAME||"",connected:Boolean(row),connection:row||null});
@@ -2112,6 +2179,7 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     ]);
     const durationMinutes=Math.round((new Date(input.endedAt)-new Date(input.startedAt))/60000);
     const bookingStartTime=String(externalBooking.start.time||"").slice(0,5);
+    void sendTelegramImportantLog("sessionRecorded", "Сессия записана", [["Локация", location.name], ["Игра", externalBooking.product.effective_name], ["Время", bookingStartTime], ["Игроков", input.playerCount], ["Длительность", `${durationMinutes} мин.`]]);
     const pricing=timeToGrowBookingPricing(externalBooking);
     const sheetPayload={
       type:"session.recorded",sessionId:session.id,bookingId:input.bookingId,date:input.date,
@@ -2170,6 +2238,7 @@ app.post("/sessions/:id/booking-record/rollback",auth,async(req,res)=>{
     await client.query("DELETE FROM sessions WHERE id=$1",[session.id]);
     await client.query("COMMIT");
     await audit(req,"session.booking_record.rollback","session",req.params.id,session,{restoredMagnets:deductions.length,sheetRollback});
+    void sendTelegramImportantLog("sessionCancelled", "Запись сессии отменена", [["Сессия", session.id], ["Возвращено позиций", deductions.length]]);
     res.json({ok:true,restoredMagnets:deductions.length,sheetRollback});
   }catch(error){try{await client.query("ROLLBACK");}catch(_){}throw error;}finally{client.release();}
 });
@@ -2233,6 +2302,8 @@ app.patch("/sessions/:id", auth, permit("sessions:manage"), async (req, res) => 
     auditAction="session.edit";
   }
   await audit(req,auditAction,"session",req.params.id,before,rows[0]);
+  if(rows[0].status==="FINISHED"&&before.status!=="FINISHED") void sendTelegramImportantLog("sessionFinished", "Сессия завершена", [["Сессия", rows[0].id]]);
+  if(rows[0].status==="CANCELLED"&&before.status!=="CANCELLED") void sendTelegramImportantLog("sessionCancelled", "Сессия отменена", [["Сессия", rows[0].id]]);
   res.json(rows[0]);
 });
 
@@ -2249,6 +2320,7 @@ app.delete("/sessions/:id", auth, permit("sessions:manage"), async (req,res) => 
     await client.query("DELETE FROM sessions WHERE id=$1",[req.params.id]);
     await client.query("COMMIT");
     await audit(req,"session.delete","session",req.params.id,before,null);
+    void sendTelegramImportantLog("sessionCancelled", "Сессия удалена", [["Сессия", before.id]]);
     res.status(204).end();
   } catch (error) {
     await client.query("ROLLBACK");
