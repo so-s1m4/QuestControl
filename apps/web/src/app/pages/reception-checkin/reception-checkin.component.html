@@ -16,7 +16,7 @@
     }
     @if(step()==='details'&&selected();as reservation){
       <div class="details-layout">
-        <form class="card participant-form" (ngSubmit)="submitParticipant()"><div class="card-number">03</div><div class="form-heading"><div><span>{{t().participant}} {{participantIndex()+1}} / {{guestCount()}} @if(isExtraParticipant()){<b class="extra-inline">· {{extraText('extra')}}</b>}</span><h2>{{t().details}}</h2></div><strong>{{reservation.time}} · {{reservation.room}}</strong></div>
+        <form class="card participant-form" (ngSubmit)="submitParticipant()"><div class="card-number">03</div><div class="form-heading"><div><span>{{t().participant}} {{participantIndex()+1}} / {{guestCount()}}</span><h2>{{t().details}}</h2></div><strong>{{reservation.time}} · {{reservation.room}}</strong></div>
           <div class="form-grid">
             <label><span>{{t().firstName}} *</span><input required autofocus name="firstName" [ngModel]="draft().firstName" (ngModelChange)="updateDraft({firstName:$event})" autocomplete="given-name"></label>
             <label><span>{{t().lastName}} *</span><input required name="lastName" [ngModel]="draft().lastName" (ngModelChange)="updateDraft({lastName:$event})" autocomplete="family-name"></label>
@@ -30,7 +30,7 @@
           <div class="consent"><label class="consent-choice" for="privacy"><input id="privacy" required type="checkbox" name="privacy" [ngModel]="draft().privacy" (ngModelChange)="updateDraft({privacy:$event})"><span class="toggle"></span></label><span>{{t().privacy}} @if(privacyUrl()){<a [href]="privacyUrl()" target="_blank" rel="noopener noreferrer">{{t().privacyLabel}} ↗</a>}@else{<b>{{t().privacyLabel}}</b>} *</span></div>
           <div class="medical"><strong>△</strong><span>{{t().medical}}</span></div>@if(submitError()){<p class="submit-error">{{t().submitError}}</p>}<button class="confirm" type="submit" [disabled]="submitting()">{{submitLabel()}}</button>
         </form>
-        <aside class="details-side"><div class="online"><span>{{t().online}}</span>@if(qrDataUrl()){<div class="qr"><img [src]="qrDataUrl()" alt="Online check-in QR code"></div>}<p>{{t().scan}}</p></div><div class="group"><h3>{{t().group}}</h3>@for(participant of participants();track $index){<div class="person" [class.active]="$index===participantIndex()" [class.extra-person]="isExtraParticipant($index)"><span>{{participant.submitted?'✓':$index+1}}</span><div><strong>{{participant.firstName||t().participant+' '+($index+1)}}</strong><small>{{participant.submitted?t().progress:(isExtraParticipant($index)?extraText('extra'):($index+1)+' / '+guestCount())}}</small></div></div>}</div></aside>
+        <aside class="details-side"><div class="online"><span>{{t().online}}</span>@if(qrDataUrl()){<div class="qr"><img [src]="qrDataUrl()" alt="Online check-in QR code"></div>}<p>{{t().scan}}</p></div><div class="group"><h3>{{t().group}}</h3>@for(participant of participants();track $index){<div class="person" [class.active]="$index===participantIndex()"><span>{{participant.submitted?'✓':$index+1}}</span><div><strong>{{participant.firstName||t().participant+' '+($index+1)}}</strong><small>{{participant.submitted?t().progress:($index+1)+' / '+guestCount()}}</small></div></div>}</div></aside>
       </div>
     }
     @if(step()==='done'){<div class="card success"><div class="card-number">04</div><div class="success-mark">✓</div><h2>{{t().success}}</h2><p>{{submittedCount()}} {{t().participant.toLowerCase()}} · {{t().successNote}}</p></div>}

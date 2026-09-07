@@ -1344,7 +1344,20 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
       return res.status(403).json({error:"EXTRA_GUEST_AUTHORIZATION_REQUIRED"});
     }
     const tokenHash=crypto.createHash("sha256").update(req.params.token,"utf8").digest("hex");
-    submissionKey=`checkin-submission:${tokenHash}:${participantNumber}`;
+    // Participant numbers belong to a browser session: every phone that opens
+    // the QR code starts at participant 1. Deduplicating by that number made
+    // simultaneous self check-ins from different devices block each other.
+    // Claim the submitted form instead, so a retry of the same person remains
+    // idempotent without treating other guests as duplicates.
+    const submissionFingerprint=crypto.createHash("sha256").update(JSON.stringify([
+      input.firstName.trim().toLocaleLowerCase("en"),
+      input.lastName.trim().toLocaleLowerCase("en"),
+      input.email.trim().toLocaleLowerCase("en"),
+      input.phone.trim(),
+      input.birthday,
+      input.gender,
+    ])).digest("hex");
+    submissionKey=`checkin-submission:v2:${tokenHash}:${submissionFingerprint}`;
     const claimed=await redis.set(submissionKey,req.requestId,"EX",48*60*60,"NX");
     if(claimed!=="OK") {
       await recordCheckinFailure(req,reservation.bookingId,{code:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED",participantNumber,totalGuests,clubId});
