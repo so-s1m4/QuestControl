@@ -80,6 +80,7 @@ services:
       VR_SANKT_POELTEN_SOCKS_URL: ${VR_SANKT_POELTEN_SOCKS_URL:-socks5h://172.23.0.1:1080}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      DOCUMENT_RUNNER_URL: http://document-runner:8080
     extra_hosts:
       - host.docker.internal:host-gateway
     depends_on:
@@ -87,10 +88,28 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      document-runner:
+        condition: service_started
     networks:
       default:
         aliases:
           - quest-control-api
+      document-sandbox:
+    restart: unless-stopped
+
+  document-runner:
+    image: ${REGISTRY_IMAGE_PREFIX}/quest-control-document-runner:${IMAGE_TAG:-latest}
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 384m
+    networks:
+      - document-sandbox
     restart: unless-stopped
 
   web:
@@ -128,5 +147,7 @@ volumes:
   certbot_data:
 
 networks:
+  document-sandbox:
+    internal: true
   proxy:
     external: true

@@ -53,6 +53,7 @@ const env = z.object({
   VR_SANKT_POELTEN_SOCKS_URL: z.string().url().default("socks5h://172.23.0.1:1080"),
   TELEGRAM_BOT_TOKEN: z.string().regex(/^\d+:[A-Za-z0-9_-]{30,}$/).optional(),
   TELEGRAM_BOT_USERNAME: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{4,31}$/).optional(),
+  DOCUMENT_RUNNER_URL: z.string().url().default("http://document-runner:8080"),
 }).parse(process.env);
 
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, max: 10 });
@@ -902,6 +903,137 @@ app.delete("/work-time-entries/:id",auth,requireWorkTime,async(req,res)=>{
   res.status(204).end();
 });
 
+const documentInputFields=["employee","period","max_hours","work_entries","report_rows","locations"];
+const requireDocumentManager=(req,res,next)=>["OWNER","ADMIN"].includes(req.user?.role)
+  ? next() : res.status(403).json({error:"DOCUMENTS_FORBIDDEN"});
+const documentScriptInput=z.object({
+  name:z.string().trim().min(1).max(120),
+  fileName:z.string().trim().min(1).max(180).regex(/\.py$/i),
+  sourceCode:z.string().min(1).max(300_000),
+  inputFields:z.array(z.enum(documentInputFields)).min(1).max(documentInputFields.length),
+});
+
+app.get("/documents/my-signature",auth,async(req,res)=>{
+  const row=(await db.query("SELECT content_type,image_data,updated_at FROM user_signatures WHERE user_id=$1",[req.user.sub])).rows[0];
+  if(!row)return res.json({signature:null});
+  res.json({signature:{contentType:row.content_type,dataBase64:Buffer.from(row.image_data).toString("base64"),updatedAt:row.updated_at}});
+});
+app.put("/documents/my-signature",auth,async(req,res)=>{
+  const input=z.object({contentType:z.enum(["image/png","image/jpeg"]),dataBase64:z.string().min(20).max(4_200_000)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:"INVALID_SIGNATURE"});
+  const image=Buffer.from(input.data.dataBase64,"base64");
+  if(!image.length||image.length>3_000_000)return res.status(400).json({error:"SIGNATURE_TOO_LARGE"});
+  const isPng=image.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  const isJpeg=image.subarray(0,3).equals(Buffer.from([255,216,255]));
+  if((input.data.contentType==="image/png"&&!isPng)||(input.data.contentType==="image/jpeg"&&!isJpeg))return res.status(400).json({error:"SIGNATURE_TYPE_MISMATCH"});
+  await db.query(`INSERT INTO user_signatures(user_id,content_type,image_data,updated_at) VALUES($1,$2,$3,now())
+    ON CONFLICT(user_id) DO UPDATE SET content_type=excluded.content_type,image_data=excluded.image_data,updated_at=now()`,[req.user.sub,input.data.contentType,image]);
+  await audit(req,"user.signature.update","user_signature",req.user.sub,null,{contentType:input.data.contentType,size:image.length});
+  res.status(204).end();
+});
+app.delete("/documents/my-signature",auth,async(req,res)=>{
+  await db.query("DELETE FROM user_signatures WHERE user_id=$1",[req.user.sub]);
+  await audit(req,"user.signature.delete","user_signature",req.user.sub,null,null);
+  res.status(204).end();
+});
+
+app.get("/documents/templates",auth,requireDocumentManager,async(_req,res)=>{
+  const {rows}=await db.query(`SELECT t.id,t.name,t.file_name,t.content_type,octet_length(t.template_data) size_bytes,t.created_at,t.updated_at,u.display_name created_by_name
+    FROM document_templates t LEFT JOIN users u ON u.id=t.created_by ORDER BY t.updated_at DESC`);
+  res.json(rows);
+});
+app.post("/documents/templates",auth,requireDocumentManager,async(req,res)=>{
+  const input=z.object({name:z.string().trim().min(1).max(120),fileName:z.string().trim().min(1).max(180).regex(/\.docx$/i),dataBase64:z.string().min(100).max(12_000_000)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:"INVALID_TEMPLATE"});
+  const data=Buffer.from(input.data.dataBase64,"base64");
+  if(data.length<100||data.length>8_000_000||data.subarray(0,2).toString()!=="PK")return res.status(400).json({error:"INVALID_DOCX"});
+  const row=(await db.query("INSERT INTO document_templates(name,file_name,template_data,created_by) VALUES($1,$2,$3,$4) RETURNING id,name,file_name,created_at,updated_at",[input.data.name,input.data.fileName,data,req.user.sub])).rows[0];
+  await audit(req,"document_template.create","document_template",row.id,null,{name:row.name,fileName:row.file_name,size:data.length});
+  res.status(201).json(row);
+});
+app.get("/documents/templates/:id/download",auth,requireDocumentManager,async(req,res)=>{
+  const row=(await db.query("SELECT file_name,content_type,template_data FROM document_templates WHERE id=$1",[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"TEMPLATE_NOT_FOUND"});
+  res.type(row.content_type).attachment(row.file_name).send(row.template_data);
+});
+app.delete("/documents/templates/:id",auth,requireDocumentManager,async(req,res)=>{
+  const row=(await db.query("DELETE FROM document_templates WHERE id=$1 RETURNING id,name,file_name",[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"TEMPLATE_NOT_FOUND"});
+  await audit(req,"document_template.delete","document_template",row.id,row,null);res.status(204).end();
+});
+
+app.get("/documents/scripts",auth,requireDocumentManager,async(_req,res)=>{
+  const {rows}=await db.query(`SELECT s.id,s.name,s.file_name,s.input_fields,s.created_at,s.updated_at,u.display_name created_by_name
+    FROM document_scripts s LEFT JOIN users u ON u.id=s.created_by ORDER BY s.updated_at DESC`);
+  res.json(rows);
+});
+app.get("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>{
+  const row=(await db.query("SELECT id,name,file_name,source_code,input_fields,created_at,updated_at FROM document_scripts WHERE id=$1",[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});res.json(row);
+});
+app.post("/documents/scripts",auth,requireDocumentManager,async(req,res)=>{
+  const parsed=documentScriptInput.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_SCRIPT"});
+  const input={...parsed.data,inputFields:[...new Set(parsed.data.inputFields)]};
+  const row=(await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,name,file_name,input_fields,created_at,updated_at",[input.name,input.fileName,input.sourceCode,input.inputFields,req.user.sub])).rows[0];
+  await audit(req,"document_script.create","document_script",row.id,null,{name:row.name,fileName:row.file_name,inputFields:row.input_fields});res.status(201).json(row);
+});
+app.put("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>{
+  const parsed=documentScriptInput.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_SCRIPT"});
+  const input={...parsed.data,inputFields:[...new Set(parsed.data.inputFields)]};
+  const row=(await db.query("UPDATE document_scripts SET name=$1,file_name=$2,source_code=$3,input_fields=$4,updated_at=now() WHERE id=$5 RETURNING id,name,file_name,input_fields,created_at,updated_at",[input.name,input.fileName,input.sourceCode,input.inputFields,req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});await audit(req,"document_script.update","document_script",row.id,null,{name:row.name,inputFields:row.input_fields});res.json(row);
+});
+app.delete("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>{
+  const row=(await db.query("DELETE FROM document_scripts WHERE id=$1 RETURNING id,name",[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});await audit(req,"document_script.delete","document_script",row.id,row,null);res.status(204).end();
+});
+
+const documentGenerationInput=z.object({userId:z.string().uuid(),from:z.string().date(),to:z.string().date(),maxHours:z.number().min(.25).max(744)});
+async function documentContext(input){
+  const employee=(await db.query("SELECT id,display_name,email FROM users WHERE id=$1 AND is_active=true",[input.userId])).rows[0];
+  if(!employee){const error=new Error("USER_NOT_FOUND");error.status=404;throw error;}
+  const entries=(await db.query(`SELECT e.id,e.arrived_at,e.left_at,e.note,l.id location_id,l.name location_name,
+      COALESCE(b.id::text,e.booking_snapshot->>'reference') booking_id,COALESCE(b.customer_name,e.booking_snapshot->>'customerName','Без брони') booking_customer,
+      COALESCE(b.product_name,e.booking_snapshot->>'productName') booking_product,COALESCE(r.name,e.booking_snapshot->>'roomName') room_name
+    FROM work_time_entries e JOIN locations l ON l.id=e.location_id LEFT JOIN bookings b ON b.id=e.booking_id LEFT JOIN rooms r ON r.id=b.room_id
+    WHERE e.user_id=$1 AND e.arrived_at<($3::date+interval '1 day') AND e.left_at>=$2::date ORDER BY e.arrived_at`,[input.userId,input.from,input.to])).rows.map(row=>({...row,hours:Number(((new Date(row.left_at)-new Date(row.arrived_at))/3_600_000).toFixed(2))}));
+  let total=0;const reportRows=[];for(const entry of entries){if(total+entry.hours>input.maxHours)continue;reportRows.push(entry);total+=entry.hours;}
+  const signature=(await db.query("SELECT content_type,image_data FROM user_signatures WHERE user_id=$1",[employee.id])).rows[0];
+  const locationIds=[...new Set(entries.map(entry=>entry.location_id))];
+  const locationRows=(await db.query("SELECT id,name,timezone FROM locations WHERE id=ANY($1::uuid[])",[locationIds])).rows;
+  const all={employee:{id:employee.id,name:employee.display_name,email:employee.email},period:{from:input.from,to:input.to},max_hours:input.maxHours,work_entries:entries,report_rows:reportRows,locations:locationRows};
+  const defaults={employee_name:employee.display_name,month:new Intl.DateTimeFormat("de-AT",{month:"long"}).format(new Date(`${input.from}T12:00:00Z`)),year:input.from.slice(0,4),employee_signature:signature?{_type:"image",content_type:signature.content_type,data_base64:Buffer.from(signature.image_data).toString("base64")}:"",employer_signature:""};
+  return {all,defaults};
+}
+app.post("/documents/scripts/:id/input-preview",auth,requireDocumentManager,async(req,res)=>{
+  const parsed=documentGenerationInput.safeParse(req.body);
+  if(!parsed.success||parsed.data.from>parsed.data.to)return res.status(400).json({error:"INVALID_REPORT_RANGE"});
+  const script=(await db.query("SELECT input_fields FROM document_scripts WHERE id=$1",[req.params.id])).rows[0];if(!script)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});
+  const {all}=await documentContext(parsed.data);
+  res.json(Object.fromEntries(script.input_fields.map(field=>[field,all[field]])));
+});
+app.post("/documents/generate",auth,requireDocumentManager,async(req,res)=>{
+  const parsed=documentGenerationInput.extend({templateId:z.string().uuid(),scriptId:z.string().uuid()}).safeParse(req.body);
+  if(!parsed.success||parsed.data.from>parsed.data.to)return res.status(400).json({error:"INVALID_REPORT_RANGE"});
+  const [template,script]=await Promise.all([
+    db.query("SELECT file_name,template_data FROM document_templates WHERE id=$1",[parsed.data.templateId]),
+    db.query("SELECT name,source_code,input_fields FROM document_scripts WHERE id=$1",[parsed.data.scriptId]),
+  ]);
+  if(!template.rows[0])return res.status(404).json({error:"TEMPLATE_NOT_FOUND"});if(!script.rows[0])return res.status(404).json({error:"SCRIPT_NOT_FOUND"});
+  const {all,defaults}=await documentContext(parsed.data);
+  const context=Object.fromEntries(script.rows[0].input_fields.map(field=>[field,all[field]]));
+  let runner;
+  try { runner=await fetch(`${env.DOCUMENT_RUNNER_URL}/generate`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourceCode:script.rows[0].source_code,context,defaults,templateDataBase64:Buffer.from(template.rows[0].template_data).toString("base64")}),signal:AbortSignal.timeout(15_000)}); }
+  catch { return res.status(503).json({error:"DOCUMENT_RUNNER_UNAVAILABLE"}); }
+  const result=await runner.json().catch(()=>null);
+  if(!runner.ok||!result?.documentBase64)return res.status(422).json({error:result?.error||"DOCUMENT_GENERATION_FAILED",message:result?.message||"Не удалось сформировать документ"});
+  const document=Buffer.from(result.documentBase64,"base64");
+  if(!document.length||document.length>12_000_000)return res.status(422).json({error:"DOCUMENT_GENERATION_FAILED"});
+  const fileName=`${template.rows[0].file_name.replace(/\.docx$/i,"")}-${parsed.data.from}.docx`;
+  await audit(req,"document.generate","document_template",parsed.data.templateId,null,{scriptId:parsed.data.scriptId,userId:parsed.data.userId,from:parsed.data.from,to:parsed.data.to,maxHours:parsed.data.maxHours});
+  res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document").attachment(fileName).send(document);
+});
+
 app.delete("/work-schedules/:id",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{
   const shift=(await db.query("SELECT * FROM work_shifts WHERE id=$1",[req.params.id])).rows[0];
   if(!shift) return res.status(404).json({error:"SHIFT_NOT_FOUND"});
@@ -1359,7 +1491,7 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
     }
     const tokenHash=crypto.createHash("sha256").update(req.params.token,"utf8").digest("hex");
     // Participant numbers belong to a browser session: every phone that opens
-    // the QR code starts at participant 1. Deduplicating by that number made
+    // the QR code starts at participant 1.  Deduplicating by that number made
     // simultaneous self check-ins from different devices block each other.
     // Claim the submitted form instead, so a retry of the same person remains
     // idempotent without treating other guests as duplicates.
@@ -3965,6 +4097,7 @@ io.on("connection", socket => socket.join(`user:${socket.data.user.sub}`));
 app.use((err, req, res, _next) => {
   console.error(req.requestId, err);
   if (err instanceof z.ZodError) return res.status(400).json({ error:"INVALID_INPUT",details:err.flatten(),requestId:req.requestId });
+  if (Number.isInteger(err?.status) && err.status >= 400 && err.status < 500) return res.status(err.status).json({ error:err.message||"REQUEST_FAILED",requestId:req.requestId });
   res.status(500).json({ error:"INTERNAL_ERROR",requestId:req.requestId });
 });
 await db.query("CREATE TABLE IF NOT EXISTS app_settings(key text PRIMARY KEY,encrypted_value bytea NOT NULL,updated_by uuid REFERENCES users(id) ON DELETE SET NULL,updated_at timestamptz NOT NULL DEFAULT now())");
@@ -4159,6 +4292,31 @@ tuyaMessages.on("message",async message=>{
     console.error("Doorbell event processing failed",error.message);
   }
 });
+await db.query(`CREATE TABLE IF NOT EXISTS user_signatures(
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  content_type text NOT NULL CHECK(content_type IN ('image/png','image/jpeg')),
+  image_data bytea NOT NULL,updated_at timestamptz NOT NULL DEFAULT now()
+)`);
+await db.query(`CREATE TABLE IF NOT EXISTS document_templates(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text NOT NULL,file_name text NOT NULL,
+  content_type text NOT NULL DEFAULT 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',template_data bytea NOT NULL,
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now()
+)`);
+await db.query(`CREATE TABLE IF NOT EXISTS document_scripts(
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text NOT NULL,file_name text NOT NULL DEFAULT 'script.py',source_code text NOT NULL,
+  input_fields jsonb NOT NULL DEFAULT '[]'::jsonb,created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now()
+)`);
+await db.query("ALTER TABLE document_scripts ADD COLUMN IF NOT EXISTS file_name text NOT NULL DEFAULT 'script.py'");
+await db.query("ALTER TABLE document_scripts ADD COLUMN IF NOT EXISTS input_fields jsonb NOT NULL DEFAULT '[]'::jsonb");
+const bundledTemplatePath=path.resolve("templates/Arbeitszeitaufzeichnung_Template.docx");
+if(fs.existsSync(bundledTemplatePath) && !(await db.query("SELECT 1 FROM document_templates WHERE name='Arbeitszeitaufzeichnung Standard' LIMIT 1")).rowCount){
+  await db.query("INSERT INTO document_templates(name,file_name,template_data) VALUES($1,$2,$3)",["Arbeitszeitaufzeichnung Standard","Arbeitszeitaufzeichnung_Template.docx",fs.readFileSync(bundledTemplatePath)]);
+}
+const bundledScriptPath=path.resolve("templates/monthly-work-time-report.py");
+if(fs.existsSync(bundledScriptPath) && !(await db.query("SELECT 1 FROM document_scripts WHERE name='Monatlicher Arbeitszeitbericht Standard' LIMIT 1")).rowCount){
+  await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields) VALUES($1,$2,$3,$4)",["Monatlicher Arbeitszeitbericht Standard","monthly-work-time-report.py",fs.readFileSync(bundledScriptPath,"utf8"),["report_rows","locations"]]);
+}
 tuyaMessages.start();
 server.on("upgrade",async(req,socket,head)=>{
   let parsed;

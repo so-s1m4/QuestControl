@@ -56,6 +56,7 @@ type InstallPromptEvent = Event & {
               <a routerLink="/locations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Локации</b><span>Площадки и контакты</span></a>
               <a routerLink="/rooms" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Комнаты</b><span>Зоны, игры и устройства</span></a>
               <a routerLink="/inventory" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Инвентарь</b><span>Магниты и расходники</span></a>
+              <a routerLink="/documents" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Документы</b><span>Шаблоны, скрипты и подписи</span></a>
               <a routerLink="/users" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Пользователи</b><span>Доступ команды</span></a>
               @if (isAdmin()) {
                 <a routerLink="/camera-settings" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Настройки камер</b><span>Планы и привязка камер</span></a>

@@ -8,6 +8,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/api/package*.json ./
 COPY apps/api/src ./src
+COPY apps/api/templates ./templates
 COPY agents/room-agent/package.json agents/room-agent/package-lock.json /tmp/room-agent-release/
 COPY agents/room-agent/src /tmp/room-agent-release/src
 RUN cd /tmp/room-agent-release && npm ci --omit=dev --ignore-scripts && mkdir -p /app/releases && tar -czf /app/releases/room-agent.tar.gz -C /tmp/room-agent-release . && rm -rf /tmp/room-agent-release

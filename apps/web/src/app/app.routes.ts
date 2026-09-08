@@ -20,6 +20,7 @@ import { RoomControlComponent } from "./pages/room-control/room-control.componen
 import { WorkSchedulesComponent } from "./pages/work-schedules/work-schedules.component";
 import { IntegrationsComponent } from "./pages/integrations/integrations.component";
 import { TelegramComponent } from "./pages/telegram/telegram.component";
+import { DocumentsComponent } from "./pages/documents/documents.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
   { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
@@ -36,6 +37,7 @@ export const routes: Routes = [
   { path: "users", component: UsersComponent, canActivate: [authGuard] },
   { path: "bookings", component: BookingsComponent, canActivate: [authGuard] },
   { path: "work-schedules", component: WorkSchedulesComponent, canActivate: [authGuard, workTimeGuard] },
+  { path: "documents", component: DocumentsComponent, canActivate: [authGuard] },
   {
     path: "sessions",
     component: SessionsComponent,
