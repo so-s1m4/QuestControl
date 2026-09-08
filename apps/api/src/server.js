@@ -1031,7 +1031,12 @@ app.delete("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>
   if(!row)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});await audit(req,"document_script.delete","document_script",row.id,row,null);res.status(204).end();
 });
 
-const documentGenerationInput=z.object({userId:z.string().uuid(),from:z.string().date(),to:z.string().date(),maxHours:z.number().min(.25).max(744),outputFormat:z.enum(documentOutputFormats).default("docx"),saveToLibrary:z.boolean().default(false),libraryName:z.string().trim().min(1).max(180).optional(),libraryCategory:z.enum(documentCategories).default("REPORT"),libraryLocationId:z.string().uuid().nullable().default(null)});
+const documentDate=z.preprocess((value)=>{
+  const text=String(value??"").trim();
+  const match=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
+  return match?`${match[3]}-${match[2]}-${match[1]}`:text;
+},z.string().date());
+const documentGenerationInput=z.object({userId:z.string().uuid(),from:documentDate,to:documentDate,maxHours:z.coerce.number().min(.25).max(744),outputFormat:z.enum(documentOutputFormats).default("docx"),saveToLibrary:z.boolean().default(false),libraryName:z.string().trim().min(1).max(180).optional(),libraryCategory:z.enum(documentCategories).default("REPORT"),libraryLocationId:z.string().uuid().nullable().default(null)});
 async function documentContext(req,input){
   const employee=(await db.query("SELECT id,display_name,email FROM users WHERE id=$1 AND is_active=true",[input.userId])).rows[0];
   if(!employee){const error=new Error("USER_NOT_FOUND");error.status=404;throw error;}
