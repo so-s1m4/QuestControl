@@ -66,8 +66,8 @@ type InstallPromptEvent = Event & {
           @if(canUseWorkTime()) {<a routerLink="/work-schedules" routerLinkActive="active">
             <i class="mobile-tab-icon schedule-icon" aria-hidden="true"></i><span>Смены</span>
           </a>}
-          <a routerLink="/documents" routerLinkActive="active">
-            <i class="mobile-tab-icon documents-icon" aria-hidden="true"></i><span>Документы</span>
+          <a routerLink="/cameras" routerLinkActive="active">
+            <i class="mobile-tab-icon cameras-icon" aria-hidden="true"></i><span>Камеры</span>
           </a>
           <button type="button" [class.active]="moreActive() || mobileMenuOpen()" [attr.aria-expanded]="mobileMenuOpen()" (click)="mobileMenuOpen.set(true)">
             <i class="mobile-tab-icon more-icon" aria-hidden="true"></i><span>Ещё</span>
@@ -84,8 +84,9 @@ type InstallPromptEvent = Event & {
               <button type="button" aria-label="Закрыть меню" (click)="mobileMenuOpen.set(false)">×</button>
             </header>
             <div class="mobile-menu-links">
+              <p class="mobile-menu-group">Профиль</p>
+              <a routerLink="/documents" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Документы</b><span>Подпись, шаблоны и отчёты</span></a>
               <p class="mobile-menu-group">Площадки</p>
-              <a routerLink="/cameras" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Камеры</b><span>Трансляции и просмотр</span></a>
               <a routerLink="/locations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Локации</b><span>Площадки и контакты</span></a>
               <a routerLink="/rooms" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Комнаты</b><span>Зоны, игры и устройства</span></a>
               @if (isAdmin()) {
@@ -135,7 +136,6 @@ type InstallPromptEvent = Event & {
       .bookings-icon:before{position:absolute;inset:6px 5px 5px;border:2px solid currentColor;border-radius:4px;content:""}
       .bookings-icon:after{position:absolute;top:10px;left:9px;width:3px;height:3px;border-radius:1px;background:currentColor;box-shadow:6px 0 currentColor,0 6px currentColor,6px 6px currentColor;content:""}
       .schedule-icon:before{position:absolute;inset:6px 5px 5px;border:2px solid currentColor;border-radius:4px;content:""}.schedule-icon:after{position:absolute;top:11px;left:8px;width:12px;height:2px;background:currentColor;box-shadow:0 5px currentColor,0 10px currentColor;content:""}
-      .documents-icon:before{position:absolute;top:5px;left:8px;width:11px;height:16px;border:2px solid currentColor;border-radius:2px;content:""}.documents-icon:after{position:absolute;top:10px;left:11px;width:7px;height:2px;background:currentColor;box-shadow:0 4px currentColor,0 8px currentColor;content:""}
       .cameras-icon:before{position:absolute;inset:7px 4px;border:2px solid currentColor;border-radius:5px;content:""}
       .cameras-icon:after{position:absolute;top:11px;left:11px;width:6px;height:6px;border:2px solid currentColor;border-radius:50%;content:""}
       .more-icon:before{position:absolute;top:12px;left:6px;width:4px;height:4px;border-radius:50%;background:currentColor;box-shadow:6px 0 currentColor,12px 0 currentColor;content:""}
@@ -191,7 +191,7 @@ export class AppComponent {
 
   moreActive() {
     const [path, query = ""] = this.currentUrl().split("?");
-    return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/work-schedules", "/documents"].includes(path);
+    return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/work-schedules", "/cameras"].includes(path);
   }
 
   logout() {
