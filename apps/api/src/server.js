@@ -906,6 +906,19 @@ app.delete("/work-time-entries/:id",auth,requireWorkTime,async(req,res)=>{
 const documentInputFields=["employee","period","max_hours","work_entries","report_rows","locations"];
 const requireDocumentManager=(req,res,next)=>["OWNER","ADMIN"].includes(req.user?.role)
   ? next() : res.status(403).json({error:"DOCUMENTS_FORBIDDEN"});
+const documentOutputFormats=["docx","pdf"];
+const documentCategories=["REPORT","LICENSE","EMPLOYEE","OTHER"];
+const documentLibraryInput=z.object({
+  name:z.string().trim().min(1).max(180),category:z.enum(documentCategories),locationId:z.string().uuid().nullable().default(null),
+  employeeId:z.string().uuid().nullable().default(null),fileName:z.string().trim().min(1).max(220),contentType:z.string().trim().min(1).max(180),dataBase64:z.string().min(8).max(16_500_000),
+});
+const documentLibraryScope=(req, alias="d")=>req.user?.role==="OWNER"
+  ? {clause:"TRUE",values:[]}
+  : {clause:`${alias}.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)`,values:[req.user.sub]};
+async function documentLibraryLocationAllowed(req, locationId) {
+  if(req.user?.role==="OWNER") return true;
+  return Boolean(locationId && (await db.query("SELECT 1 FROM user_locations WHERE user_id=$1 AND location_id=$2",[req.user.sub,locationId])).rowCount);
+}
 const documentScriptInput=z.object({
   name:z.string().trim().min(1).max(120),
   fileName:z.string().trim().min(1).max(180).regex(/\.py$/i),
@@ -935,6 +948,36 @@ app.delete("/documents/my-signature",auth,async(req,res)=>{
   await db.query("DELETE FROM user_signatures WHERE user_id=$1",[req.user.sub]);
   await audit(req,"user.signature.delete","user_signature",req.user.sub,null,null);
   res.status(204).end();
+});
+
+app.get("/documents/library",auth,requireDocumentManager,async(req,res)=>{
+  const scope=documentLibraryScope(req);
+  const {rows}=await db.query(`SELECT d.id,d.name,d.category,d.source,d.file_name,d.content_type,octet_length(d.file_data) size_bytes,d.location_id,d.employee_id,d.created_at,d.updated_at,
+    l.name location_name,u.display_name employee_name,creator.display_name created_by_name
+    FROM document_library_files d LEFT JOIN locations l ON l.id=d.location_id LEFT JOIN users u ON u.id=d.employee_id LEFT JOIN users creator ON creator.id=d.created_by
+    WHERE ${scope.clause} ORDER BY l.name NULLS LAST,d.created_at DESC`,scope.values);
+  res.json(rows);
+});
+app.post("/documents/library",auth,requireDocumentManager,async(req,res)=>{
+  const parsed=documentLibraryInput.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_LIBRARY_DOCUMENT"});
+  const input=parsed.data;
+  if(req.user.role==="ADMIN"&&!input.locationId)return res.status(400).json({error:"LOCATION_REQUIRED"});
+  if(!(await documentLibraryLocationAllowed(req,input.locationId)))return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  if(input.employeeId && !(await db.query("SELECT 1 FROM users WHERE id=$1 AND is_active=true",[input.employeeId])).rowCount)return res.status(404).json({error:"USER_NOT_FOUND"});
+  const data=Buffer.from(input.dataBase64,"base64");if(!data.length||data.length>12_000_000)return res.status(400).json({error:"INVALID_LIBRARY_DOCUMENT"});
+  const row=(await db.query(`INSERT INTO document_library_files(name,category,file_name,content_type,file_data,location_id,employee_id,created_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,name,category,file_name,created_at`,[input.name,input.category,input.fileName,input.contentType,data,input.locationId,input.employeeId,req.user.sub])).rows[0];
+  await audit(req,"document_library.create","document_library_file",row.id,null,{name:row.name,category:row.category,locationId:input.locationId,employeeId:input.employeeId,size:data.length});res.status(201).json(row);
+});
+app.get("/documents/library/:id/download",auth,requireDocumentManager,async(req,res)=>{
+  const scope=documentLibraryScope(req);
+  const row=(await db.query(`SELECT d.file_name,d.content_type,d.file_data FROM document_library_files d WHERE d.id=$${scope.values.length+1} AND ${scope.clause}`,[...scope.values,req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"LIBRARY_DOCUMENT_NOT_FOUND"});res.type(row.content_type).attachment(row.file_name).send(row.file_data);
+});
+app.delete("/documents/library/:id",auth,requireDocumentManager,async(req,res)=>{
+  const scope=documentLibraryScope(req);
+  const row=(await db.query(`DELETE FROM document_library_files d WHERE d.id=$${scope.values.length+1} AND ${scope.clause} RETURNING d.id,d.name`,[...scope.values,req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:"LIBRARY_DOCUMENT_NOT_FOUND"});await audit(req,"document_library.delete","document_library_file",row.id,row,null);res.status(204).end();
 });
 
 app.get("/documents/templates",auth,requireDocumentManager,async(_req,res)=>{
@@ -988,7 +1031,7 @@ app.delete("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>
   if(!row)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});await audit(req,"document_script.delete","document_script",row.id,row,null);res.status(204).end();
 });
 
-const documentGenerationInput=z.object({userId:z.string().uuid(),from:z.string().date(),to:z.string().date(),maxHours:z.number().min(.25).max(744)});
+const documentGenerationInput=z.object({userId:z.string().uuid(),from:z.string().date(),to:z.string().date(),maxHours:z.number().min(.25).max(744),outputFormat:z.enum(documentOutputFormats).default("docx"),saveToLibrary:z.boolean().default(false),libraryName:z.string().trim().min(1).max(180).optional(),libraryCategory:z.enum(documentCategories).default("REPORT"),libraryLocationId:z.string().uuid().nullable().default(null)});
 async function documentContext(req,input){
   const employee=(await db.query("SELECT id,display_name,email FROM users WHERE id=$1 AND is_active=true",[input.userId])).rows[0];
   if(!employee){const error=new Error("USER_NOT_FOUND");error.status=404;throw error;}
@@ -1044,15 +1087,23 @@ app.post("/documents/generate",auth,requireDocumentManager,async(req,res)=>{
   const {all,defaults}=await documentContext(req,parsed.data);
   const context=Object.fromEntries(script.rows[0].input_fields.map(field=>[field,all[field]]));
   let runner;
-  try { runner=await fetch(`${env.DOCUMENT_RUNNER_URL}/generate`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourceCode:script.rows[0].source_code,context,defaults,templateDataBase64:Buffer.from(template.rows[0].template_data).toString("base64")}),signal:AbortSignal.timeout(15_000)}); }
+  try { runner=await fetch(`${env.DOCUMENT_RUNNER_URL}/generate`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourceCode:script.rows[0].source_code,context,defaults,outputFormat:parsed.data.outputFormat,templateDataBase64:Buffer.from(template.rows[0].template_data).toString("base64")}),signal:AbortSignal.timeout(25_000)}); }
   catch { return res.status(503).json({error:"DOCUMENT_RUNNER_UNAVAILABLE"}); }
   const result=await runner.json().catch(()=>null);
   if(!runner.ok||!result?.documentBase64)return res.status(422).json({error:result?.error||"DOCUMENT_GENERATION_FAILED",message:result?.message||"Не удалось сформировать документ"});
   const document=Buffer.from(result.documentBase64,"base64");
   if(!document.length||document.length>12_000_000)return res.status(422).json({error:"DOCUMENT_GENERATION_FAILED"});
-  const fileName=`${template.rows[0].file_name.replace(/\.docx$/i,"")}-${parsed.data.from}.docx`;
-  await audit(req,"document.generate","document_template",parsed.data.templateId,null,{scriptId:parsed.data.scriptId,userId:parsed.data.userId,from:parsed.data.from,to:parsed.data.to,maxHours:parsed.data.maxHours});
-  res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document").attachment(fileName).send(document);
+  const extension=parsed.data.outputFormat==="pdf"?"pdf":"docx";
+  const contentType=parsed.data.outputFormat==="pdf"?"application/pdf":"application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const fileName=`${template.rows[0].file_name.replace(/\.docx$/i,"")}-${parsed.data.from}.${extension}`;
+  if(parsed.data.saveToLibrary){
+    if(req.user.role==="ADMIN"&&!parsed.data.libraryLocationId)return res.status(400).json({error:"LOCATION_REQUIRED"});
+    if(!(await documentLibraryLocationAllowed(req,parsed.data.libraryLocationId)))return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+    await db.query(`INSERT INTO document_library_files(name,category,source,file_name,content_type,file_data,location_id,employee_id,created_by)
+      VALUES($1,$2,'GENERATED',$3,$4,$5,$6,$7,$8)`,[parsed.data.libraryName||`Отчёт ${defaults.employee_name} ${parsed.data.from}`,parsed.data.libraryCategory,fileName,contentType,document,parsed.data.libraryLocationId,parsed.data.userId,req.user.sub]);
+  }
+  await audit(req,"document.generate","document_template",parsed.data.templateId,null,{scriptId:parsed.data.scriptId,userId:parsed.data.userId,from:parsed.data.from,to:parsed.data.to,maxHours:parsed.data.maxHours,outputFormat:parsed.data.outputFormat,savedToLibrary:parsed.data.saveToLibrary});
+  res.type(contentType).attachment(fileName).send(document);
 });
 
 app.delete("/work-schedules/:id",auth,permit("users:manage"),requireScheduleManager,async(req,res)=>{

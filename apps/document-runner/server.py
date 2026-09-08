@@ -18,6 +18,7 @@ MAX_BODY = 20_000_000
 MAX_SCRIPT = 300_000
 MAX_OUTPUT = 2_000_000
 PLACEHOLDER = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*}}")
+SOFFICE_BINARY = os.environ.get("SOFFICE_BINARY", "soffice")
 
 HARNESS = '''import json, runpy, sys
 context = json.loads(sys.stdin.read())
@@ -163,6 +164,25 @@ def render_docx(template_data, values, temp_dir):
     doc.save(str(output_path))
     return output_path.read_bytes()
 
+def convert_docx_to_pdf(document_data, temp_dir):
+    source_path = Path(temp_dir) / "generated.docx"
+    output_dir = Path(temp_dir) / "pdf"
+    profile_dir = Path(temp_dir) / "office-profile"
+    output_dir.mkdir()
+    profile_dir.mkdir()
+    source_path.write_bytes(document_data)
+    result = subprocess.run(
+        [SOFFICE_BINARY, f"-env:UserInstallation=file://{profile_dir}", "--headless", "--convert-to", "pdf", "--outdir", str(output_dir), str(source_path)],
+        capture_output=True, text=True, timeout=12,
+    )
+    output_path = output_dir / "generated.pdf"
+    if result.returncode != 0 or not output_path.exists():
+        raise ValueError("Unable to convert DOCX to PDF")
+    document = output_path.read_bytes()
+    if not document.startswith(b"%PDF-"):
+        raise ValueError("Invalid PDF output")
+    return document
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -188,8 +208,9 @@ class Handler(BaseHTTPRequestHandler):
             source = payload["sourceCode"]
             context = payload["context"]
             defaults = payload.get("defaults", {})
+            output_format = payload.get("outputFormat", "docx")
             template_data = base64.b64decode(payload["templateDataBase64"], validate=True)
-            if not isinstance(source, str) or not isinstance(context, dict) or not isinstance(defaults, dict):
+            if not isinstance(source, str) or not isinstance(context, dict) or not isinstance(defaults, dict) or output_format not in {"docx", "pdf"}:
                 raise ValueError("Invalid request")
             if len(template_data) > 8_000_000 or not template_data.startswith(b"PK"):
                 raise ValueError("Invalid DOCX template")
@@ -197,7 +218,9 @@ class Handler(BaseHTTPRequestHandler):
                 result = run_script(source, context, workdir)
                 values = {**defaults, **result}
                 document = render_docx(template_data, values, workdir)
-            self.send_json(200, {"documentBase64": base64.b64encode(document).decode("ascii")})
+                if output_format == "pdf":
+                    document = convert_docx_to_pdf(document, workdir)
+            self.send_json(200, {"documentBase64": base64.b64encode(document).decode("ascii"), "outputFormat": output_format})
         except subprocess.TimeoutExpired:
             self.send_json(422, {"error": "SCRIPT_TIMEOUT", "message": "Script exceeded the 7 second limit"})
         except (ValueError, KeyError, UnicodeDecodeError, OSError) as error:
