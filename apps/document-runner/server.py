@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.shared import Inches
 
 MAX_BODY = 20_000_000
@@ -84,6 +86,42 @@ def all_paragraphs(parent):
             for cell in row.cells:
                 yield from all_paragraphs(cell)
 
+def add_centered_signature_overlay(paragraph, image_path):
+    """Place a signature over its caption instead of consuming a text line."""
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run()
+    inline = run.add_picture(str(image_path), height=Inches(0.42))
+
+    # Word represents regular pictures as ``wp:inline``. Converting that one
+    # drawing to a floating anchor lets the transparent signature sit above the
+    # caption ("Unterschrift …") while the caption stays selectable text.
+    anchor = OxmlElement("wp:anchor")
+    for key, value in {
+        "distT": "0", "distB": "0", "distL": "0", "distR": "0",
+        "simplePos": "0", "relativeHeight": "251659264", "behindDoc": "0",
+        "locked": "0", "layoutInCell": "1", "allowOverlap": "1",
+    }.items():
+        anchor.set(key, value)
+    simple_pos = OxmlElement("wp:simplePos")
+    simple_pos.set("x", "0")
+    simple_pos.set("y", "0")
+    position_h = OxmlElement("wp:positionH")
+    position_h.set("relativeFrom", "column")
+    align_h = OxmlElement("wp:align")
+    align_h.text = "center"
+    position_h.append(align_h)
+    position_v = OxmlElement("wp:positionV")
+    position_v.set("relativeFrom", "line")
+    offset_v = OxmlElement("wp:posOffset")
+    # Shift down from the marker line onto the caption below it.
+    offset_v.text = "95000"
+    position_v.append(offset_v)
+    wrap_none = OxmlElement("wp:wrapNone")
+    inline_xml = inline._inline
+    anchor.extend([simple_pos, position_h, position_v, inline_xml.extent, wrap_none, inline_xml.docPr, inline_xml.graphic])
+    drawing = inline_xml.getparent()
+    drawing.replace(inline_xml, anchor)
+
 def replace_in_paragraph(paragraph, values, temp_dir):
     text = paragraph.text
     if not PLACEHOLDER.search(text):
@@ -103,9 +141,9 @@ def replace_in_paragraph(paragraph, values, temp_dir):
         image_path.write_bytes(base64.b64decode(image["data_base64"], validate=True))
         for run in paragraph.runs:
             run.text = ""
-        run = paragraph.add_run(before)
-        run.add_picture(str(image_path), height=Inches(0.42))
-        run.add_text(after)
+        paragraph.add_run(before)
+        add_centered_signature_overlay(paragraph, image_path)
+        paragraph.add_run(after)
         return
     rendered = PLACEHOLDER.sub(lambda match: str(resolve(values, match.group(1)) or ""), text)
     if paragraph.runs:
