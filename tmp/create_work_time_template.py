@@ -1,7 +1,7 @@
 from pathlib import Path
 from docx import Document
 from docx.enum.section import WD_SECTION
-from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT, WD_ROW_HEIGHT_RULE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -101,7 +101,6 @@ set_cell_text(meta.cell(0, 1), "{{employee_name}}", False, 10, WD_ALIGN_PARAGRAP
 set_cell_text(meta.cell(1, 0), "Monat: {{month}}", False, 10, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(meta.cell(1, 1), "Jahr: {{year}}", False, 10, WD_ALIGN_PARAGRAPH.CENTER)
 
-doc.add_paragraph().paragraph_format.space_after = Pt(4)
 table = doc.add_table(rows=33, cols=7)
 table.autofit = False
 set_table_to_content_width(table, section)
@@ -144,9 +143,11 @@ for day in range(1, 32):
     ]
     for col, value in enumerate(values):
         set_cell_text(table.cell(row, col), value, False, 8 if col == 6 else 9, WD_ALIGN_PARAGRAPH.LEFT if col == 6 else WD_ALIGN_PARAGRAPH.RIGHT)
-    table.rows[row].height = Cm(0.54)
+    # A fixed compact height keeps even a filled 31-day record and the
+    # signature block on one A4 page when Word renders it as PDF.
+    table.rows[row].height = Cm(0.48)
+    table.rows[row].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
 
-doc.add_paragraph().paragraph_format.space_after = Pt(3)
 signatures = doc.add_table(rows=2, cols=2)
 signatures.autofit = False
 set_table_to_content_width(signatures, section)
@@ -155,8 +156,12 @@ for row in signatures.rows:
     row.cells[1].width = Cm(8.6)
 set_cell_text(signatures.cell(0, 0), "________________________\n{{employee_signature_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(signatures.cell(0, 1), "________________________\n{{employer_signature_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
-set_cell_text(signatures.cell(1, 0), "{{employee_signature}}\nUnterschrift Arbeitnehmer/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+set_cell_text(signatures.cell(1, 0), "{{employee_signature}}Unterschrift Arbeitnehmer/in", False, 9, WD_ALIGN_PARAGRAPH.CENTER)
 set_cell_text(signatures.cell(1, 1), "{{employer_signature}}\nUnterschrift Arbeitgeber/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+signatures.rows[0].height = Cm(0.88)
+signatures.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+signatures.rows[1].height = Cm(0.88)
+signatures.rows[1].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
 
 doc.core_properties.title = "Arbeitszeitaufzeichnung"
 doc.core_properties.subject = "Vorlage für monatliche Arbeitszeitaufzeichnungen"
