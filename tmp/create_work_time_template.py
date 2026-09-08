@@ -1,7 +1,7 @@
 from pathlib import Path
 from docx import Document
 from docx.enum.section import WD_SECTION
-from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -42,6 +42,18 @@ def set_cell_text(cell, text, bold=False, size=9, align=WD_ALIGN_PARAGRAPH.CENTE
     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
     set_cell_border(cell, top={"val":"single","sz":"6","color":"000000"}, bottom={"val":"single","sz":"6","color":"000000"}, left={"val":"single","sz":"6","color":"000000"}, right={"val":"single","sz":"6","color":"000000"})
 
+def set_table_to_content_width(table, section):
+    """Use the entire printable area, leaving only the page margins."""
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    width_twips = round((section.page_width - section.left_margin - section.right_margin) / 635)
+    table_properties = table._tbl.tblPr
+    table_width = table_properties.first_child_found_in("w:tblW")
+    if table_width is None:
+        table_width = OxmlElement("w:tblW")
+        table_properties.insert(0, table_width)
+    table_width.set(qn("w:w"), str(width_twips))
+    table_width.set(qn("w:type"), "dxa")
+
 def merge(table, start_row, start_col, end_row, end_col):
     return table.cell(start_row, start_col).merge(table.cell(end_row, end_col))
 
@@ -65,6 +77,7 @@ run.font.size = Pt(12)
 
 meta = doc.add_table(rows=2, cols=2)
 meta.autofit = False
+set_table_to_content_width(meta, section)
 for row in meta.rows:
     row.cells[0].width = Cm(7)
     row.cells[1].width = Cm(10.6)
@@ -76,6 +89,7 @@ set_cell_text(meta.cell(1, 1), "Jahr: {{year}}", False, 10, WD_ALIGN_PARAGRAPH.C
 doc.add_paragraph().paragraph_format.space_after = Pt(4)
 table = doc.add_table(rows=33, cols=7)
 table.autofit = False
+set_table_to_content_width(table, section)
 widths = [1.45, 2.35, 2.35, 2.35, 2.35, 2.85, 2.35]
 for row in table.rows:
     for index, width in enumerate(widths):
@@ -115,11 +129,12 @@ for day in range(1, 32):
 doc.add_paragraph().paragraph_format.space_after = Pt(3)
 signatures = doc.add_table(rows=2, cols=2)
 signatures.autofit = False
+set_table_to_content_width(signatures, section)
 for row in signatures.rows:
     row.cells[0].width = Cm(8.6)
     row.cells[1].width = Cm(8.6)
-set_cell_text(signatures.cell(0, 0), "________________________\nDatum", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
-set_cell_text(signatures.cell(0, 1), "________________________\nDatum", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+set_cell_text(signatures.cell(0, 0), "________________________\n{{current_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+set_cell_text(signatures.cell(0, 1), "________________________\n{{current_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(signatures.cell(1, 0), "{{employee_signature}}\nUnterschrift Arbeitnehmer/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(signatures.cell(1, 1), "{{employer_signature}}\nUnterschrift Arbeitgeber/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 

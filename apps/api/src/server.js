@@ -1020,6 +1020,7 @@ async function documentContext(req,input){
     employee_last_name:employeeLastNameParts.join(" "),
     month:new Intl.DateTimeFormat("de-AT",{month:"long"}).format(new Date(`${input.from}T12:00:00Z`)),
     year:input.from.slice(0,4),
+    current_date:new Intl.DateTimeFormat("de-AT",{timeZone:"Europe/Vienna",day:"2-digit",month:"2-digit",year:"numeric"}).format(new Date()),
     employee_signature:signature?{_type:"image",content_type:signature.content_type,data_base64:Buffer.from(signature.image_data).toString("base64")}:"",
     employer_signature:""
   };
@@ -4330,8 +4331,14 @@ await db.query(`CREATE TABLE IF NOT EXISTS document_scripts(
 await db.query("ALTER TABLE document_scripts ADD COLUMN IF NOT EXISTS file_name text NOT NULL DEFAULT 'script.py'");
 await db.query("ALTER TABLE document_scripts ADD COLUMN IF NOT EXISTS input_fields jsonb NOT NULL DEFAULT '[]'::jsonb");
 const bundledTemplatePath=path.resolve("templates/Arbeitszeitaufzeichnung_Template.docx");
-if(fs.existsSync(bundledTemplatePath) && !(await db.query("SELECT 1 FROM document_templates WHERE name='Arbeitszeitaufzeichnung Standard' LIMIT 1")).rowCount){
-  await db.query("INSERT INTO document_templates(name,file_name,template_data) VALUES($1,$2,$3)",["Arbeitszeitaufzeichnung Standard","Arbeitszeitaufzeichnung_Template.docx",fs.readFileSync(bundledTemplatePath)]);
+if(fs.existsSync(bundledTemplatePath)){
+  const bundledTemplate=fs.readFileSync(bundledTemplatePath);
+  if(!(await db.query("SELECT 1 FROM document_templates WHERE name='Arbeitszeitaufzeichnung Standard' LIMIT 1")).rowCount){
+    await db.query("INSERT INTO document_templates(name,file_name,template_data) VALUES($1,$2,$3)",["Arbeitszeitaufzeichnung Standard","Arbeitszeitaufzeichnung_Template.docx",bundledTemplate]);
+  }
+  // Keep the bundled system template current without touching uploaded files.
+  await db.query(`UPDATE document_templates SET template_data=$1,file_name='Arbeitszeitaufzeichnung_Template.docx',updated_at=now()
+    WHERE name='Arbeitszeitaufzeichnung Standard' AND created_by IS NULL`,[bundledTemplate]);
 }
 const bundledScriptPath=path.resolve("templates/monthly-work-time-report.py");
 if(fs.existsSync(bundledScriptPath)){
