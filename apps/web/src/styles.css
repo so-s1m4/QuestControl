@@ -96,6 +96,13 @@ main > aside > nav a.active::before { background-color: #6971e8; box-shadow: 0 5
 main > aside > nav a.sessions-nav { display: none; }
 .management-user main > aside > nav a.sessions-nav { display: flex; }
 
+/* The app shell owns the desktop navigation. Page-level asides remain in the
+   components for backwards compatibility, but must not produce a different
+   menu on each screen. */
+@media (min-width: 761px) {
+  body.management-shell main > aside { display: none; }
+}
+
 main:not(.checkin-page) > section {
   width: calc(100% - 280px);
   max-width: 1600px;
