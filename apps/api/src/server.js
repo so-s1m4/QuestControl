@@ -4334,16 +4334,23 @@ if(fs.existsSync(bundledTemplatePath) && !(await db.query("SELECT 1 FROM documen
   await db.query("INSERT INTO document_templates(name,file_name,template_data) VALUES($1,$2,$3)",["Arbeitszeitaufzeichnung Standard","Arbeitszeitaufzeichnung_Template.docx",fs.readFileSync(bundledTemplatePath)]);
 }
 const bundledScriptPath=path.resolve("templates/monthly-work-time-report.py");
-if(fs.existsSync(bundledScriptPath) && !(await db.query("SELECT 1 FROM document_scripts WHERE name='Monatlicher Arbeitszeitbericht Standard' LIMIT 1")).rowCount){
-  await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields) VALUES($1,$2,$3,$4)",["Monatlicher Arbeitszeitbericht Standard","monthly-work-time-report.py",fs.readFileSync(bundledScriptPath,"utf8"),JSON.stringify(["report_rows","locations"])]);
-}
-// Repair the one-off placeholder script used while restoring production. The
-// condition is deliberately exact, so user-written scripts are never changed.
 if(fs.existsSync(bundledScriptPath)){
+  const bundledDocumentScript=fs.readFileSync(bundledScriptPath,"utf8");
+  if(!(await db.query("SELECT 1 FROM document_scripts WHERE name='Monatlicher Arbeitszeitbericht Standard' LIMIT 1")).rowCount){
+    await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields) VALUES($1,$2,$3,$4)",["Monatlicher Arbeitszeitbericht Standard","monthly-work-time-report.py",bundledDocumentScript,JSON.stringify(["report_rows","locations"])]);
+  }
+  // Repair the one-off placeholder script used while restoring production. The
+  // conditions only target the bundled system script, never user-written code.
   await db.query(`UPDATE document_scripts
     SET source_code=$1,input_fields=$2,file_name='monthly-work-time-report.py',updated_at=now()
     WHERE name='Monatlicher Arbeitszeitbericht Standard' AND created_by IS NULL
-      AND source_code='def run(context): return {}'`,[fs.readFileSync(bundledScriptPath,"utf8"),JSON.stringify(["report_rows","locations"])]);
+      AND source_code='def run(context): return {}'`,[bundledDocumentScript,JSON.stringify(["report_rows","locations"])]);
+  // Upgrade the previous bundled version to compact notes. This retains the
+  // one-page layout but intentionally leaves any customised script untouched.
+  await db.query(`UPDATE document_scripts
+    SET source_code=$1,input_fields=$2,file_name='monthly-work-time-report.py',updated_at=now()
+    WHERE name='Monatlicher Arbeitszeitbericht Standard' AND created_by IS NULL
+      AND source_code LIKE '%row["n"] = ", ".join(row.pop("notes"))%'`,[bundledDocumentScript,JSON.stringify(["report_rows","locations"])]);
 }
 tuyaMessages.start();
 server.on("upgrade",async(req,socket,head)=>{

@@ -10,6 +10,14 @@ def time_value(minutes):
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
+def compact_note(value, limit=9):
+    """Keep the 31-row form on a single A4 page without growing table rows."""
+    value = " ".join(str(value or "").split())
+    value = value if len(value) <= limit else value[:limit - 1].rstrip() + "…"
+    # A non-breaking space prevents Word from making a second table line.
+    return value.replace(" ", "\u00a0")
+
+
 def run(context):
     timezones = {item["id"]: item.get("timezone", "Europe/Vienna") for item in context.get("locations", [])}
     records = {day: {"d": str(day), "s": "00:00", "e": "00:00", "ps": "00:00", "pe": "00:00", "h": "00:00", "n": "", "minutes": 0, "notes": []} for day in range(1, 32)}
@@ -25,13 +33,13 @@ def run(context):
         if row["e"] == "00:00" or end_text > row["e"]:
             row["e"] = end_text
         row["minutes"] += round(float(entry["hours"]) * 60)
-        note = entry.get("booking_customer") or entry.get("booking_product") or ""
+        note = compact_note(entry.get("booking_customer") or entry.get("booking_product") or "")
         if note and note not in row["notes"]:
             row["notes"].append(note)
 
     result = {}
     for day, row in records.items():
         row["h"] = time_value(row.pop("minutes"))
-        row["n"] = ", ".join(row.pop("notes"))
+        row["n"] = compact_note(", ".join(row.pop("notes")))
         result[f"r{day:02d}"] = row
     return result
