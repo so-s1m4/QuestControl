@@ -989,14 +989,21 @@ app.delete("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>
 });
 
 const documentGenerationInput=z.object({userId:z.string().uuid(),from:z.string().date(),to:z.string().date(),maxHours:z.number().min(.25).max(744)});
-async function documentContext(input){
+async function documentContext(req,input){
   const employee=(await db.query("SELECT id,display_name,email FROM users WHERE id=$1 AND is_active=true",[input.userId])).rows[0];
   if(!employee){const error=new Error("USER_NOT_FOUND");error.status=404;throw error;}
+  if(req.user.role==="ADMIN"){
+    const sharedLocation=(await db.query(`SELECT 1 FROM user_locations target
+      WHERE target.user_id=$1 AND EXISTS(SELECT 1 FROM user_locations admin WHERE admin.user_id=$2 AND admin.location_id=target.location_id)`,[employee.id,req.user.sub])).rowCount;
+    if(!sharedLocation){const error=new Error("DOCUMENT_USER_FORBIDDEN");error.status=403;throw error;}
+  }
+  const locationScope=req.user.role==="OWNER"?"TRUE":"e.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$4)";
+  const entryValues=req.user.role==="OWNER"?[input.userId,input.from,input.to]:[input.userId,input.from,input.to,req.user.sub];
   const entries=(await db.query(`SELECT e.id,e.arrived_at,e.left_at,e.note,l.id location_id,l.name location_name,
       COALESCE(b.id::text,e.booking_snapshot->>'reference') booking_id,COALESCE(b.customer_name,e.booking_snapshot->>'customerName','Без брони') booking_customer,
       COALESCE(b.product_name,e.booking_snapshot->>'productName') booking_product,COALESCE(r.name,e.booking_snapshot->>'roomName') room_name
     FROM work_time_entries e JOIN locations l ON l.id=e.location_id LEFT JOIN bookings b ON b.id=e.booking_id LEFT JOIN rooms r ON r.id=b.room_id
-    WHERE e.user_id=$1 AND e.arrived_at<($3::date+interval '1 day') AND e.left_at>=$2::date ORDER BY e.arrived_at`,[input.userId,input.from,input.to])).rows.map(row=>({...row,hours:Number(((new Date(row.left_at)-new Date(row.arrived_at))/3_600_000).toFixed(2))}));
+    WHERE e.user_id=$1 AND e.arrived_at<($3::date+interval '1 day') AND e.left_at>=$2::date AND ${locationScope} ORDER BY e.arrived_at`,entryValues)).rows.map(row=>({...row,hours:Number(((new Date(row.left_at)-new Date(row.arrived_at))/3_600_000).toFixed(2))}));
   let total=0;const reportRows=[];for(const entry of entries){if(total+entry.hours>input.maxHours)continue;reportRows.push(entry);total+=entry.hours;}
   const signature=(await db.query("SELECT content_type,image_data FROM user_signatures WHERE user_id=$1",[employee.id])).rows[0];
   const locationIds=[...new Set(entries.map(entry=>entry.location_id))];
@@ -1009,7 +1016,7 @@ app.post("/documents/scripts/:id/input-preview",auth,requireDocumentManager,asyn
   const parsed=documentGenerationInput.safeParse(req.body);
   if(!parsed.success||parsed.data.from>parsed.data.to)return res.status(400).json({error:"INVALID_REPORT_RANGE"});
   const script=(await db.query("SELECT input_fields FROM document_scripts WHERE id=$1",[req.params.id])).rows[0];if(!script)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});
-  const {all}=await documentContext(parsed.data);
+  const {all}=await documentContext(req,parsed.data);
   res.json(Object.fromEntries(script.input_fields.map(field=>[field,all[field]])));
 });
 app.post("/documents/generate",auth,requireDocumentManager,async(req,res)=>{
@@ -1020,7 +1027,7 @@ app.post("/documents/generate",auth,requireDocumentManager,async(req,res)=>{
     db.query("SELECT name,source_code,input_fields FROM document_scripts WHERE id=$1",[parsed.data.scriptId]),
   ]);
   if(!template.rows[0])return res.status(404).json({error:"TEMPLATE_NOT_FOUND"});if(!script.rows[0])return res.status(404).json({error:"SCRIPT_NOT_FOUND"});
-  const {all,defaults}=await documentContext(parsed.data);
+  const {all,defaults}=await documentContext(req,parsed.data);
   const context=Object.fromEntries(script.rows[0].input_fields.map(field=>[field,all[field]]));
   let runner;
   try { runner=await fetch(`${env.DOCUMENT_RUNNER_URL}/generate`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourceCode:script.rows[0].source_code,context,defaults,templateDataBase64:Buffer.from(template.rows[0].template_data).toString("base64")}),signal:AbortSignal.timeout(15_000)}); }
