@@ -1009,7 +1009,20 @@ async function documentContext(req,input){
   const locationIds=[...new Set(entries.map(entry=>entry.location_id))];
   const locationRows=(await db.query("SELECT id,name,timezone FROM locations WHERE id=ANY($1::uuid[])",[locationIds])).rows;
   const all={employee:{id:employee.id,name:employee.display_name,email:employee.email},period:{from:input.from,to:input.to},max_hours:input.maxHours,work_entries:entries,report_rows:reportRows,locations:locationRows};
-  const defaults={employee_name:employee.display_name,month:new Intl.DateTimeFormat("de-AT",{month:"long"}).format(new Date(`${input.from}T12:00:00Z`)),year:input.from.slice(0,4),employee_signature:signature?{_type:"image",content_type:signature.content_type,data_base64:Buffer.from(signature.image_data).toString("base64")}:"",employer_signature:""};
+  const employeeFullName=employee.display_name.trim().replace(/\s+/g," ");
+  const [employeeFirstName="",...employeeLastNameParts]=employeeFullName.split(" ");
+  const defaults={
+    // employee_name remains the backwards-compatible field used by the
+    // supplied template. It is always the person's full name, not an e-mail.
+    employee_name:employeeFullName,
+    employee_full_name:employeeFullName,
+    employee_first_name:employeeFirstName,
+    employee_last_name:employeeLastNameParts.join(" "),
+    month:new Intl.DateTimeFormat("de-AT",{month:"long"}).format(new Date(`${input.from}T12:00:00Z`)),
+    year:input.from.slice(0,4),
+    employee_signature:signature?{_type:"image",content_type:signature.content_type,data_base64:Buffer.from(signature.image_data).toString("base64")}:"",
+    employer_signature:""
+  };
   return {all,defaults};
 }
 app.post("/documents/scripts/:id/input-preview",auth,requireDocumentManager,async(req,res)=>{
@@ -4323,6 +4336,14 @@ if(fs.existsSync(bundledTemplatePath) && !(await db.query("SELECT 1 FROM documen
 const bundledScriptPath=path.resolve("templates/monthly-work-time-report.py");
 if(fs.existsSync(bundledScriptPath) && !(await db.query("SELECT 1 FROM document_scripts WHERE name='Monatlicher Arbeitszeitbericht Standard' LIMIT 1")).rowCount){
   await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields) VALUES($1,$2,$3,$4)",["Monatlicher Arbeitszeitbericht Standard","monthly-work-time-report.py",fs.readFileSync(bundledScriptPath,"utf8"),JSON.stringify(["report_rows","locations"])]);
+}
+// Repair the one-off placeholder script used while restoring production. The
+// condition is deliberately exact, so user-written scripts are never changed.
+if(fs.existsSync(bundledScriptPath)){
+  await db.query(`UPDATE document_scripts
+    SET source_code=$1,input_fields=$2,file_name='monthly-work-time-report.py',updated_at=now()
+    WHERE name='Monatlicher Arbeitszeitbericht Standard' AND created_by IS NULL
+      AND source_code='def run(context): return {}'`,[fs.readFileSync(bundledScriptPath,"utf8"),JSON.stringify(["report_rows","locations"])]);
 }
 tuyaMessages.start();
 server.on("upgrade",async(req,socket,head)=>{
