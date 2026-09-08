@@ -173,7 +173,7 @@ def convert_docx_to_pdf(document_data, temp_dir):
     source_path.write_bytes(document_data)
     result = subprocess.run(
         [SOFFICE_BINARY, f"-env:UserInstallation=file://{profile_dir}", "--headless", "--convert-to", "pdf", "--outdir", str(output_dir), str(source_path)],
-        capture_output=True, text=True, timeout=12,
+        capture_output=True, text=True, timeout=12, env={**os.environ, "HOME": temp_dir, "TMPDIR": temp_dir},
     )
     output_path = output_dir / "generated.pdf"
     if result.returncode != 0 or not output_path.exists():
