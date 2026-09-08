@@ -44,7 +44,7 @@ type Camera = {id:string;name:string;location_id:string;room_name?:string};
 
         @if (showForm()) {
           <form (ngSubmit)="create()">
-            <label>Имя<input name="displayName" [(ngModel)]="draft.displayName" required minlength="2" autocomplete="name"></label>
+            <label>Имя и фамилия<input name="displayName" [(ngModel)]="draft.displayName" required minlength="2" autocomplete="name" placeholder="Например: Maksym Petrenko"></label>
             <label>Email<input name="email" type="email" [(ngModel)]="draft.email" required autocomplete="off"></label>
             <label>Роль
               <select name="role" [(ngModel)]="draft.role">
@@ -96,7 +96,7 @@ type Camera = {id:string;name:string;location_id:string;room_name?:string};
         <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" (click)="$event.stopPropagation()">
           <header><div><h3 id="settings-title">Настройки пользователя</h3><p>{{settingsUser()!.email}}</p></div><button class="close" type="button" aria-label="Закрыть" (click)="closeSettings()">×</button></header>
           <form class="settings-form" (ngSubmit)="saveSettings()">
-            <label>Имя<input name="editDisplayName" [(ngModel)]="editDraft.displayName" required minlength="2" autocomplete="name"></label>
+            <label>Имя и фамилия<input name="editDisplayName" [(ngModel)]="editDraft.displayName" required minlength="2" autocomplete="name" placeholder="Например: Maksym Petrenko"></label>
             <label>Роль<select name="editRole" [(ngModel)]="editDraft.role"><option value="OPERATOR">Оператор</option><option value="TECHNICIAN">Техник</option><option value="ADMIN">Администратор</option><option value="OWNER">Владелец</option><option value="CAMERA_VIEWER">Только камеры</option></select></label>
             <fieldset class="location-picker"><legend>Доступные локации</legend>@for(location of locations();track location.id){<label class="location-check"><input type="checkbox" [checked]="editDraft.locationIds.includes(location.id)" (change)="toggleEditLocation(location.id)"><span>{{location.name}}</span></label>}@empty{<span>Локаций пока нет</span>}</fieldset>
             <div class="password-block"><label>Новый пароль <small>Оставьте пустым, если менять не нужно</small><input name="editPassword" type="password" [(ngModel)]="editDraft.password" minlength="12" autocomplete="new-password" placeholder="Минимум 12 символов"></label><label>Повторите пароль<input name="editPasswordConfirm" type="password" [(ngModel)]="editDraft.passwordConfirm" autocomplete="new-password" [required]="!!editDraft.password"></label></div>
