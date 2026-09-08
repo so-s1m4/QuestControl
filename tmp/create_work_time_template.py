@@ -64,6 +64,9 @@ def set_signature_cell(cell, caption):
     image_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
     image_line.paragraph_format.space_before = Pt(0)
     image_line.paragraph_format.space_after = Pt(0)
+    # Reserve a full signature line before the caption.  The actual image is
+    # floating, so ordinary default line spacing would let it overlap text.
+    image_line.paragraph_format.line_spacing = Pt(44)
     image_line.add_run("{{employee_signature}}")
     label = cell.add_paragraph()
     label.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -165,7 +168,7 @@ for day in range(1, 32):
         set_cell_text(table.cell(row, col), value, False, 8 if col == 6 else 9, WD_ALIGN_PARAGRAPH.LEFT if col == 6 else WD_ALIGN_PARAGRAPH.RIGHT)
     # A fixed compact height keeps even a filled 31-day record and the
     # signature block on one A4 page when Word renders it as PDF.
-    table.rows[row].height = Cm(0.45)
+    table.rows[row].height = Cm(0.40)
     table.rows[row].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
 
 signatures = doc.add_table(rows=2, cols=2)
@@ -180,7 +183,7 @@ set_signature_cell(signatures.cell(1, 0), "Unterschrift Arbeitnehmer/in")
 set_cell_text(signatures.cell(1, 1), "Unterschrift Arbeitgeber/in", False, 9, WD_ALIGN_PARAGRAPH.CENTER)
 signatures.rows[0].height = Cm(0.88)
 signatures.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
-signatures.rows[1].height = Cm(1.45)
+signatures.rows[1].height = Cm(2.0)
 signatures.rows[1].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
 
 doc.core_properties.title = "Arbeitszeitaufzeichnung"

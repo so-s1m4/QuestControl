@@ -118,9 +118,9 @@ def add_centered_signature_overlay(paragraph, image_path):
     offset_v = OxmlElement("wp:posOffset")
     # Keep the signature centred over the caption, with its body above the
     # text rather than crossing through its middle.
-    # Reserve the line below for the caption.  A larger negative offset puts
-    # the handwritten mark fully above it instead of striking through it.
-    offset_v.text = "-600000"
+    # The template reserves a dedicated signature line above its caption, so
+    # the mark can sit inside its own cell rather than over the dates or text.
+    offset_v.text = "0"
     position_v.append(offset_v)
     wrap_none = OxmlElement("wp:wrapNone")
     inline_xml = inline._inline
