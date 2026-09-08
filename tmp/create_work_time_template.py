@@ -57,6 +57,26 @@ def set_cell_text(cell, text, bold=False, size=9, align=WD_ALIGN_PARAGRAPH.CENTE
     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
     set_cell_border(cell, top={"val":"single","sz":"6","color":"000000"}, bottom={"val":"single","sz":"6","color":"000000"}, left={"val":"single","sz":"6","color":"000000"}, right={"val":"single","sz":"6","color":"000000"})
 
+def set_signature_cell(cell, caption):
+    """Keep the floating signature and its label on independent lines."""
+    cell.text = ""
+    image_line = cell.paragraphs[0]
+    image_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    image_line.paragraph_format.space_before = Pt(0)
+    image_line.paragraph_format.space_after = Pt(0)
+    image_line.add_run("{{employee_signature}}")
+    label = cell.add_paragraph()
+    label.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    label.paragraph_format.space_before = Pt(0)
+    label.paragraph_format.space_after = Pt(0)
+    run = label.add_run(caption)
+    run.font.name = "Arial"
+    run._element.rPr.rFonts.set(qn("w:ascii"), "Arial")
+    run._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial")
+    run.font.size = Pt(9)
+    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    set_cell_border(cell, top={"val":"single","sz":"6","color":"000000"}, bottom={"val":"single","sz":"6","color":"000000"}, left={"val":"single","sz":"6","color":"000000"}, right={"val":"single","sz":"6","color":"000000"})
+
 def set_table_to_content_width(table, section):
     """Use the entire printable area, leaving only the page margins."""
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -145,7 +165,7 @@ for day in range(1, 32):
         set_cell_text(table.cell(row, col), value, False, 8 if col == 6 else 9, WD_ALIGN_PARAGRAPH.LEFT if col == 6 else WD_ALIGN_PARAGRAPH.RIGHT)
     # A fixed compact height keeps even a filled 31-day record and the
     # signature block on one A4 page when Word renders it as PDF.
-    table.rows[row].height = Cm(0.48)
+    table.rows[row].height = Cm(0.45)
     table.rows[row].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
 
 signatures = doc.add_table(rows=2, cols=2)
@@ -156,12 +176,12 @@ for row in signatures.rows:
     row.cells[1].width = Cm(8.6)
 set_cell_text(signatures.cell(0, 0), "________________________\n{{employee_signature_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(signatures.cell(0, 1), "________________________\n{{employer_signature_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
-set_cell_text(signatures.cell(1, 0), "{{employee_signature}}Unterschrift Arbeitnehmer/in", False, 9, WD_ALIGN_PARAGRAPH.CENTER)
-set_cell_text(signatures.cell(1, 1), "{{employer_signature}}\nUnterschrift Arbeitgeber/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+set_signature_cell(signatures.cell(1, 0), "Unterschrift Arbeitnehmer/in")
+set_cell_text(signatures.cell(1, 1), "Unterschrift Arbeitgeber/in", False, 9, WD_ALIGN_PARAGRAPH.CENTER)
 signatures.rows[0].height = Cm(0.88)
 signatures.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
-signatures.rows[1].height = Cm(0.88)
-signatures.rows[1].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+signatures.rows[1].height = Cm(1.45)
+signatures.rows[1].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
 
 doc.core_properties.title = "Arbeitszeitaufzeichnung"
 doc.core_properties.subject = "Vorlage für monatliche Arbeitszeitaufzeichnungen"
