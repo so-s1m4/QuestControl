@@ -974,13 +974,13 @@ app.get("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>{
 app.post("/documents/scripts",auth,requireDocumentManager,async(req,res)=>{
   const parsed=documentScriptInput.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_SCRIPT"});
   const input={...parsed.data,inputFields:[...new Set(parsed.data.inputFields)]};
-  const row=(await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,name,file_name,input_fields,created_at,updated_at",[input.name,input.fileName,input.sourceCode,input.inputFields,req.user.sub])).rows[0];
+  const row=(await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,name,file_name,input_fields,created_at,updated_at",[input.name,input.fileName,input.sourceCode,JSON.stringify(input.inputFields),req.user.sub])).rows[0];
   await audit(req,"document_script.create","document_script",row.id,null,{name:row.name,fileName:row.file_name,inputFields:row.input_fields});res.status(201).json(row);
 });
 app.put("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>{
   const parsed=documentScriptInput.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_SCRIPT"});
   const input={...parsed.data,inputFields:[...new Set(parsed.data.inputFields)]};
-  const row=(await db.query("UPDATE document_scripts SET name=$1,file_name=$2,source_code=$3,input_fields=$4,updated_at=now() WHERE id=$5 RETURNING id,name,file_name,input_fields,created_at,updated_at",[input.name,input.fileName,input.sourceCode,input.inputFields,req.params.id])).rows[0];
+  const row=(await db.query("UPDATE document_scripts SET name=$1,file_name=$2,source_code=$3,input_fields=$4,updated_at=now() WHERE id=$5 RETURNING id,name,file_name,input_fields,created_at,updated_at",[input.name,input.fileName,input.sourceCode,JSON.stringify(input.inputFields),req.params.id])).rows[0];
   if(!row)return res.status(404).json({error:"SCRIPT_NOT_FOUND"});await audit(req,"document_script.update","document_script",row.id,null,{name:row.name,inputFields:row.input_fields});res.json(row);
 });
 app.delete("/documents/scripts/:id",auth,requireDocumentManager,async(req,res)=>{
@@ -4315,7 +4315,7 @@ if(fs.existsSync(bundledTemplatePath) && !(await db.query("SELECT 1 FROM documen
 }
 const bundledScriptPath=path.resolve("templates/monthly-work-time-report.py");
 if(fs.existsSync(bundledScriptPath) && !(await db.query("SELECT 1 FROM document_scripts WHERE name='Monatlicher Arbeitszeitbericht Standard' LIMIT 1")).rowCount){
-  await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields) VALUES($1,$2,$3,$4)",["Monatlicher Arbeitszeitbericht Standard","monthly-work-time-report.py",fs.readFileSync(bundledScriptPath,"utf8"),["report_rows","locations"]]);
+  await db.query("INSERT INTO document_scripts(name,file_name,source_code,input_fields) VALUES($1,$2,$3,$4)",["Monatlicher Arbeitszeitbericht Standard","monthly-work-time-report.py",fs.readFileSync(bundledScriptPath,"utf8"),JSON.stringify(["report_rows","locations"])]);
 }
 tuyaMessages.start();
 server.on("upgrade",async(req,socket,head)=>{
