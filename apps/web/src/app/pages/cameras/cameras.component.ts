@@ -1,8 +1,9 @@
-import { Component, ElementRef, HostListener, ViewChild, inject, signal } from "@angular/core";
+import { Component, ElementRef, HostListener, OnDestroy, ViewChild, inject, signal } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
 import { FormsModule } from "@angular/forms";
 import { RouterLink } from "@angular/router";
 import QRCode from "qrcode";
+import { io, Socket } from "socket.io-client";
 
 type Location={id:string;name:string};
 type Room={id:string;name:string;location_id:string;location_name:string};
@@ -49,15 +50,25 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
           <span>{{zone.name}}<small>{{zoneTypeName(zone.type)}}</small></span>
           @if(editing()){<button type="button" class="zone-delete" (pointerdown)="$event.stopPropagation()" (click)="deleteZone($event,zone)">×</button><i class="resize" (pointerdown)="zoneDown($event,zone,'resize')"></i>}
         </div>}
-        @for(camera of locationCameras();track camera.id){<button class="camera-pin" [class.online]="camera.status==='ONLINE'" [class.selected]="isSelected(camera.id)" [class.unplaced]="camera.plan_x==null" [style.left.%]="cameraX(camera)" [style.top.%]="cameraY(camera)" (pointerdown)="cameraDown($event,camera)" (click)="cameraClick($event,camera)" [title]="camera.name">
-          <b>●</b>
+        @for(camera of locationCameras();track camera.id){<button class="camera-pin" [class.online]="camera.status==='ONLINE'" [class.selected]="isSelected(camera.id)" [class.unplaced]="camera.plan_x==null" [class.has-people]="(aiStates()[camera.id]?.peopleCount||0)>0" [style.left.%]="cameraX(camera)" [style.top.%]="cameraY(camera)" (pointerdown)="cameraDown($event,camera)" (click)="cameraClick($event,camera)" [title]="camera.name + ((aiStates()[camera.id]?.peopleCount||0) > 0 ? ' (Людей: ' + aiStates()[camera.id].peopleCount + ')' : '')">
+          @if((aiStates()[camera.id]?.peopleCount||0)>0){
+            <span class="ai-pin-count">{{aiStates()[camera.id].peopleCount}}</span>
+          }@else{
+            <b>●</b>
+          }
         </button>}
         @if(!backgroundImage()&&!zones().length){<div class="plan-empty"><b>План ещё не настроен</b><span>@if(isOwner()){Откройте редактор, загрузите фон или нарисуйте зоны.}@else{Владелец ещё не опубликовал план этой локации.}</span></div>}
       </div><aside class="camera-list"><div class="camera-list-head"><b>Камеры</b><span>{{locationCameras().length}}</span></div>
         @for(camera of locationCameras();track camera.id){<div class="camera-row" [class.selected]="isSelected(camera.id)" (click)="listCameraClick(camera)">
           <i [class.online]="camera.status==='ONLINE'"></i>
           @if(renamingId()===camera.id){<input #nameInput [value]="camera.name" (click)="$event.stopPropagation()" (keydown.enter)="rename(camera,nameInput.value)" (keydown.escape)="renamingId.set(null)"><button class="name-save" (click)="$event.stopPropagation();rename(camera,nameInput.value)">✓</button>}
-          @else{<span><b>{{camera.name}}</b><small>{{camera.room_name||"Без игровой комнаты"}}</small></span>@if(canManageCameras()){<button class="name-edit" title="Переименовать" (click)="$event.stopPropagation();renamingId.set(camera.id)">✎</button>}}
+          @else{<span><b>{{camera.name}}</b><small>{{camera.room_name||"Без игровой комнаты"}}</small></span>
+            @if(aiStates()[camera.id]; as ai){
+              <span class="camera-row-ai-badge" [class.occupied]="ai.peopleCount > 0" [title]="ai.occupied ? 'В кадре обнаружены люди' : 'Комната пуста'">
+                👥 {{ai.peopleCount}}
+              </span>
+            }
+            @if(canManageCameras()){<button class="name-edit" title="Переименовать" (click)="$event.stopPropagation();renamingId.set(camera.id)">✎</button>}}
         </div>}@empty{<p class="no-cameras">В этой локации камер нет.</p>}
       </aside></div>
       <div class="plan-legend"><span><i class="online-dot"></i> Онлайн</span><span><i></i> Офлайн</span><b>Выбрано {{selectedCameras().length}} из {{locationCameras().length}}</b><button class="ghost" (click)="selectOnline()">Выбрать все онлайн</button><button class="ghost" (click)="clearSelection()">Снять выбор</button></div>
@@ -76,15 +87,21 @@ type Drag={kind:"camera"|"zone"|"resize"|"draw";id:string;startX:number;startY:n
     .camera-list{position:static;width:auto;padding:0;overflow:auto;max-height:570px;background:#fff;border:1px solid var(--line);border-radius:14px;color:var(--ink)}.camera-list-head{display:flex;justify-content:space-between;padding:17px;border-bottom:1px solid var(--line)}.camera-list-head span{padding:2px 8px;border-radius:999px;background:#eef1f6;color:var(--muted)}.camera-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid #eef0f4;cursor:pointer}.camera-row:hover{background:#f8f9fc}.camera-row.selected{background:#eef1ff}.camera-row>i{width:9px;height:9px;border-radius:50%;background:#98a2b3}.camera-row>i.online{background:#079455}.camera-row span b,.camera-row span small{display:block;overflow:hidden;text-overflow:ellipsis}.camera-row span small{margin-top:3px;color:var(--muted);font-size:10px}.camera-row input{min-width:0;width:100%;padding:7px}.name-edit,.name-save{padding:6px 8px;background:#eef1f6;color:#344054;box-shadow:none}.name-save{background:#dcfae6;color:#067647}.no-cameras{padding:18px;color:var(--muted)}
     .zone{position:absolute;display:grid;place-items:center;min-width:20px;min-height:20px;border:2px solid;border-radius:5px;color:#1e293b;cursor:default}.editing .zone{cursor:move}.zone span{text-align:center;font-weight:800;pointer-events:none}.zone small{display:block;margin-top:3px;font-size:9px;font-weight:600;opacity:.65}.selected-zone{outline:3px solid #4058df55}.zone-delete{position:absolute;right:3px;top:3px;padding:2px 7px;background:#fff;color:#b42318;box-shadow:none}.resize{position:absolute;right:-3px;bottom:-3px;width:14px;height:14px;border-radius:3px;background:#4058df;cursor:nwse-resize}
     .camera-pin{position:absolute;z-index:4;display:grid;place-items:center;width:24px;height:24px;min-width:24px;padding:0;border:2px solid #fff;border-radius:50%;transform:translate(-12px,-12px);background:#667085;color:white;box-shadow:0 3px 10px #0004;transition:none}.camera-pin:hover,.camera-pin:focus{transform:translate(-12px,-12px)}.camera-pin b{font-size:10px;line-height:1}.camera-pin.online{background:#079455}.camera-pin.selected{outline:4px solid #4058df66}.editing .camera-pin{cursor:grab}.camera-pin.unplaced{opacity:.75}
+    .camera-pin.has-people{background:#d92d20!important;border-color:#fff;box-shadow:0 0 0 3px #fda29b}
+    .ai-pin-count{font-size:11px;font-weight:900;line-height:1}
+    .camera-row-ai-badge{margin-left:auto;font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;background:#f2f4f7;color:#475467}
+    .camera-row-ai-badge.occupied{background:#fee4e2;color:#b42318;font-weight:800}
     .plan-empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--muted);pointer-events:none}.plan-empty b{color:var(--ink);font-size:18px}.plan-empty span{margin-top:8px}.plan-legend{justify-content:flex-end;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:12px}.plan-legend b{margin-left:auto;color:var(--ink)}.plan-legend i{display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:50%;background:#667085}.plan-legend .online-dot{background:#079455}
     .empty.compact{padding:30px}.camera-grid{grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))}.camera-info{display:flex;align-items:center;justify-content:space-between;padding:14px}.camera-info span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
     @media(max-width:1100px){.plan-layout{grid-template-columns:1fr}.camera-list{max-height:280px}}@media(max-width:900px){.zone-editor{grid-template-columns:1fr 1fr}.plan{min-height:420px}.plan-legend b{width:100%;margin:0}}@media(max-width:600px){.location-tabs{display:grid;grid-template-columns:1fr 1fr}.location-tabs button{width:100%;min-height:42px}.editor-bar{align-items:stretch;flex-direction:column}.editor-bar button,.editor-bar .upload{justify-content:center;width:100%;min-height:42px}.background-control{align-items:stretch;flex-direction:column}.background-control input{width:100%}.zone-editor{grid-template-columns:1fr}.plan{min-height:360px;aspect-ratio:3/4}.camera-list{max-height:340px}.plan-legend{justify-content:flex-start}.plan-legend button{flex:1}.camera-info{align-items:flex-start;flex-direction:column;gap:10px}}
   `]
 })
-export class CamerasComponent{
+export class CamerasComponent implements OnDestroy{
   private http=inject(HttpClient);
+  private socket?:Socket;
   @ViewChild("plan") planRef?:ElementRef<HTMLElement>;
   locations=signal<Location[]>([]);rooms=signal<Room[]>([]);cameras=signal<Camera[]>([]);locationId=signal("");zones=signal<Zone[]>([]);backgroundImage=signal<string|null>(null);backgroundMode=signal<BackgroundMode>("CONTAIN");backgroundScale=signal(100);backgroundX=signal(50);backgroundY=signal(50);
+  aiStates=signal<Record<string,{peopleCount:number;occupied:boolean;motion:boolean}>>({});
   editing=signal(false);drawing=signal(false);saving=signal(false);syncing=signal(false);error=signal("");notice=signal("");selectedIds=signal<string[]>([]);
   renamingId=signal<string|null>(null);
   qrImage=signal("");qrUrl=signal("");qrShareId=signal("");qrCameraCount=signal(0);
@@ -94,7 +111,34 @@ export class CamerasComponent{
   isCameraViewer(){try{return JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role==="CAMERA_VIEWER"}catch{return false}}
   canConfigureCameraSettings(){try{return ["OWNER","ADMIN"].includes(JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).role)}catch{return false}}
   canManageCameras(){try{const p=JSON.parse(atob((sessionStorage.getItem("access_token")||"").split(".")[1])).permissions||[];return p.includes("*")||p.includes("cameras:*")||p.includes("cameras:manage")}catch{return false}}
-  constructor(){try{const stored=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");this.selectedIds.set(Array.isArray(stored)?stored:[])}catch{}this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(l[0])this.selectLocation(l[0].id)}});this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});this.loadCameras();}
+  constructor(){
+    try{const stored=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");this.selectedIds.set(Array.isArray(stored)?stored:[])}catch{}
+    this.http.get<Location[]>("/api/locations").subscribe({next:l=>{this.locations.set(l);if(l[0])this.selectLocation(l[0].id)}});
+    this.http.get<Room[]>("/api/rooms").subscribe({next:r=>this.rooms.set(r)});
+    this.loadCameras();
+    this.initSocket();
+  }
+  ngOnDestroy(){this.socket?.disconnect()}
+  private initSocket(){
+    this.fetchAiStates();
+    try{
+      const token=sessionStorage.getItem("access_token");
+      if(token){
+        this.socket=io({path:"/ws",auth:{token}});
+        this.socket.on("camera:ai:state",(data:{cameraId:string;peopleCount:number;occupied:boolean;motion:boolean})=>{
+          if(data?.cameraId){
+            this.aiStates.update(v=>({...v,[data.cameraId]:data}));
+          }
+        });
+      }
+    }catch{}
+  }
+  fetchAiStates(){
+    this.http.get<Record<string,{peopleCount:number;occupied:boolean;motion:boolean}>>("/api/cameras/ai/states").subscribe({
+      next:st=>{if(st)this.aiStates.set(st)},
+      error:()=>{}
+    });
+  }
   loadCameras(){this.http.get<Camera[]>("/api/cameras").subscribe({next:c=>{this.cameras.set(c);if(this.isCameraViewer()){this.selectedIds.set(c.map(camera=>camera.id));this.persistSelection()}},error:()=>this.error.set("Не удалось загрузить камеры.")})}
   selectLocation(id:string){this.locationId.set(id);this.editing.set(false);this.http.get<Plan>(`/api/locations/${id}/plan`).subscribe({next:p=>{this.backgroundImage.set(p.backgroundImage);this.backgroundMode.set(p.backgroundMode||"CONTAIN");this.backgroundScale.set(+(p.backgroundScale||100));this.backgroundX.set(+(p.backgroundX??50));this.backgroundY.set(+(p.backgroundY??50));this.zones.set(p.zones.map(z=>({...z,x:+z.x,y:+z.y,width:+z.width,height:+z.height,roomId:z.room_id||""})));},error:()=>this.error.set("Не удалось загрузить план локации.")})}
   backgroundSize(){return this.backgroundMode()==="CONTAIN"?"contain":this.backgroundMode()==="COVER"?"cover":`${this.backgroundScale()}% auto`}

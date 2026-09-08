@@ -1,5 +1,4 @@
 const TELEGRAM_API = "https://api.telegram.org";
-
 export function escapeTelegramHtml(value) {
   return String(value ?? "").replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]);
 }
@@ -80,6 +79,60 @@ export class TelegramBot {
       disable_web_page_preview: true,
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
+  }
+
+  async sendPhoto(chatId, photoBuffer, caption = "", replyMarkup = null) {
+    if (!this.enabled) throw new Error("TELEGRAM_NOT_CONFIGURED");
+    const formData = new FormData();
+    formData.append("chat_id", String(chatId));
+    formData.append("photo", new Blob([photoBuffer], { type: "image/jpeg" }), "snapshot.jpg");
+    if (caption) {
+      formData.append("caption", caption);
+      formData.append("parse_mode", "HTML");
+    }
+    if (replyMarkup) {
+      formData.append("reply_markup", JSON.stringify(replyMarkup));
+    }
+
+    const response = await fetch(`${TELEGRAM_API}/bot${this.token}/sendPhoto`, {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(25_000),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body?.ok) {
+      const error = new Error(body?.description || "Telegram sendPhoto failed");
+      error.code = body?.error_code;
+      throw error;
+    }
+    return body.result;
+  }
+
+  async sendAnimation(chatId, animationBuffer, caption = "", replyMarkup = null) {
+    if (!this.enabled) throw new Error("TELEGRAM_NOT_CONFIGURED");
+    const formData = new FormData();
+    formData.append("chat_id", String(chatId));
+    formData.append("animation", new Blob([animationBuffer], { type: "image/gif" }), "clip.gif");
+    if (caption) {
+      formData.append("caption", caption);
+      formData.append("parse_mode", "HTML");
+    }
+    if (replyMarkup) {
+      formData.append("reply_markup", JSON.stringify(replyMarkup));
+    }
+
+    const response = await fetch(`${TELEGRAM_API}/bot${this.token}/sendAnimation`, {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body?.ok) {
+      const error = new Error(body?.description || "Telegram sendAnimation failed");
+      error.code = body?.error_code;
+      throw error;
+    }
+    return body.result;
   }
 
   async answerCallbackQuery(callbackQueryId, text) {

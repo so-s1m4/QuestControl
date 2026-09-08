@@ -18,12 +18,61 @@ services:
   api:
     build: ./apps/api
     env_file: .env
+    environment:
+      AI_SERVICE_URL: http://ai-service:8088
+    volumes:
+      - ./infra/postgres/migrations:/app/migrations:ro
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     networks: [default, document-sandbox]
     restart: unless-stopped
+  migrate:
+    build: ./apps/api
+    command: ["node", "-e", "import('./src/migrator.js').then(m => m.runCli())"]
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ./infra/postgres/migrations:/app/migrations:ro
+    restart: "no"
+    profiles: [tools, migrate]
+  ai-service:
+    build: ./apps/ai-service
+    env_file: .env
+    environment:
+      PORT: 8088
+      YOLO_MODEL: yolo11n.pt
+      VLM_MODEL: moondream2
+      VLM_ENDPOINT: ${VLM_ENDPOINT:-http://vlm:11434}
+      API_INTERNAL_URL: http://api:3000
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+    networks: [default]
+    restart: unless-stopped
+  vlm:
+    image: ollama/ollama:latest
+    container_name: quest-vlm
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    restart: unless-stopped
+  vlm-init:
+    image: curlimages/curl:latest
+    depends_on:
+      - vlm
+    restart: "no"
+    command: >
+      sh -c "
+        echo 'Waiting for Ollama to become ready...';
+        until curl -s http://vlm:11434/api/tags > /dev/null; do
+          sleep 2;
+        done;
+        echo 'Pulling Moondream VLM model...';
+        curl -X POST http://vlm:11434/api/pull -d '{\"name\": \"moondream\"}';
+        echo 'Moondream model pull completed.';
+      "
   document-runner:
     build: ./apps/document-runner
     read_only: true
@@ -51,7 +100,7 @@ services:
     depends_on: [api, web]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped
-volumes: { postgres_data: {}, redis_data: {} }
+volumes: { postgres_data: {}, redis_data: {}, ollama_data: {} }
 networks:
   document-sandbox:
     internal: true

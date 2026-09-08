@@ -68,6 +68,58 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
         @if(activeSession()){<button class="finish-session" [disabled]="sessionBusy()" (click)="finishSession()">{{sessionBusy()?'Завершаем…':'Завершить'}}</button>}
         @else{<label><span>Минут</span><input type="number" min="5" max="240" step="5" [ngModel]="sessionMinutes()" (ngModelChange)="sessionMinutes.set(+$event)"></label><button class="start-session" [disabled]="sessionBusy()" (click)="startSession()">{{sessionBusy()?'Запускаем…':'▶ Запустить таймер'}}</button>}
       </article>
+      <article class="ai-room-card">
+        <div class="ai-room-main">
+          <div>
+            <span>AI ВИДЕОНАБЛЮДЕНИЕ</span>
+            <b>{{aiOccupied()?'В комнате обнаружены люди':'Комната свободна'}}</b>
+            <small>Людей по камерам: {{aiPeopleCount()}}</small>
+          </div>
+          <div class="ai-room-chips">
+            <span class="chip-count" [class.active]="aiPeopleCount()>0">👥 {{aiPeopleCount()}} чел.</span>
+            <span class="chip-status" [class.occupied]="aiOccupied()">{{aiOccupied()?'OCCUPIED':'EMPTY'}}</span>
+          </div>
+        </div>
+        @if(aiDescription()){
+          <p class="ai-room-summary"><b>AI:</b> {{aiDescription()}}</p>
+        }
+        <div class="ai-room-actions">
+          <button class="ai-inspect-btn" [disabled]="aiBusy()" (click)="inspectWholeRoom()">{{aiBusy()?'Осмотр…':'🔄 Осмотр всей комнаты'}}</button>
+          <button class="ai-ask-btn" (click)="toggleAiDialog()">💬 Спросить камеру</button>
+        </div>
+      </article>
+      @if(showAiDialog()){
+        <div class="ai-dialog-backdrop" (click)="toggleAiDialog()">
+          <section class="ai-dialog" (click)="$event.stopPropagation()">
+            <header>
+              <h3>Вопрос AI-камере (Krampus)</h3>
+              <button class="close-btn" (click)="toggleAiDialog()">×</button>
+            </header>
+            <div class="quick-questions">
+              <span class="label">Быстрые вопросы:</span>
+              <button (click)="askCamera('Есть ли кто-нибудь в комнате?')">Есть ли кто-нибудь в комнате?</button>
+              <button (click)="askCamera('Сколько сейчас людей?')">Сколько сейчас людей?</button>
+              <button (click)="askCamera('Остались ли игроки?')">Остались ли игроки?</button>
+              <button (click)="askCamera('Что сейчас происходит?')">Что сейчас происходит?</button>
+              <button (click)="askCamera('Проверь всю комнату.')">Проверь всю комнату.</button>
+            </div>
+            <div class="custom-query">
+              <input [(ngModel)]="customQuestion" placeholder="Задайте свой вопрос..." (keydown.enter)="askCamera(customQuestion)">
+              <button [disabled]="aiBusy()||!customQuestion.trim()" (click)="askCamera(customQuestion)">Спросить</button>
+            </div>
+            @if(aiBusy()){
+              <p class="ai-loading">AI анализирует видеопоток и состояние комнаты…</p>
+            }
+            @if(aiAnswer()){
+              <div class="ai-response">
+                <b>Ответ AI:</b>
+                <p>{{aiAnswer()}}</p>
+                @if(aiToolCalled()){<small>Использованный инструмент: {{aiToolCalled()}}</small>}
+              </div>
+            }
+          </section>
+        </div>
+      }
       <div class="krampus-actions"><button class="start" [disabled]="busy()" (click)="command('START')">START</button><button [disabled]="busy()" (click)="command('STATUS')">STATUS</button><button class="danger-solid" [disabled]="busy()" (click)="command('RESET',true)">RESET</button><button class="danger-solid" [disabled]="busy()" (click)="command('ESTOP',true)">ESTOP</button></div>
       <div class="krampus-layout">
         <article class="control-card">
@@ -172,6 +224,37 @@ type ToggleKey="bear"|"door"|"table"|"tableLeg"|"ovenUv"|"ovenLight"|"ovenMove"|
   .krampus-workspace{display:grid;grid-template-columns:minmax(420px,44%) minmax(0,1fr);gap:18px;align-items:start}.control-pane{min-width:0}.camera-pane{position:sticky;top:24px;display:flex;flex-direction:column;min-width:0;height:calc(100vh - 48px);padding:14px;border-radius:14px;background:#0d121b;color:#eef2f7;overflow:hidden}.camera-heading{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.camera-heading span{color:#8c98aa;font-size:9px;font-weight:900;letter-spacing:.12em}.camera-heading h3{margin:3px 0 0}.camera-heading button{padding:8px 10px;background:#273248;box-shadow:none}.camera-grid{display:grid;flex:1;grid-template-columns:1fr;grid-auto-rows:minmax(0,1fr);min-height:0;gap:9px}.camera-grid.single,.camera-grid.count-1,.camera-grid.count-2{grid-template-columns:1fr}.camera-grid.count-3,.camera-grid.count-4{grid-template-columns:repeat(2,minmax(0,1fr))}.camera-grid.count-3 .camera-tile:first-child{grid-column:1/-1}.camera-tile{display:flex;min-width:0;min-height:0;overflow:hidden;flex-direction:column;border:1px solid #293347;border-radius:10px;background:#151c28;cursor:pointer}.camera-tile.active-camera{border-color:#7183ff;box-shadow:0 0 0 1px #7183ff inset}.camera-video{position:relative;display:grid;flex:1;min-height:0;place-items:center;overflow:hidden;background:#020305}.camera-video app-webrtc-player,.camera-video app-hls-player,.camera-video iframe{display:block;width:100%;height:100%;border:0}.camera-video>button{background:#273248;color:#fff;box-shadow:none}.camera-status{position:absolute;top:8px;left:8px;padding:4px 6px;border-radius:5px;background:#3b2530;color:#ffbec6;font-size:8px;font-weight:900}.camera-status.online{background:#153c2b;color:#7ee2a8}.camera-tile footer{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px}.camera-tile footer span,.camera-tile footer b,.camera-tile footer small{display:block;min-width:0}.camera-tile footer span{overflow:hidden}.camera-tile footer b,.camera-tile footer small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.camera-tile footer small{margin-top:2px;color:#8c98aa;font-size:9px}.camera-tile footer button{display:grid;flex:0 0 30px;width:30px;height:30px;padding:0;place-items:center;background:#273248;box-shadow:none}.camera-empty{display:grid;flex:1;min-height:280px;place-content:center;gap:5px;padding:20px;color:#8c98aa;text-align:center}.camera-empty b{color:#eef2f7}.camera-control-error{margin:0;padding:0 10px 10px;color:#ff9ca8;font-size:10px;text-align:center}
   .camera-heading-actions{display:flex;align-items:center;gap:8px}.camera-heading .camera-talk{display:flex;align-items:center;gap:7px;min-height:44px;padding:9px 14px;touch-action:none;user-select:none;background:#4058df}.camera-heading .camera-talk span{color:inherit;font-size:17px;line-height:1;letter-spacing:0}.camera-heading .camera-talk.recording{background:#bd3042;box-shadow:0 0 0 4px #bd304235}
   .krampus-workspace .summary{grid-template-columns:repeat(2,minmax(0,1fr))}.krampus-workspace .help-button-settings,.krampus-workspace .serial-settings{grid-template-columns:1fr}.krampus-workspace .help-button-settings button,.krampus-workspace .serial-settings button{width:100%}.krampus-workspace .krampus-layout{grid-template-columns:1fr}
+  .ai-room-card{display:grid;gap:10px;margin:0 0 16px;padding:16px 18px;border:1px solid #c7d7fe;border-radius:12px;background:#f8faff}
+  .ai-room-main{display:flex;justify-content:space-between;align-items:center}
+  .ai-room-main span{display:block;color:#4058df;font-size:10px;font-weight:900;letter-spacing:.1em}
+  .ai-room-main b{display:block;margin-top:3px;font-size:16px}
+  .ai-room-main small{display:block;margin-top:2px;color:#64748b;font-size:11px}
+  .ai-room-chips{display:flex;gap:6px}
+  .chip-count{padding:4px 8px;border-radius:6px;background:#e0e7ff;color:#3730a3;font-size:11px;font-weight:800}
+  .chip-count.active{background:#dcfce7;color:#15803d}
+  .chip-status{padding:4px 8px;border-radius:6px;background:#f3f4f6;color:#4b5563;font-size:11px;font-weight:800}
+  .chip-status.occupied{background:#fee2e2;color:#b91c1c}
+  .ai-room-summary{margin:0;padding:8px 10px;background:#fff;border:1px solid #e0e7ff;border-radius:8px;font-size:12px;color:#1e293b}
+  .ai-room-actions{display:flex;gap:8px}
+  .ai-inspect-btn{background:#4058df}
+  .ai-ask-btn{background:#eef1f6;color:#334155;box-shadow:none}
+  .ai-dialog-backdrop{position:fixed;z-index:1200;inset:0;display:grid;place-items:center;padding:20px;background:#10182899;backdrop-filter:blur(4px)}
+  .ai-dialog{width:min(520px,100%);padding:20px;border-radius:14px;background:#fff;box-shadow:0 30px 80px #0006}
+  .ai-dialog header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .ai-dialog header h3{margin:0}
+  .ai-dialog .close-btn{padding:2px 8px;border:0;background:transparent;color:#667085;font-size:20px;cursor:pointer}
+  .quick-questions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .quick-questions .label{width:100%;font-size:11px;color:#64748b;font-weight:700}
+  .quick-questions button{padding:6px 10px;border-radius:6px;background:#f1f5f9;color:#334155;font-size:11px;box-shadow:none;border:1px solid #e2e8f0;cursor:pointer}
+  .quick-questions button:hover{background:#e2e8f0}
+  .custom-query{display:flex;gap:8px;margin-bottom:14px}
+  .custom-query input{flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:8px}
+  .custom-query button{background:#4058df}
+  .ai-response{padding:12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;font-size:13px}
+  .ai-response b{color:#166534;display:block;margin-bottom:4px}
+  .ai-response p{margin:0;color:#14532d}
+  .ai-response small{display:block;margin-top:6px;color:#15803d;font-size:10px}
+  .ai-loading{padding:10px;text-align:center;color:#64748b;font-size:12px}
   @media(max-width:1180px){.krampus-workspace{grid-template-columns:minmax(360px,43%) minmax(0,1fr)}}
   @media(max-width:900px){.krampus-workspace{grid-template-columns:1fr}.camera-pane{position:relative;top:auto;height:70vh;min-height:420px;grid-row:1}}
   @media(max-width:900px){.krampus-layout{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.krampus-actions{flex-wrap:wrap}}
@@ -198,6 +281,14 @@ export class KrampusComponent implements OnDestroy {
   activeSession=signal<GameSession|null>(null); roomGameId=signal<string|null>(null); sessionMinutes=signal(60); sessionBusy=signal(false); now=signal(Date.now());
   readonly atmosphere=ATMOSPHERE; readonly mechanisms=MECHANISMS; readonly oven=OVEN;
   toggleStates=signal<Partial<Record<ToggleKey,boolean>>>({});
+  aiPeopleCount=signal(0);
+  aiOccupied=signal(false);
+  aiDescription=signal("");
+  aiBusy=signal(false);
+  showAiDialog=signal(false);
+  aiAnswer=signal("");
+  aiToolCalled=signal("");
+  customQuestion="";
   private voiceSocket?:Socket;
   private doorbellSocket?:Socket;
   private recorder?:MediaRecorder;
@@ -273,6 +364,50 @@ export class KrampusComponent implements OnDestroy {
       if(call.room_id!==this.roomId()) return;
       this.doorbellCalls.update(items=>[call,...items.filter(item=>item.id!==call.id)].slice(0,20));
       if(call.id!==this.lastDoorbellId){ this.lastDoorbellId=call.id; this.playDoorbellAlert(); }
+    });
+    this.doorbellSocket.on("camera:ai:state",(st:any)=>{
+      if(st?.roomId===this.roomId()||this.roomCameras().some(c=>c.id===st?.cameraId)){
+        this.aiPeopleCount.set(Number(st.peopleCount||0));
+        this.aiOccupied.set(Boolean(st.occupied));
+      }
+    });
+  }
+
+  inspectWholeRoom(){
+    if(this.aiBusy()||!this.roomId()) return;
+    this.aiBusy.set(true);
+    this.http.post<any>(`/api/rooms/${this.roomId()}/ai/inspect`,{}).subscribe({
+      next:res=>{
+        this.aiBusy.set(false);
+        this.aiPeopleCount.set(res.estimatedPeople||0);
+        this.aiOccupied.set(Boolean(res.occupied));
+        if(res.summary) this.aiDescription.set(res.summary);
+      },
+      error:()=>this.aiBusy.set(false)
+    });
+  }
+
+  toggleAiDialog(){
+    this.showAiDialog.set(!this.showAiDialog());
+    this.aiAnswer.set("");
+    this.aiToolCalled.set("");
+  }
+
+  askCamera(question:string){
+    if(!question?.trim()||this.aiBusy()||!this.roomId()) return;
+    this.aiBusy.set(true);
+    this.aiAnswer.set("");
+    this.aiToolCalled.set("");
+    this.http.post<any>(`/api/rooms/${this.roomId()}/ai/query`,{question}).subscribe({
+      next:res=>{
+        this.aiBusy.set(false);
+        this.aiAnswer.set(res.answer||"Ответ получен.");
+        this.aiToolCalled.set(res.toolCalled||"");
+      },
+      error:()=>{
+        this.aiBusy.set(false);
+        this.aiAnswer.set("Не удалось получить ответ от AI-агента.");
+      }
     });
   }
   loadHelpButton(){

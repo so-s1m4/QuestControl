@@ -47,6 +47,7 @@ BOOTSTRAP_ADMIN_EMAIL=<email-владельца>
 BOOTSTRAP_ADMIN_PASSWORD=<одноразовый-сложный-пароль>
 TELEGRAM_BOT_TOKEN=<новый токен от BotFather>
 TELEGRAM_BOT_USERNAME=<имя бота без @>
+INTERNAL_API_SECRET=<минимум-32-случайных-символа-для-AI-сервиса>
 ```
 
 Секреты должны находиться только в Portainer. Не добавляйте их в GitHub или

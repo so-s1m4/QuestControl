@@ -23,3 +23,8 @@ agents/*/node_modules/
 *.pfx
 id_rsa*
 id_ed25519*
+__pycache__/
+*.pyc
+tmp/
+.VSCodeCounter/
+apps/document-runner/tmp/

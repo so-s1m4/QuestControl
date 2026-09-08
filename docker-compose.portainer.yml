@@ -81,6 +81,8 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       DOCUMENT_RUNNER_URL: http://document-runner:8080
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      AI_SERVICE_URL: http://ai-service:8088
     extra_hosts:
       - host.docker.internal:host-gateway
     depends_on:
@@ -122,6 +124,54 @@ services:
           - quest-control-web
     restart: unless-stopped
 
+  ai-service:
+    image: ${REGISTRY_IMAGE_PREFIX}/quest-control-ai-service:${IMAGE_TAG:-latest}
+    environment:
+      PORT: "8088"
+      NODE_ENV: production
+      YOLO_MODEL: yolo11n.pt
+      VLM_MODEL: moondream2
+      VLM_ENDPOINT: http://vlm:11434
+      API_INTERNAL_URL: http://api:3000
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      default:
+        aliases:
+          - quest-control-ai-service
+    restart: unless-stopped
+
+  vlm:
+    image: ollama/ollama:latest
+    container_name: quest-vlm
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    networks:
+      default:
+        aliases:
+          - quest-control-vlm
+    restart: unless-stopped
+
+  vlm-init:
+    image: curlimages/curl:latest
+    depends_on:
+      - vlm
+    restart: "no"
+    command: >
+      sh -c "
+        echo 'Waiting for Ollama to become ready...';
+        until curl -s http://vlm:11434/api/tags > /dev/null; do
+          sleep 2;
+        done;
+        echo 'Pulling Moondream VLM model...';
+        curl -X POST http://vlm:11434/api/pull -d '{\"name\": \"moondream\"}';
+        echo 'Moondream model pull completed.';
+      "
+
   nginx:
     image: ${REGISTRY_IMAGE_PREFIX}/quest-control-gateway:${IMAGE_TAG:-latest}
     ports:
@@ -145,6 +195,7 @@ volumes:
   postgres_data:
   redis_data:
   certbot_data:
+  ollama_data:
 
 networks:
   document-sandbox:

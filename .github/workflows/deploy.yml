@@ -84,6 +84,16 @@ jobs:
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,mode=max,scope=gateway
 
+      - uses: docker/build-push-action@v6
+        with:
+          context: apps/ai-service
+          push: true
+          tags: |
+            ghcr.io/${{ steps.names.outputs.owner }}/quest-control-ai-service:latest
+            ghcr.io/${{ steps.names.outputs.owner }}/quest-control-ai-service:${{ github.sha }}
+          cache-from: type=gha,scope=ai-service
+          cache-to: type=gha,mode=max,scope=ai-service
+
   deploy:
     needs: images
     if: vars.DEPLOY_ENABLED == 'true'

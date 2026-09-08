@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import { EventEmitter } from "node:events";
 import net from "node:net";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -20,6 +21,13 @@ import { TelegramBot, escapeTelegramHtml, renderTelegramTemplate } from "./teleg
 import { TuyaCloud } from "./tuya.js";
 import { TuyaMessageConsumer } from "./tuya-messages.js";
 import { TuyaWebRTCManager } from "./tuya-webrtc.js";
+import { CameraFrameProvider } from "./camera-frame-provider.js";
+import { LocalVisionService } from "./local-vision-service.js";
+import { CameraEventEngine } from "./camera-event-engine.js";
+import { CameraVisionController } from "./camera-vision-controller.js";
+import { CameraAIAgent } from "./camera-ai-agent.js";
+import { runMigrations } from "./migrator.js";
+import { startAiWorkerSyncSupervisor } from "./ai-worker-supervisor.js";
 import {
   checkinTokenMatches,
   createCheckinToken,
@@ -28,6 +36,8 @@ import {
   readCheckinToken,
   readExtraGuestAuthorization,
 } from "./checkin-links.js";
+
+const DEV_SECRET_FALLBACK = "development-internal-ai-secret-key-32chars-min";
 
 const env = z.object({
   PORT: z.coerce.number().default(3000),
@@ -42,6 +52,7 @@ const env = z.object({
   TUYA_CLIENT_ID: z.string().optional(),
   TUYA_CLIENT_SECRET: z.string().optional(),
   TUYA_MESSAGE_URL: z.string().url().default("wss://mqe.tuyaeu.com:8285/"),
+  AI_SERVICE_URL: z.string().url().default("http://127.0.0.1:8088"),
   TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
   TIME_TO_GROW_CLUB_ID: z.string().optional(),
   TIME_TO_GROW_VIENNA_CLUB_ID: z.string().default("01js42s5vwvwrx3fme9zvgdj1v"),
@@ -54,6 +65,21 @@ const env = z.object({
   TELEGRAM_BOT_TOKEN: z.string().regex(/^\d+:[A-Za-z0-9_-]{30,}$/).optional(),
   TELEGRAM_BOT_USERNAME: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{4,31}$/).optional(),
   DOCUMENT_RUNNER_URL: z.string().url().default("http://document-runner:8080"),
+  INTERNAL_API_SECRET: z
+    .string()
+    .min(16)
+    .refine((val) => val !== "internal-ai-service-secret" || process.env.NODE_ENV !== "production", {
+      message: "INTERNAL_API_SECRET cannot be the default insecure value in production",
+    })
+    .refine((val) => val !== DEV_SECRET_FALLBACK || process.env.NODE_ENV !== "production", {
+      message: "INTERNAL_API_SECRET cannot use development fallback in production",
+    })
+    .default(() => {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("INTERNAL_API_SECRET must be explicitly set in production");
+      }
+      return DEV_SECRET_FALLBACK;
+    }),
 }).parse(process.env);
 
 const db = new pg.Pool({ connectionString: env.DATABASE_URL, max: 10 });
@@ -99,6 +125,73 @@ app.use(rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: true, legacyH
 const server = http.createServer(app);
 const vrVncServer = new WebSocketServer({ noServer:true });
 const io = new Server(server, { path: "/socket.io", cors: { origin: env.CORS_ORIGIN.split(","), credentials: true }, maxHttpBufferSize: 1e6 });
+const cameraFrameProvider = new CameraFrameProvider();
+const localVisionService = new LocalVisionService({ baseUrl: env.AI_SERVICE_URL, internalSecret: env.INTERNAL_API_SECRET });
+async function syncAiWorkersSafe() {
+  try {
+    const { rows } = await db.query(
+      "SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.ai_enabled = true"
+    );
+    await localVisionService.syncWorkers(rows);
+  } catch (err) {
+    console.warn("AI worker sync warning:", err.message);
+  }
+}
+const cameraEventEngine = new CameraEventEngine({
+  db,
+  io,
+  onNotification: async (type, data) => {
+    try {
+      let photoBuffer = null;
+      let clipBuffer = null;
+
+      if (data?.cameraId) {
+        if (type === "UNUSUAL_ACTIVITY") {
+          clipBuffer = await localVisionService.getRecentClip(data.cameraId, 10).catch(() => null);
+        }
+        const frame = cameraFrameProvider.getLatestFrame(data.cameraId) ||
+          await localVisionService.getLatestFrame(data.cameraId).catch(() => null);
+        if (frame?.buffer) {
+          photoBuffer = frame.buffer;
+        }
+      }
+
+      if (type === "ROOM_EMPTY") {
+        await sendTelegramImportantLog("roomEmpty", "Комната освободилась", [
+          ["Камера", data.cameraId],
+          ["Комната", data.roomId || "—"],
+          ["Статус", "Все игроки вышли"],
+        ], { photoBuffer });
+      } else if (type === "UNUSUAL_ACTIVITY") {
+        await sendTelegramImportantLog("unusualActivity", "Необычная активность в квесте", [
+          ["Камера", data.cameraId],
+          ["Событие", data.description || "Аномалия"],
+        ], { photoBuffer, clipBuffer });
+      } else if (type === "CAMERA_OFFLINE") {
+        await sendTelegramImportantLog("cameraOffline", "Потерян видеопоток камеры", [
+          ["Камера", data.cameraId],
+          ["Статус", "OFFLINE (последний кадр)"],
+        ], { photoBuffer });
+      }
+    } catch (err) {
+      console.error("Failed to send Telegram AI notification:", err.message);
+    }
+  },
+});
+const cameraVisionController = new CameraVisionController({
+  tuya,
+  db,
+  frameProvider: cameraFrameProvider,
+  visionService: localVisionService,
+  eventEngine: cameraEventEngine,
+});
+const cameraAIAgent = new CameraAIAgent({
+  db,
+  eventEngine: cameraEventEngine,
+  frameProvider: cameraFrameProvider,
+  visionService: localVisionService,
+  visionController: cameraVisionController,
+});
 const key = (v) => new TextEncoder().encode(v);
 const settingsKey=crypto.createHash("sha256").update(env.JWT_ACCESS_SECRET,"utf8").digest();
 function encryptSetting(value){
@@ -163,10 +256,30 @@ async function telegramSettings() {
   catch { telegramSettingsCache = { ...defaultTelegramSettings }; }
   return telegramSettingsCache;
 }
-const telegramImportantLogEvents = ["sessionRecorded","sessionStarted","sessionFinished","sessionCancelled","bookingConfirmed","checkinCompleted"];
+const telegramImportantLogEvents = [
+  "sessionRecorded",
+  "sessionStarted",
+  "sessionFinished",
+  "sessionCancelled",
+  "bookingConfirmed",
+  "checkinCompleted",
+  "roomEmpty",
+  "unusualActivity",
+  "cameraOffline",
+];
 const defaultTelegramImportantLogSettings = {
   recipientUserId: null,
-  events: { sessionRecorded: true, sessionStarted: false, sessionFinished: true, sessionCancelled: true, bookingConfirmed: true, checkinCompleted: true },
+  events: {
+    sessionRecorded: true,
+    sessionStarted: false,
+    sessionFinished: true,
+    sessionCancelled: true,
+    bookingConfirmed: true,
+    checkinCompleted: true,
+    roomEmpty: true,
+    unusualActivity: true,
+    cameraOffline: true,
+  },
 };
 const telegramImportantLogSettingsInput = z.object({
   recipientUserId: z.string().uuid().nullable(),
@@ -182,7 +295,7 @@ async function telegramImportantLogSettings() {
   } catch { telegramImportantLogSettingsCache = structuredClone(defaultTelegramImportantLogSettings); }
   return telegramImportantLogSettingsCache;
 }
-async function sendTelegramImportantLog(event, title, rows = []) {
+async function sendTelegramImportantLog(event, title, rows = [], { photoBuffer = null, clipBuffer = null } = {}) {
   if (!telegramBot?.enabled) return;
   const settings = await telegramImportantLogSettings();
   if (!settings.recipientUserId || !settings.events[event]) return;
@@ -191,8 +304,19 @@ async function sendTelegramImportantLog(event, title, rows = []) {
   if (!recipient) return;
   const details = rows.filter(([, value]) => value !== null && value !== undefined && value !== "")
     .map(([label, value]) => `${escapeTelegramHtml(label)}: <b>${escapeTelegramHtml(value)}</b>`).join("\n");
-  try { await telegramBot.sendMessage(recipient.chat_id, `<b>🔔 ${escapeTelegramHtml(title)}</b>${details ? `\n\n${details}` : ""}`); }
-  catch (error) { console.error("Telegram important log notification failed", { event, userId: settings.recipientUserId, error: error.message }); }
+  const caption = `<b>🔔 ${escapeTelegramHtml(title)}</b>${details ? `\n\n${details}` : ""}`;
+
+  try {
+    if (clipBuffer) {
+      await telegramBot.sendAnimation(recipient.chat_id, clipBuffer, caption);
+    } else if (photoBuffer) {
+      await telegramBot.sendPhoto(recipient.chat_id, photoBuffer, caption);
+    } else {
+      await telegramBot.sendMessage(recipient.chat_id, caption);
+    }
+  } catch (error) {
+    console.error("Telegram important log notification failed", { event, userId: settings.recipientUserId, error: error.message });
+  }
 }
 async function telegramUserCanAccessLocation(userId, role, locationId) {
   if (role === "OWNER") return true;
@@ -247,11 +371,158 @@ async function sendTelegramBookingNotification(booking, templateName, keyPrefix)
     } catch (error) { console.error("Telegram booking notification failed", { bookingId: booking.id, userId: recipient.user_id, error: error.message }); }
   }
 }
+async function sendCameraMediaToTelegram(chatId, camera, isClip) {
+  const state = cameraEventEngine.getState(camera.id);
+  const peopleCount = state?.peopleCount ?? 0;
+  const occupied = state?.occupied ? "Да" : "Нет";
+  const timeStr = new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const roomTitle = camera.room_name || camera.name || "Камера";
+
+  if (isClip) {
+    const clipBuffer = await localVisionService.getRecentClip(camera.id, 10).catch(() => null);
+    if (clipBuffer) {
+      const caption = `<b>🎬 Клип: ${escapeTelegramHtml(roomTitle)}</b>\nЛокация: ${escapeTelegramHtml(camera.location_name || "—")}\nЛюдей: <b>${peopleCount}</b> | Занято: <b>${occupied}</b>\nВремя: <code>${timeStr}</code>`;
+      await telegramBot.sendAnimation(chatId, clipBuffer, caption);
+      return true;
+    }
+  }
+
+  const frame = cameraFrameProvider.getLatestFrame(camera.id) ||
+    await localVisionService.getLatestFrame(camera.id).catch(() => null);
+
+  if (frame?.buffer) {
+    const caption = `<b>📸 Снимок: ${escapeTelegramHtml(roomTitle)}</b>\nЛокация: ${escapeTelegramHtml(camera.location_name || "—")}\nЛюдей: <b>${peopleCount}</b> | Занято: <b>${occupied}</b>\nВремя: <code>${timeStr}</code>`;
+    await telegramBot.sendPhoto(chatId, frame.buffer, caption);
+    return true;
+  }
+
+  await telegramBot.sendMessage(
+    chatId,
+    `Камера в «<b>${escapeTelegramHtml(roomTitle)}</b>» подключена, но кадры ещё не поступили в буфер. Повторите запрос через несколько секунд.`
+  );
+  return true;
+}
+
+async function telegramHandleAiCommand(connection, message, text) {
+  const clipMatch = text.match(/(?:(?:пришли|покажи|дай|сделай|отправь)\s+)?(?:клип|видео|gif|animation|clip)(?:\s+(?:из|с|в|от|комнаты))?\s+([a-zA-Zа-яА-Я0-9_\s-]+)/i) ||
+    text.match(/^\/clip(?:\s+([a-zA-Zа-яА-Я0-9_\s-]+))?/i);
+
+  const photoMatch = text.match(/(?:(?:пришли|покажи|дай|сделай|отправь)\s+)?(?:снимок|фото|кадр|snapshot|photo|pic)(?:\s+(?:из|с|в|от|комнаты))?\s+([a-zA-Zа-яА-Я0-9_\s-]+)/i) ||
+    text.match(/^\/(?:photo|snapshot)(?:\s+([a-zA-Zа-яА-Я0-9_\s-]+))?/i);
+
+  const statusMatch = text.match(/(?:что\s+(?:в|с)|статус|состояние)\s+(?:комнат[еы]\s+)?([a-zA-Zа-яА-Я0-9_\s-]+)/i) ||
+    text.match(/^\/status(?:\s+([a-zA-Zа-яА-Я0-9_\s-]+))?/i);
+
+  if (!clipMatch && !photoMatch && !statusMatch) {
+    return false;
+  }
+
+  const isClip = Boolean(clipMatch);
+  const roomQuery = (clipMatch?.[1] || photoMatch?.[1] || statusMatch?.[1] || "").trim();
+
+  if (!roomQuery) {
+    await telegramBot.sendMessage(
+      message.chat.id,
+      "Укажите название комнаты, например:\n• <i>Пришли снимок из Krampus</i>\n• <i>Клип из Krampus</i>\n• <code>/photo Krampus</code>"
+    );
+    return true;
+  }
+
+  const { rows: rooms } = await db.query(
+    `SELECT r.*, l.name as location_name
+     FROM rooms r
+     JOIN locations l ON l.id = r.location_id
+     WHERE lower(r.name) = lower($1) OR lower(r.name) LIKE lower($2)
+     ORDER BY (lower(r.name) = lower($1)) DESC, r.name ASC
+     LIMIT 5`,
+    [roomQuery, `%${roomQuery}%`]
+  );
+
+  let targetCamera = null;
+
+  if (rooms.length > 0) {
+    const room = rooms[0];
+    if (!(await telegramUserCanAccessLocation(connection.user_id, connection.role, room.location_id))) {
+      await telegramBot.sendMessage(message.chat.id, "У вас нет доступа к локации этой комнаты.");
+      return true;
+    }
+
+    const { rows: cams } = await db.query(
+      `SELECT * FROM cameras WHERE room_id = $1 ORDER BY ai_enabled DESC, created_at ASC LIMIT 1`,
+      [room.id]
+    );
+
+    if (!cams.length) {
+      await telegramBot.sendMessage(
+        message.chat.id,
+        `В комнате «<b>${escapeTelegramHtml(room.name)}</b>» нет подключенных камер.`
+      );
+      return true;
+    }
+
+    targetCamera = cams[0];
+    targetCamera.room_name = room.name;
+    targetCamera.location_name = room.location_name;
+  } else {
+    const { rows: cams } = await db.query(
+      `SELECT c.*, COALESCE(c.location_id, r.location_id) as location_id, r.name as room_name, l.name as location_name
+       FROM cameras c
+       LEFT JOIN rooms r ON r.id = c.room_id
+       LEFT JOIN locations l ON l.id = COALESCE(c.location_id, r.location_id)
+       WHERE lower(c.name) = lower($1) OR lower(c.name) LIKE lower($2)
+       LIMIT 5`,
+      [roomQuery, `%${roomQuery}%`]
+    );
+
+    if (cams.length > 0) {
+      const cam = cams[0];
+      if (!(await telegramUserCanAccessLocation(connection.user_id, connection.role, cam.location_id))) {
+        await telegramBot.sendMessage(message.chat.id, "У вас нет доступа к этой локации.");
+        return true;
+      }
+      targetCamera = cam;
+    }
+  }
+
+  if (!targetCamera) {
+    const { rows: allRooms } = await db.query(
+      `SELECT r.name, l.name as location_name, r.location_id FROM rooms r JOIN locations l ON l.id=r.location_id ORDER BY l.name, r.name`
+    );
+    const accessible = [];
+    for (const r of allRooms) {
+      if (await telegramUserCanAccessLocation(connection.user_id, connection.role, r.location_id)) {
+        accessible.push(`• ${escapeTelegramHtml(r.name)} (${escapeTelegramHtml(r.location_name)})`);
+      }
+    }
+    await telegramBot.sendMessage(
+      message.chat.id,
+      `Комната «<b>${escapeTelegramHtml(roomQuery)}</b>» не найдена.\n\n<b>Доступные комнаты:</b>\n${accessible.slice(0, 10).join("\n") || "Нет доступных комнат"}`
+    );
+    return true;
+  }
+
+  return await sendCameraMediaToTelegram(message.chat.id, targetCamera, isClip);
+}
+
 async function telegramHandleMessage(message) {
   const text = String(message.text || "").trim();
   const startCode = text.match(/^\/start(?:\s+([A-Za-z0-9_-]{20,120}))?$/)?.[1];
   if (!startCode) {
-    if (/^\/(help|start)/.test(text)) await telegramBot.sendMessage(message.chat.id, "<b>QuestControl</b>\n\nОткройте в панели раздел «Telegram» и нажмите «Подключить». Там появится персональная ссылка для привязки аккаунта.");
+    const connection = (await db.query(
+      `SELECT tc.user_id,u.display_name,role.name role FROM telegram_connections tc JOIN users u ON u.id=tc.user_id JOIN roles role ON role.id=u.role_id WHERE (tc.telegram_user_id=$1 OR tc.chat_id=$2) AND u.is_active=true`,
+      [message.from.id, message.chat.id]
+    )).rows[0];
+
+    if (connection) {
+      const handled = await telegramHandleAiCommand(connection, message, text);
+      if (handled) return;
+    }
+
+    if (/^\/(help|start)/.test(text)) {
+      const extraHelp = connection ? "\n\n<b>AI Видеонаблюдение:</b>\n• «<i>Пришли снимок из Krampus</i>» или <code>/photo Krampus</code>\n• «<i>Клип из Krampus</i>» или <code>/clip Krampus</code>\n• «<i>Статус Krampus</i>»" : "";
+      await telegramBot.sendMessage(message.chat.id, `<b>QuestControl</b>\n\nОткройте в панели раздел «Telegram» и нажмите «Подключить». Там появится персональная ссылка для привязки аккаунта.${extraHelp}`);
+      return;
+    }
     return;
   }
   if (message.chat?.type !== "private") return telegramBot.sendMessage(message.chat.id, "Для защиты данных привяжите аккаунт в личном чате с ботом.");
@@ -2784,6 +3055,7 @@ app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) 
     }
     const result = { discovered: devices.length, cameras: cameras.length, created, updated };
     await audit(req, "camera.sync", "integration", "tuya", null, result);
+    if (created > 0 || updated > 0) void syncAiWorkersSafe();
     res.json(result);
   } catch (error) {
     res.status(502).json({ error: error.code || "TUYA_SYNC_FAILED", message: error.message });
@@ -2815,6 +3087,7 @@ app.post("/cameras", auth, permit("cameras:manage"), async (req, res) => {
     [input.roomId, room.location_id, input.name, input.provider, input.externalId || null, input.streamKey || null]
   );
   await audit(req, "camera.create", "camera", rows[0].id, null, rows[0]);
+  void syncAiWorkersSafe();
   res.status(201).json(rows[0]);
 });
 
@@ -2830,6 +3103,7 @@ app.patch("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
     [input.roomId, room.location_id, input.name, input.provider, input.externalId || null, input.streamKey || null, req.params.id]
   );
   await audit(req, "camera.update", "camera", rows[0].id, before, rows[0]);
+  void syncAiWorkersSafe();
   res.json(rows[0]);
 });
 
@@ -2999,6 +3273,7 @@ app.delete("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
   const { rows } = await db.query("DELETE FROM cameras WHERE id=$1 RETURNING *", [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
   await audit(req, "camera.delete", "camera", rows[0].id, rows[0], null);
+  void syncAiWorkersSafe();
   res.status(204).end();
 });
 
@@ -3940,8 +4215,10 @@ app.post("/cameras/:id/control",auth,permit("devices:command"),async(req,res)=>{
   if(camera.provider!=="TUYA"||!camera.external_id)return res.status(409).json({error:"CAMERA_CONTROL_NOT_SUPPORTED"});
   if(!tuya.configured)return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
   try{
-    if(input.action==="ptz")await tuya.ptz(camera.external_id,input.direction);
-    else{
+    if(input.action==="ptz") {
+      cameraVisionController.recordManualPtz(camera.id);
+      await tuya.ptz(camera.external_id,input.direction);
+    } else {
       const value={auto:"0",off:"1",on:"2"}[input.mode];
       await tuya.sendCommands(camera.external_id,[{code:"basic_nightvision",value}]);
     }
@@ -3951,6 +4228,359 @@ app.post("/cameras/:id/control",auth,permit("devices:command"),async(req,res)=>{
     console.warn(req.requestId,"Tuya camera control failed",camera.external_id,error.code,error.message);
     res.status(502).json({error:"TUYA_CAMERA_CONTROL_FAILED",providerCode:error.code,message:error.message});
   }
+});
+
+app.post("/cameras/:id/ai/frame", auth, permit("cameras:read"), async (req, res) => {
+  const camera = (await db.query("SELECT id, room_id, ai_enabled, tracking_enabled FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, camera.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+
+  let imageBuffer = null;
+  if (req.body?.image) {
+    const raw = String(req.body.image).includes(",") ? req.body.image.split(",")[1] : req.body.image;
+    imageBuffer = Buffer.from(raw, "base64");
+  } else if (Buffer.isBuffer(req.body)) {
+    imageBuffer = req.body;
+  }
+
+  if (!imageBuffer || imageBuffer.length === 0) {
+    return res.status(400).json({ error: "MISSING_FRAME" });
+  }
+
+  cameraFrameProvider.pushFrame(camera.id, imageBuffer, req.body?.mimeType || "image/jpeg");
+
+  if (camera.ai_enabled === false) {
+    return res.json({ ok: true, aiEnabled: false, state: cameraEventEngine.getState(camera.id) });
+  }
+
+  const detection = await localVisionService.detect({
+    cameraId: camera.id,
+    imageBuffer,
+    conf: Number(req.body?.conf || 0.25),
+  });
+
+  const state = await cameraEventEngine.processDetection({
+    cameraId: camera.id,
+    roomId: camera.room_id,
+    detectionResult: detection,
+  });
+
+  res.json({ ok: true, state, peopleCount: detection.peopleCount, people: detection.people });
+});
+
+app.get("/cameras/:id/ai/state", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const state = cameraEventEngine.getState(req.params.id);
+  res.json(state);
+});
+
+app.get("/cameras/ai/states", auth, permit("cameras:read"), async (_req, res) => {
+  res.json(cameraEventEngine.getAllStates());
+});
+
+app.get("/cameras/:id/ai/events", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+  const events = await cameraEventEngine.getRecentEvents({ cameraId: req.params.id, limit });
+  res.json(events);
+});
+
+app.get("/cameras/:id/ai/clip", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const count = Math.min(Math.max(Number(req.query.count || 10), 1), 20);
+  const clipBuffer = await localVisionService.getRecentClip(req.params.id, count);
+  if (!clipBuffer) return res.status(404).json({ error: "NO_CLIP_AVAILABLE" });
+  res.set("Content-Type", "image/gif");
+  res.set("Cache-Control", "no-cache, no-store");
+  res.send(clipBuffer);
+});
+
+app.get("/cameras/:id/ai/snapshot", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const frame = cameraFrameProvider.getLatestFrame(req.params.id) ||
+    await localVisionService.getLatestFrame(req.params.id);
+  if (!frame?.buffer) return res.status(404).json({ error: "NO_FRAME_AVAILABLE" });
+  res.set("Content-Type", frame.mimeType || "image/jpeg");
+  res.set("Cache-Control", "no-cache, no-store");
+  res.send(frame.buffer);
+});
+
+app.get("/rooms/:id/ai/events", auth, permit("cameras:read"), async (req, res) => {
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+  const events = await cameraEventEngine.getRecentEvents({ roomId: req.params.id, limit });
+  res.json(events);
+});
+
+app.post("/cameras/:id/ai/analyze", auth, permit("cameras:read"), async (req, res) => {
+  const camera = (await db.query("SELECT id, room_id, analysis_enabled FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, camera.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  if (camera.analysis_enabled === false) {
+    return res.status(409).json({ error: "AI_ANALYSIS_DISABLED", description: "Анализ отключен в настройках этой камеры" });
+  }
+
+  const question = String(req.body?.question || "Determine what happened during these frames.").slice(0, 300);
+  const frames = cameraFrameProvider.getFrames(camera.id, 10, 4);
+  const state = cameraEventEngine.getState(camera.id);
+
+  const result = await localVisionService.analyze({
+    cameraId: camera.id,
+    frames,
+    question,
+    manual: true,
+    yoloContext: state,
+  });
+
+  await audit(req, "camera.ai.analyze", "camera", camera.id, null, { question, result });
+  res.json(result);
+});
+
+app.post("/rooms/:id/ai/inspect", auth, permit("devices:command"), async (req, res) => {
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  const report = await cameraVisionController.inspectRoom(req.params.id);
+  await audit(req, "room.ai.inspect", "room", req.params.id, null, report);
+  res.json(report);
+});
+
+app.post("/rooms/:id/ai/query", auth, permit("cameras:read"), async (req, res) => {
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  const question = z.string().min(1).max(300).parse(req.body?.question);
+  const canControlPtz = isOwner(req) || (req.user?.permissions || []).some(p => p === "*" || p === "devices:command");
+  const response = await cameraAIAgent.answerQuestion({ roomId: req.params.id, question, canControlPtz });
+  res.json(response);
+});
+
+// Internal signaling & stream worker endpoints (for local ai-service)
+const requireInternalSecret = (req, res, next) => {
+  const secret = req.headers["x-internal-secret"] || req.query?.secret;
+  if (!secret || typeof secret !== "string") {
+    return res.status(403).json({ error: "FORBIDDEN_INTERNAL_ONLY" });
+  }
+  const secretBuf = Buffer.from(secret);
+  const expectedBuf = Buffer.from(env.INTERNAL_API_SECRET);
+  if (secretBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(secretBuf, expectedBuf)) {
+    return res.status(403).json({ error: "FORBIDDEN_INTERNAL_ONLY" });
+  }
+  next();
+};
+
+const internalSessions = new Map();
+
+app.get("/internal/cameras", requireInternalSecret, async (_req, res) => {
+  const { rows } = await db.query(
+    "SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.ai_enabled = true"
+  );
+  res.json(rows);
+});
+
+app.post("/internal/tuya-webrtc/session", requireInternalSecret, async (req, res) => {
+  const { cameraId } = req.body || {};
+  const camera = (await db.query("SELECT * FROM cameras WHERE id=$1", [cameraId])).rows[0];
+  if (!camera || camera.provider !== "TUYA" || !camera.external_id) {
+    return res.status(404).json({ error: "TUYA_CAMERA_NOT_FOUND" });
+  }
+  try {
+    const dummySocket = new EventEmitter();
+    dummySocket.id = `internal-${crypto.randomUUID()}`;
+    dummySocket.connected = true;
+
+    const pendingSignals = [];
+    dummySocket.on("signal", (sig) => {
+      pendingSignals.push(sig);
+    });
+
+    const result = await tuyaWebRTC.startSession({ deviceId: camera.external_id, socket: dummySocket });
+    internalSessions.set(result.sessionId, { dummySocket, deviceId: camera.external_id, pendingSignals });
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ error: error.code || "SESSION_FAILED" });
+  }
+});
+
+app.post("/internal/tuya-webrtc/signal", requireInternalSecret, async (req, res) => {
+  const { sessionId, type, payload } = req.body || {};
+  const sess = internalSessions.get(sessionId);
+  if (!sess) return res.status(404).json({ error: "SESSION_NOT_FOUND" });
+
+  try {
+    let answerPromise = null;
+    if (type === "offer") {
+      answerPromise = new Promise((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error("Tuya answer timeout")), 10000);
+        const existingAns = sess.pendingSignals.find((s) => s.type === "answer");
+        if (existingAns) {
+          clearTimeout(to);
+          return resolve(existingAns.payload);
+        }
+        sess.dummySocket.on("signal", function onSig(sig) {
+          if (sig?.type === "answer") {
+            clearTimeout(to);
+            sess.dummySocket.off("signal", onSig);
+            resolve(sig.payload);
+          }
+        });
+      });
+    }
+
+    await tuyaWebRTC.signal({ sessionId, socket: sess.dummySocket, type, payload: payload || "" });
+    if (answerPromise) {
+      const answer = await answerPromise;
+      const initialCandidates = sess.pendingSignals
+        .filter((s) => s.type === "candidate")
+        .map((s) => s.payload);
+      return res.json({ ok: true, answer, candidates: initialCandidates });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/internal/tuya-webrtc/signals", requireInternalSecret, (req, res) => {
+  const { sessionId } = req.query || {};
+  const sess = internalSessions.get(String(sessionId));
+  if (!sess) return res.status(404).json({ error: "SESSION_NOT_FOUND" });
+  const signals = sess.pendingSignals.splice(0, sess.pendingSignals.length);
+  res.json({ ok: true, signals });
+});
+
+app.post("/internal/tuya/hls", requireInternalSecret, async (req, res) => {
+  const { cameraId } = req.body || {};
+  const camera = (await db.query("SELECT * FROM cameras WHERE id=$1", [cameraId])).rows[0];
+  if (!camera || !camera.external_id) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  try {
+    const endpoint = await tuya.allocateHls(camera.external_id);
+    res.json({ endpoint });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post("/internal/ai/camera-state", requireInternalSecret, async (req, res) => {
+  const { cameraId, peopleCount, people, motion, unusual, unusualDescription, status, image } = req.body || {};
+  if (!cameraId) return res.status(400).json({ error: "MISSING_CAMERA_ID" });
+
+  const camera = (await db.query(
+    "SELECT c.id, c.room_id, COALESCE(c.location_id, r.location_id) AS location_id, c.ai_enabled, c.tracking_enabled FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.id = $1",
+    [cameraId]
+  )).rows[0];
+
+  if (!camera || camera.ai_enabled === false) {
+    return res.json({ ok: true, ignored: true });
+  }
+
+  if (image) {
+    try {
+      const frameBuf = Buffer.from(image, "base64");
+      cameraFrameProvider.pushFrame(camera.id, frameBuf);
+    } catch (err) {
+      console.warn("Failed to push worker frame into cameraFrameProvider:", err.message);
+    }
+  }
+
+  if (status === "OFFLINE" || status === "ONLINE") {
+    await cameraEventEngine.handleCameraStatus({
+      cameraId: camera.id,
+      status,
+      roomId: camera.room_id,
+      locationId: camera.location_id,
+    });
+  }
+
+  if (status !== "OFFLINE" && peopleCount !== undefined) {
+    const state = await cameraEventEngine.processDetection({
+      cameraId: camera.id,
+      roomId: camera.room_id,
+      locationId: camera.location_id,
+      detectionResult: {
+        peopleCount,
+        people: people || [],
+        motion: Boolean(motion),
+        unusual: Boolean(unusual),
+        unusualDescription,
+      },
+    });
+
+    if (camera.tracking_enabled && Array.isArray(people) && people.length > 0) {
+      cameraVisionController.processAutoTracking(camera.id, people).catch(() => {});
+    }
+
+    return res.json({ ok: true, state });
+  }
+
+  res.json({ ok: true, status });
+});
+
+app.patch("/cameras/:id/ai/settings", auth, permit("cameras:manage"), async (req, res) => {
+  const input = z.object({
+    aiEnabled: z.boolean().optional(),
+    trackingEnabled: z.boolean().optional(),
+    analysisEnabled: z.boolean().optional(),
+  }).parse(req.body);
+
+  const before = (await db.query("SELECT * FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!before) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, before.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+
+  const aiEnabled = input.aiEnabled ?? before.ai_enabled ?? true;
+  const trackingEnabled = input.trackingEnabled ?? before.tracking_enabled ?? false;
+  const analysisEnabled = input.analysisEnabled ?? before.analysis_enabled ?? true;
+
+  const { rows } = await db.query(
+    `UPDATE cameras SET ai_enabled=$1, tracking_enabled=$2, analysis_enabled=$3 WHERE id=$4 RETURNING *`,
+    [aiEnabled, trackingEnabled, analysisEnabled, req.params.id]
+  );
+
+  cameraVisionController.setTracking(req.params.id, trackingEnabled);
+  void syncAiWorkersSafe();
+  await audit(req, "camera.ai.settings.update", "camera", req.params.id, before, rows[0]);
+  res.json(rows[0]);
+});
+
+app.get("/cameras/:id/presets", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const presets = await cameraVisionController.getPresets(req.params.id);
+  res.json(presets);
+});
+
+app.post("/cameras/:id/presets", auth, permit("cameras:manage"), async (req, res) => {
+  const { name, ptzPreset, description } = z.object({
+    name: z.string().min(1).max(80),
+    ptzPreset: z.string().min(1).max(80),
+    description: z.string().max(200).optional().default(""),
+  }).parse(req.body);
+
+  const camera = (await db.query("SELECT id FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, camera.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+
+  const { rows } = await db.query(
+    `INSERT INTO camera_presets(camera_id, name, ptz_preset, description)
+     VALUES($1, $2, $3, $4)
+     ON CONFLICT(camera_id, name) DO UPDATE SET ptz_preset=excluded.ptz_preset, description=excluded.description
+     RETURNING *`,
+    [req.params.id, name, ptzPreset, description]
+  );
+  res.status(201).json(rows[0]);
+});
+
+app.post("/cameras/:id/presets/:name/goto", auth, permit("devices:command"), async (req, res) => {
+  const camera = (await db.query("SELECT id FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, camera.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+
+  await cameraVisionController.lookAtPreset(camera.id, req.params.name);
+  await audit(req, "camera.preset.goto", "camera", camera.id, null, { preset: req.params.name });
+  res.json({ ok: true, preset: req.params.name });
 });
 
 app.get("/rooms/:id/doorbell-calls", auth, permit("cameras:read"), async (req,res) => {
@@ -4171,7 +4801,43 @@ io.use(async (socket,next) => {
   try { socket.data.user=(await jwtVerify(socket.handshake.auth.token,key(env.JWT_ACCESS_SECRET))).payload; next(); }
   catch { next(new Error("unauthorized")); }
 });
-io.on("connection", socket => socket.join(`user:${socket.data.user.sub}`));
+io.on("connection", async (socket) => {
+  socket.join(`user:${socket.data.user.sub}`);
+  try {
+    const user = socket.data.user;
+    if (isOwner({ user })) {
+      const { rows } = await db.query("SELECT id FROM locations");
+      for (const r of rows) socket.join(`location:${r.id}`);
+      const { rows: cams } = await db.query("SELECT id FROM cameras");
+      for (const c of cams) socket.join(`camera:${c.id}`);
+    } else if (user.role === "CAMERA_GUEST" && Array.isArray(user.cameraIds)) {
+      for (const cid of user.cameraIds) socket.join(`camera:${cid}`);
+    } else if (user.role === "CAMERA_VIEWER") {
+      const { rows } = await db.query("SELECT camera_id FROM user_cameras WHERE user_id=$1", [user.sub]);
+      for (const r of rows) socket.join(`camera:${r.camera_id}`);
+    } else {
+      const { rows } = await db.query("SELECT location_id FROM user_locations WHERE user_id=$1", [user.sub]);
+      for (const r of rows) socket.join(`location:${r.location_id}`);
+      const { rows: cams } = await db.query(`
+        SELECT c.id FROM cameras c
+        LEFT JOIN rooms r ON r.id = c.room_id
+        WHERE COALESCE(c.location_id, r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)
+      `, [user.sub]);
+      for (const c of cams) socket.join(`camera:${c.id}`);
+    }
+  } catch (err) {
+    console.error("Failed to join socket rooms:", err.message);
+  }
+
+  socket.on("subscribe:camera", async (cameraId, ack = () => {}) => {
+    if (await cameraAllowed({ user: socket.data.user }, cameraId)) {
+      socket.join(`camera:${cameraId}`);
+      ack({ ok: true });
+    } else {
+      ack({ ok: false, error: "FORBIDDEN" });
+    }
+  });
+});
 
 app.use((err, req, res, _next) => {
   console.error(req.requestId, err);
@@ -4179,6 +4845,11 @@ app.use((err, req, res, _next) => {
   if (Number.isInteger(err?.status) && err.status >= 400 && err.status < 500) return res.status(err.status).json({ error:err.message||"REQUEST_FAILED",requestId:req.requestId });
   res.status(500).json({ error:"INTERNAL_ERROR",requestId:req.requestId });
 });
+try {
+  await runMigrations(db);
+} catch (migErr) {
+  console.error("Warning: migration runner error:", migErr.message);
+}
 await db.query("CREATE TABLE IF NOT EXISTS app_settings(key text PRIMARY KEY,encrypted_value bytea NOT NULL,updated_by uuid REFERENCES users(id) ON DELETE SET NULL,updated_at timestamptz NOT NULL DEFAULT now())");
 await db.query("CREATE TABLE IF NOT EXISTS telegram_connections(user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,telegram_user_id bigint UNIQUE NOT NULL,chat_id bigint UNIQUE NOT NULL,username text,first_name text,linked_at timestamptz NOT NULL DEFAULT now(),last_seen_at timestamptz NOT NULL DEFAULT now())");
 await db.query("CREATE TABLE IF NOT EXISTS telegram_link_codes(code_hash text PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,created_at timestamptz NOT NULL DEFAULT now())");
@@ -4207,6 +4878,14 @@ await db.query(`CREATE TABLE IF NOT EXISTS plan_zones(
   created_at timestamptz NOT NULL DEFAULT now()
 )`);
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_zone_id uuid REFERENCES plan_zones(id) ON DELETE SET NULL");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS ai_enabled boolean NOT NULL DEFAULT true");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS tracking_enabled boolean NOT NULL DEFAULT false");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS analysis_enabled boolean NOT NULL DEFAULT true");
+await db.query("CREATE TABLE IF NOT EXISTS camera_ai_states (camera_id uuid PRIMARY KEY REFERENCES cameras(id) ON DELETE CASCADE, room_id uuid REFERENCES rooms(id) ON DELETE SET NULL, people_count integer NOT NULL DEFAULT 0, occupied boolean NOT NULL DEFAULT false, motion boolean NOT NULL DEFAULT false, last_person_entered timestamptz, last_person_left timestamptz, last_activity timestamptz NOT NULL DEFAULT now(), last_updated timestamptz NOT NULL DEFAULT now())");
+await db.query("CREATE TABLE IF NOT EXISTS camera_ai_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), camera_id uuid NOT NULL REFERENCES cameras(id) ON DELETE CASCADE, room_id uuid REFERENCES rooms(id) ON DELETE SET NULL, type text NOT NULL, timestamp timestamptz NOT NULL DEFAULT now(), people_count integer NOT NULL DEFAULT 0, confidence numeric(5,4) NOT NULL DEFAULT 1.0, description text, metadata jsonb NOT NULL DEFAULT '{}')");
+await db.query("CREATE INDEX IF NOT EXISTS camera_ai_events_camera_idx ON camera_ai_events(camera_id, timestamp DESC)");
+await db.query("CREATE INDEX IF NOT EXISTS camera_ai_events_room_idx ON camera_ai_events(room_id, timestamp DESC) WHERE room_id IS NOT NULL");
+await db.query("CREATE TABLE IF NOT EXISTS camera_presets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), camera_id uuid NOT NULL REFERENCES cameras(id) ON DELETE CASCADE, name text NOT NULL, ptz_preset text NOT NULL, description text, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(camera_id, name))");
 await db.query(`UPDATE roles SET permissions='["bookings:read","rooms:read","locations:read","sessions:*","devices:read","devices:command","cameras:read","local_sites:open"]'::jsonb WHERE name='OPERATOR'`);
 await db.query(
   `INSERT INTO locations(external_id,name,timezone,address)
@@ -4442,6 +5121,11 @@ async function runTelegramNotifications() {
   catch (error) { console.error("Telegram notification scheduler failed", error.message); }
   finally { telegramNotificationsBusy=false; }
 }
+// Restore camera AI state from PostgreSQL and run resilient stream worker supervisor
+await cameraEventEngine.loadStatesFromDb();
+const aiWorkerSupervisor = startAiWorkerSyncSupervisor({ db, localVisionService });
+
+
 server.listen(env.PORT, "0.0.0.0", () => {
   console.log(`QuestControl API listening on ${env.PORT}`);
   void telegramBot.start();
