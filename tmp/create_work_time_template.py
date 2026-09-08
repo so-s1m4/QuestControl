@@ -27,6 +27,21 @@ def set_cell_border(cell, **kwargs):
         for key, value in kwargs[edge].items():
             element.set(qn("w:" + key), str(value))
 
+def set_table_border(table, edge, size="6", color="000000"):
+    """Set a table-level border, which survives merged header cells."""
+    table_properties = table._tbl.tblPr
+    borders = table_properties.first_child_found_in("w:tblBorders")
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        table_properties.append(borders)
+    element = borders.find(qn("w:" + edge))
+    if element is None:
+        element = OxmlElement("w:" + edge)
+        borders.append(element)
+    element.set(qn("w:val"), "single")
+    element.set(qn("w:sz"), size)
+    element.set(qn("w:color"), color)
+
 def set_cell_text(cell, text, bold=False, size=9, align=WD_ALIGN_PARAGRAPH.CENTER):
     cell.text = ""
     p = cell.paragraphs[0]
@@ -100,6 +115,11 @@ merge(table, 0, 1, 0, 2)
 merge(table, 0, 3, 0, 4)
 merge(table, 0, 5, 1, 5)
 merge(table, 0, 6, 1, 6)
+# python-docx drops parts of the top border when cells are merged. Restore it
+# explicitly so the header remains a closed table in Word and in PDF export.
+for col in range(7):
+    set_cell_border(table.cell(0, col), top={"val":"single","sz":"6","color":"000000"})
+set_table_border(table, "top")
 set_cell_text(table.cell(0, 0), "Tag", True, 9)
 set_cell_text(table.cell(0, 1), "Arbeitszeit", True, 9)
 set_cell_text(table.cell(0, 3), "Pause", True, 9)
@@ -133,8 +153,8 @@ set_table_to_content_width(signatures, section)
 for row in signatures.rows:
     row.cells[0].width = Cm(8.6)
     row.cells[1].width = Cm(8.6)
-set_cell_text(signatures.cell(0, 0), "________________________\n{{current_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
-set_cell_text(signatures.cell(0, 1), "________________________\n{{current_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+set_cell_text(signatures.cell(0, 0), "________________________\n{{employee_signature_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
+set_cell_text(signatures.cell(0, 1), "________________________\n{{employer_signature_date}}", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(signatures.cell(1, 0), "{{employee_signature}}\nUnterschrift Arbeitnehmer/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 set_cell_text(signatures.cell(1, 1), "{{employer_signature}}\nUnterschrift Arbeitgeber/in", False, 9, WD_ALIGN_PARAGRAPH.LEFT)
 

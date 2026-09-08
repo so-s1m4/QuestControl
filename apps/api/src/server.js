@@ -1064,6 +1064,8 @@ async function documentContext(req,input){
     month:new Intl.DateTimeFormat("de-AT",{month:"long"}).format(new Date(`${input.from}T12:00:00Z`)),
     year:input.from.slice(0,4),
     current_date:new Intl.DateTimeFormat("de-AT",{timeZone:"Europe/Vienna",day:"2-digit",month:"2-digit",year:"numeric"}).format(new Date()),
+    employee_signature_date:new Intl.DateTimeFormat("de-AT",{timeZone:"Europe/Vienna",day:"2-digit",month:"2-digit",year:"numeric"}).format(new Date()),
+    employer_signature_date:new Intl.DateTimeFormat("de-AT",{timeZone:"Europe/Vienna",day:"2-digit",month:"2-digit",year:"numeric"}).format(new Date()),
     employee_signature:signature?{_type:"image",content_type:signature.content_type,data_base64:Buffer.from(signature.image_data).toString("base64")}:"",
     employer_signature:""
   };

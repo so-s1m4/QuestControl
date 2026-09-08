@@ -91,7 +91,9 @@ def add_centered_signature_overlay(paragraph, image_path):
     """Place a signature over its caption instead of consuming a text line."""
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run()
-    inline = run.add_picture(str(image_path), height=Inches(0.42))
+    # The signature needs to remain legible when printed, without pushing the
+    # caption or creating a second line in the document.
+    inline = run.add_picture(str(image_path), height=Inches(0.60))
 
     # Word represents regular pictures as ``wp:inline``. Converting that one
     # drawing to a floating anchor lets the transparent signature sit above the
@@ -114,8 +116,9 @@ def add_centered_signature_overlay(paragraph, image_path):
     position_v = OxmlElement("wp:positionV")
     position_v.set("relativeFrom", "line")
     offset_v = OxmlElement("wp:posOffset")
-    # Shift down from the marker line onto the caption below it.
-    offset_v.text = "95000"
+    # Keep the signature centred over the caption, with its body above the
+    # text rather than crossing through its middle.
+    offset_v.text = "-285000"
     position_v.append(offset_v)
     wrap_none = OxmlElement("wp:wrapNone")
     inline_xml = inline._inline
