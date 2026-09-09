@@ -203,11 +203,16 @@ class CameraStreamSession:
 
             ice_servers = []
             for entry in ice_configs:
-                urls = entry.get("urls") or entry.get("url")
-                if urls:
+                raw_urls = entry.get("urls") or entry.get("url")
+                urls = raw_urls if isinstance(raw_urls, list) else [raw_urls]
+                for url in urls:
+                    if not url:
+                        continue
                     ice_servers.append(
                         RTCIceServer(
-                            urls=urls if isinstance(urls, list) else [urls],
+                            # aiortc accepts one URI per RTCIceServer, unlike
+                            # the browser API where `urls` can be an array.
+                            urls=str(url),
                             username=entry.get("username"),
                             credential=entry.get("credential"),
                         )
