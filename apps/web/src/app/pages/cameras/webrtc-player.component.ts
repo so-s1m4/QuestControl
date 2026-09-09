@@ -71,6 +71,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private stream=new MediaStream();
   private remoteAnswerAccepted=false;
   private remoteCandidates=new Set<string>();
+  private pendingRemoteCandidates:string[]=[];
   private silentContext?:AudioContext;
   private silentOscillator?:OscillatorNode;
   private silentTrack?:MediaStreamTrack;
@@ -169,15 +170,36 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       if(message.type==="answer"){
         if(this.remoteAnswerAccepted||this.peer.signalingState!=="have-local-offer"){this.diagnostic("duplicate-answer",this.peer.signalingState);return}
         this.remoteAnswerAccepted=true;
-        this.diagnostic("camera-answer");await this.peer.setRemoteDescription({type:"answer",sdp:message.payload});
+        this.diagnostic("camera-answer");
+        await this.peer.setRemoteDescription({type:"answer",sdp:message.payload});
+        const pending=this.pendingRemoteCandidates.splice(0);
+        for(const candidate of pending)await this.addRemoteCandidate(candidate);
       }
       else if(message.type==="candidate"&&message.payload){
-        if(this.remoteCandidates.has(message.payload))return;
-        this.remoteCandidates.add(message.payload);
-        await this.peer.addIceCandidate({candidate:message.payload,sdpMid:"0",sdpMLineIndex:0});
+        // Tuya may trickle an ICE candidate before the answer. Browser WebRTC
+        // rejects addIceCandidate until setRemoteDescription has completed, so
+        // retain the candidate and apply it immediately afterwards.
+        if(!this.peer.remoteDescription){
+          if(!this.pendingRemoteCandidates.includes(message.payload))this.pendingRemoteCandidates.push(message.payload);
+          this.diagnostic("candidate-buffered");
+          return;
+        }
+        await this.addRemoteCandidate(message.payload);
       }
       else if(message.type==="disconnect")this.fallback("camera-disconnect");
     }catch(error){this.fallback("signal-error",error instanceof Error?error.message:String(error))}
+  }
+
+  private async addRemoteCandidate(candidate:string){
+    if(!this.peer||this.remoteCandidates.has(candidate))return;
+    this.remoteCandidates.add(candidate);
+    try{
+      await this.peer.addIceCandidate({candidate,sdpMid:"0",sdpMLineIndex:0});
+    }catch(error){
+      // One malformed/obsolete trickle candidate must not terminate a session;
+      // the remaining candidates and connection timeout still decide the result.
+      this.diagnostic("candidate-rejected",error instanceof Error?error.message:String(error));
+    }
   }
 
   private send(type:"offer"|"candidate"|"disconnect",payload:string){
@@ -317,6 +339,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     this.peer=undefined;this.socket=undefined;this.rootSocket=undefined;
     this.remoteAnswerAccepted=false;
     this.remoteCandidates.clear();
+    this.pendingRemoteCandidates=[];
     this.silentTrack?.stop();this.silentOscillator?.stop();void this.silentContext?.close();
     this.silentTrack=undefined;this.silentOscillator=undefined;this.silentContext=undefined;
     for(const track of this.stream.getTracks())track.stop();

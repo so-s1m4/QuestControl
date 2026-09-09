@@ -31,6 +31,7 @@ RUN python -c "import aiortc, av; print('aiortc', aiortc.__version__, 'av', av._
 
 RUN mkdir -p models /opt/models/base
 COPY vlm.py receiver.py server.py model_validator.py entrypoint.sh ./
+COPY activity/ ./activity/
 COPY models/ ./models/
 COPY scripts/ ./scripts/
 COPY dataset/ ./dataset/
