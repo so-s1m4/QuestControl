@@ -283,23 +283,39 @@ interface CameraItem {
   </main>
   `,
   styles: [`
-    .ai-page { padding: 24px; max-width: 1600px; margin: 0 auto; color: #1e293b; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .page-header h2 { margin: 0; font-size: 24px; font-weight: 700; color: #0f172a; }
-    .page-header p { margin: 4px 0 0; color: #64748b; font-size: 14px; }
+    :host { display: block; min-width: 0; }
+
+    /* The main element is the legacy application shell in global styles. This page is
+       its own workspace, so it must reset that flex layout explicitly. */
+    .ai-page {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      min-height: 100%;
+      padding: 30px 34px 48px;
+      margin: 0;
+      color: #192235;
+      font-family: Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin: 0 0 24px; }
+    .page-header h2 { margin: 0; font-size: clamp(24px, 2.2vw, 32px); line-height: 1.15; letter-spacing: -.8px; font-weight: 800; color: #172033; }
+    .page-header p { max-width: 760px; margin: 8px 0 0; color: #718096; font-size: 13px; line-height: 1.55; }
+    .header-actions { flex: 0 0 auto; }
     
-    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
-    .stat-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
-    .stat-card .label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; }
-    .stat-num { font-size: 26px; font-weight: 800; color: #0f172a; }
+    .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .stat-card { min-width: 0; min-height: 126px; padding: 17px 18px; border: 1px solid #e1e6ef; border-radius: 16px; background: #fff; box-shadow: 0 10px 24px #22305d08; display: flex; flex-direction: column; gap: 7px; }
+    .stat-card:first-child { border-color: #d9dcff; background: linear-gradient(135deg, #ffffff, #f4f5ff); }
+    .stat-card .label { font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #728096; }
+    .stat-num { font-size: 29px; line-height: 1; font-weight: 800; color: #172033; }
     .success-num { color: #16a34a; }
     .error-num { color: #dc2626; }
-    .stat-card small { font-size: 12px; color: #94a3b8; }
-    .status-badge { display: inline-block; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+    .stat-card small { overflow-wrap: anywhere; font-size: 11px; line-height: 1.35; color: #8a97aa; }
+    .status-badge { display: inline-flex; align-self: flex-start; max-width: 100%; overflow-wrap: anywhere; padding: 5px 8px; border-radius: 7px; font-size: 11px; line-height: 1.2; font-weight: 800; }
     .status-badge.ready { background: #dcfce7; color: #15803d; }
     .status-badge.required { background: #fef9c3; color: #a16207; }
     .status-badge.error { background: #fee2e2; color: #b91c1c; }
-    .metrics-card .metrics-row { display: flex; gap: 12px; font-size: 14px; color: #334155; margin-top: 4px; }
+    .metrics-card { grid-column: span 2; }
+    .metrics-card .metrics-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: #46556b; margin-top: 6px; }
     .metrics-row b { color: #2563eb; }
 
     .job-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 14px 18px; margin-bottom: 20px; }
@@ -307,20 +323,21 @@ interface CameraItem {
     .progress-bar { height: 8px; background: #dbeafe; border-radius: 4px; overflow: hidden; }
     .progress-fill { height: 100%; background: #3b82f6; transition: width 0.3s ease; }
 
-    .workspace-layout { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
-    .control-panel { display: flex; flex-direction: column; gap: 16px; }
-    .panel-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-    .panel-section h3 { margin: 0; font-size: 15px; font-weight: 700; color: #1e293b; }
-    .section-desc { margin: 0; font-size: 12px; color: #64748b; line-height: 1.4; }
-    .panel-section label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #475569; }
-    .panel-section select, .panel-section input { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; }
+    .workspace-layout { display: grid; grid-template-columns: minmax(290px, 350px) minmax(0, 1fr); align-items: start; gap: 20px; min-width: 0; }
+    .control-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .panel-section { min-width: 0; padding: 18px; border: 1px solid #e1e6ef; border-radius: 16px; background: #fff; box-shadow: 0 10px 24px #22305d08; display: flex; flex-direction: column; gap: 12px; }
+    .panel-section h3 { margin: 0; font-size: 15px; font-weight: 800; color: #273249; }
+    .section-desc { margin: -3px 0 2px; font-size: 11px; color: #78869a; line-height: 1.5; }
+    .panel-section label { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 11px; font-weight: 800; color: #56657a; }
+    .panel-section select, .panel-section input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #d2dae7; border-radius: 8px; background: #fff; color: #273249; font-size: 13px; outline: none; }
+    .panel-section select:focus, .panel-section input:focus, .notes-input:focus { border-color: #727af2; box-shadow: 0 0 0 3px #5966e715; }
     .train-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-    .btn-block { width: 100%; padding: 10px 12px; border: 0; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.15s; }
-    .primary { background: #2563eb; color: #fff; }
-    .primary:hover { background: #1d4ed8; }
-    .secondary { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
-    .secondary:hover { background: #e2e8f0; }
+    .btn-block { width: 100%; min-height: 42px; padding: 10px 12px; border: 0; border-radius: 9px; font-size: 12px; font-weight: 800; cursor: pointer; transition: transform .15s, background .15s, box-shadow .15s; }
+    .primary { background: linear-gradient(135deg, #4f5fe8, #6575ef); color: #fff; box-shadow: 0 7px 14px #4f5fe82b; }
+    .primary:hover { background: linear-gradient(135deg, #4453d8, #5667e6); transform: translateY(-1px); }
+    .secondary { background: #f6f8fc; color: #45556b; border: 1px solid #d7deea; box-shadow: none; }
+    .secondary:hover { background: #edf1f8; }
     .accent { background: #16a34a; color: #fff; }
     .accent:hover { background: #15803d; }
     .danger { background: #dc2626; color: #fff; }
@@ -329,14 +346,14 @@ interface CameraItem {
     .success:hover { background: #15803d; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .editor-panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
-    .queue-toolbar { padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
-    .queue-tabs { display: flex; gap: 8px; }
-    .queue-tabs button { padding: 6px 14px; border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .queue-tabs button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .editor-panel { min-width: 0; border: 1px solid #e1e6ef; border-radius: 16px; background: #fff; box-shadow: 0 10px 24px #22305d08; display: flex; flex-direction: column; overflow: hidden; }
+    .queue-toolbar { padding: 13px 16px; border-bottom: 1px solid #e8ecf3; background: linear-gradient(135deg, #fafbff, #f6f7fc); }
+    .queue-tabs { display: flex; flex-wrap: wrap; gap: 7px; }
+    .queue-tabs button { padding: 7px 11px; border: 1px solid #d9e0eb; background: #fff; color: #64748b; border-radius: 8px; font-size: 11px; font-weight: 800; cursor: pointer; box-shadow: none; }
+    .queue-tabs button.active { background: #4f5fe8; color: #fff; border-color: #4f5fe8; }
 
-    .queue-editor-split { display: grid; grid-template-columns: 280px 1fr; min-height: 600px; }
-    .sample-list { border-right: 1px solid #e2e8f0; overflow-y: auto; max-height: 650px; background: #f8fafc; }
+    .queue-editor-split { display: grid; grid-template-columns: minmax(230px, 280px) minmax(0, 1fr); min-height: 610px; min-width: 0; }
+    .sample-list { min-width: 0; border-right: 1px solid #e8ecf3; overflow-y: auto; max-height: 650px; background: #f8f9fc; }
     .sample-card { padding: 12px; border-bottom: 1px solid #e2e8f0; cursor: pointer; transition: background 0.15s; }
     .sample-card:hover { background: #f1f5f9; }
     .sample-card.selected { background: #e0e7ff; border-left: 4px solid #4f46e5; }
@@ -351,7 +368,7 @@ interface CameraItem {
     .badge.verified { background: #dcfce7; color: #15803d; }
     .badge.rejected { background: #fee2e2; color: #b91c1c; }
 
-    .canvas-area { display: flex; flex-direction: column; background: #0f172a; position: relative; }
+    .canvas-area { min-width: 0; display: flex; flex-direction: column; background: #111a2b; position: relative; }
     .canvas-wrapper { display: flex; flex-direction: column; height: 100%; }
     .image-container { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; user-select: none; cursor: crosshair; }
     .image-container img { max-width: 100%; max-height: 560px; object-fit: contain; display: block; }
@@ -361,12 +378,12 @@ interface CameraItem {
     .bbox-label { fill: #fff; font-size: 14px; font-weight: 700; }
     .drawing-rect { fill: rgba(16, 185, 129, 0.3); stroke: #10b981; stroke-width: 2; stroke-dasharray: 4; }
 
-    .sample-actions-bar { background: #fff; padding: 14px 18px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    .sample-actions-bar { background: #fff; padding: 14px 18px; border-top: 1px solid #e2e8f0; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 16px; }
     .actions-left { display: flex; align-items: center; gap: 16px; }
     .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #334155; cursor: pointer; }
     .bbox-count-label { font-size: 13px; color: #64748b; }
-    .actions-right { display: flex; align-items: center; gap: 10px; }
-    .notes-input { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; width: 220px; }
+    .actions-right { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+    .notes-input { min-width: 180px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px; width: 220px; outline: none; }
 
     .no-selection { height: 100%; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 15px; }
     .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; font-weight: 600; }
@@ -377,10 +394,27 @@ interface CameraItem {
     .session-actions button { flex: 1; padding: 6px 10px; font-size: 12px; }
     .canvas-loading { color: #94a3b8; font-size: 14px; font-weight: 600; padding: 24px; text-align: center; }
 
-    @media (max-width: 1080px) {
+    @media (max-width: 1240px) {
+      .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workspace-layout { grid-template-columns: 310px minmax(0, 1fr); }
+      .queue-editor-split { grid-template-columns: 230px minmax(0, 1fr); }
+    }
+    @media (max-width: 980px) {
+      .ai-page { padding: 24px 20px 42px; }
       .workspace-layout { grid-template-columns: 1fr; }
       .queue-editor-split { grid-template-columns: 1fr; }
       .sample-list { max-height: 250px; }
+    }
+    @media (max-width: 620px) {
+      .ai-page { padding: 20px 14px 96px; }
+      .page-header { flex-direction: column; gap: 14px; }
+      .header-actions, .header-actions button { width: 100%; }
+      .status-grid { grid-template-columns: 1fr; }
+      .metrics-card { grid-column: auto; }
+      .panel-section { padding: 16px; }
+      .session-actions, .actions-left, .actions-right { align-items: stretch; flex-direction: column; }
+      .actions-right, .notes-input { width: 100%; }
+      .queue-tabs button { flex: 1 1 auto; }
     }
   `]
 })
