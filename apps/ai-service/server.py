@@ -115,7 +115,7 @@ if HEADSET_MODEL_STATUS not in ("JOURNAL_CORRUPT", "ACTIVATION_STATE_UNCERTAIN")
 reconcile_daemon_job_status(DATA_DIR)
 
 from vlm import LocalVisionService
-from receiver import StreamWorkerManager
+from receiver import AIORTC_AVAILABLE, StreamWorkerManager
 from activity import ActivityIntelligenceEngine, YoloPersonTracker, LocalPoseEstimator
 
 vision_service = LocalVisionService()
@@ -486,6 +486,8 @@ class AIServiceHandler(BaseHTTPRequestHandler):
                 "headsetModelStatus": HEADSET_MODEL_STATUS,
                 "headsetModelError": HEADSET_MODEL_ERROR,
                 "headsetValidationMetrics": HEADSET_MODEL_METRICS,
+                "webrtcAvailable": AIORTC_AVAILABLE,
+                "tuyaTransport": "WEBRTC_REQUIRED",
                 "vlm": True,
                 "vlmEndpoint": bool(vision_service.endpoint),
                 "workers": worker_manager.get_statuses(),

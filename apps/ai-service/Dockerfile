@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+# Fail the image build if the exact runtime needed by Tuya WebRTC is absent.
+RUN python -c "import aiortc, av; print('aiortc', aiortc.__version__, 'av', av.__version__)"
 
 RUN mkdir -p models /opt/models/base
 COPY vlm.py receiver.py server.py model_validator.py entrypoint.sh ./

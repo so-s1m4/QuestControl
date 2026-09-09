@@ -4278,18 +4278,20 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
   if(camera.provider==="TUYA") {
     if(!tuya.configured) return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
     if(!camera.external_id) return res.status(409).json({error:"TUYA_DEVICE_NOT_CONFIGURED"});
-    try {
-      if(req.query.transport!=="hls") {
-        try {
-          const config=await tuya.webrtcConfigs(camera.external_id);
-          if(config?.supports_webrtc) {
-            await audit(req,"camera.stream.open","camera",camera.id,null,{provider:"TUYA",transport:"WEBRTC"});
-            return res.json({provider:"TUYA",mode:"webrtc",cameraId:camera.id});
-          }
-        } catch(error) {
-          console.warn(req.requestId,"Tuya WebRTC discovery failed, falling back to HLS",error.code,error.message);
-        }
+    // HLS is an explicit compatibility transport only. Returning it after a failed
+    // WebRTC capability check concealed broken signaling from operators.
+    if(req.query.transport!=="hls") {
+      try {
+        const config=await tuya.webrtcConfigs(camera.external_id);
+        if(!config?.supports_webrtc) return res.status(409).json({error:"TUYA_WEBRTC_UNSUPPORTED"});
+        await audit(req,"camera.stream.open","camera",camera.id,null,{provider:"TUYA",transport:"WEBRTC"});
+        return res.json({provider:"TUYA",mode:"webrtc",cameraId:camera.id});
+      } catch(error) {
+        console.error(req.requestId,"Tuya WebRTC discovery failed",error.code,error.message);
+        return res.status(502).json({error:"TUYA_WEBRTC_UNAVAILABLE",providerCode:error.code});
       }
+    }
+    try {
       const endpoint=await tuya.allocateHls(camera.external_id);
       await audit(req,"camera.stream.open","camera",camera.id,null,{provider:"TUYA",transport:"HLS"});
       return res.json({provider:"TUYA",mode:"hls",endpoint});

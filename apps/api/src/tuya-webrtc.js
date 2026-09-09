@@ -132,6 +132,12 @@ export class TuyaWebRTCManager {
     if (!session || session.socket.id !== socket.id) {
       throw Object.assign(new Error("WebRTC session not found"), { code: "WEBRTC_SESSION_NOT_FOUND" });
     }
+    // Accept both SDP-line and raw-candidate forms at the bridge boundary. The
+    // camera protocol itself requires the raw "candidate:…" payload.
+    if (type === "candidate") {
+      payload = String(payload || "").replace(/^a=/, "").replace(/\r?\n$/, "");
+      if (!payload) return;
+    }
     const message = type === "offer"
       ? { mode: "webrtc", sdp: payload, stream_type: 1, auth: session.auth }
       : type === "candidate"

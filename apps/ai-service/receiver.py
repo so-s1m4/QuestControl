@@ -36,7 +36,7 @@ try:
     AIORTC_AVAILABLE = True
 except ImportError:
     AIORTC_AVAILABLE = False
-    logger.warning("aiortc or av not installed in current environment. Background WebRTC will use fallback stream.")
+    logger.warning("aiortc or av not installed in current environment. Tuya WebRTC workers cannot start.")
 
 
 class CameraStreamSession:
@@ -65,6 +65,8 @@ class CameraStreamSession:
         # Status & metrics
         self.last_frame_time: float = 0.0
         self.is_online: bool = False
+        self.transport: str = "WEBRTC" if self.provider == "TUYA" else "SOURCE"
+        self.last_error: Optional[str] = None
         self.is_moving: bool = False
         self.current_preset: str = "default"
         self.headset_detection_fn: Optional[Callable[[bytes, str, float], Dict[str, Any]]] = None
@@ -152,12 +154,23 @@ class CameraStreamSession:
 
         while self.running:
             try:
-                if self.provider == "TUYA" and AIORTC_AVAILABLE:
+                if self.provider == "TUYA":
+                    # A Tuya worker is deliberately WebRTC-only. HLS creates a
+                    # second cloud stream and hiding this dependency makes the AI
+                    # appear healthy while it is no longer using the live path.
+                    if not AIORTC_AVAILABLE:
+                        self.last_error = "WEBRTC_RUNTIME_UNAVAILABLE"
+                        logger.error("Tuya camera %s requires aiortc and av; refusing HLS fallback", self.camera_id)
+                        time.sleep(15.0)
+                        continue
+                    self.last_error = None
                     self._run_webrtc_stream()
                 else:
+                    self.transport = "SOURCE"
                     self._run_capture_stream()
             except Exception as exc:
                 consecutive_failures += 1
+                self.last_error = str(exc)[:240]
                 logger.error("Stream worker exception on %s: %s (retrying...)", self.camera_id, exc)
 
             if not self.running:
@@ -717,6 +730,9 @@ class StreamWorkerManager:
             result[cid] = {
                 "online": sess.is_online,
                 "provider": sess.provider,
+                "transport": sess.transport,
+                "webrtcAvailable": AIORTC_AVAILABLE if sess.provider == "TUYA" else None,
+                "lastError": sess.last_error,
                 "lastFrame": sess.last_frame_time,
                 "bufferedFrames": len(sess.frame_buffer),
             }

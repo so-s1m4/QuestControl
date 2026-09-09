@@ -51,6 +51,8 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
 })
 export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   @Input({required:true}) cameraId!:string;
+  /** HLS is only a deliberate compatibility choice, never a silent WebRTC fallback. */
+  @Input() allowHlsFallback=false;
   @Output() fallbackRequested=new EventEmitter<void>();
   @ViewChild("video",{static:true}) video!:ElementRef<HTMLVideoElement>;
   @ViewChild("canvas") canvasRef?:ElementRef<HTMLCanvasElement>;
@@ -75,7 +77,10 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private latestPeople:Person[]=[];
 
   ngAfterViewInit(){
-    const token=localStorage.getItem("token")||"";
+    // Access tokens are intentionally session-scoped. Reading a legacy localStorage
+    // key left the signaling namespace unauthenticated and made every player fall
+    // back to HLS even when the Tuya device supported WebRTC.
+    const token=sessionStorage.getItem("access_token")||"";
     // Root socket for realtime AI updates
     try{
       this.rootSocket=io({path:"/socket.io",transports:["websocket"],auth:{token}});
@@ -131,7 +136,12 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
         if(this.timeout)clearTimeout(this.timeout);
         this.video.nativeElement.play().catch(()=>{});
       };
-      this.peer.onicecandidate=event=>this.send("candidate",event.candidate?`a=${event.candidate.candidate}`:"");
+      // Tuya's MQTT bridge expects the raw RFC 5245 candidate ("candidate:…"),
+      // not the SDP-line form ("a=candidate:…"). Do not send an empty
+      // end-of-candidates marker: Tuya treats it as an invalid candidate.
+      this.peer.onicecandidate=event=>{
+        if(event.candidate?.candidate)this.send("candidate",event.candidate.candidate);
+      };
       this.peer.onconnectionstatechange=()=>{
         const state=this.peer?.connectionState;
         if(state)this.diagnostic("connection-state",state);
@@ -146,8 +156,10 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       };
       const offer=await this.peer.createOffer();
       await this.peer.setLocalDescription(offer);
-      const compactSdp=String(offer.sdp||"").replace(/\r\na=extmap[^\r\n]*/g,"");
-      this.send("offer",compactSdp);
+      // The remote answer must be generated from the exact SDP the browser has
+      // installed locally. Rewriting it after setLocalDescription can make Chrome
+      // reject an otherwise valid Tuya answer.
+      this.send("offer",this.peer.localDescription?.sdp||offer.sdp||"");
     }catch(error){this.fallback("peer-error",error instanceof Error?error.message:String(error))}
   }
 
@@ -169,7 +181,10 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   }
 
   private send(type:"offer"|"candidate"|"disconnect",payload:string){
-    if(this.socket?.connected&&this.sessionId)this.socket.emit("signal",{sessionId:this.sessionId,type,payload});
+    if(!this.socket?.connected||!this.sessionId)return;
+    this.socket.emit("signal",{sessionId:this.sessionId,type,payload},(result:{success?:boolean;error?:string}|undefined)=>{
+      if(result?.success===false)this.fallback("signal-rejected",result.error||type);
+    });
   }
 
   private diagnostic(stage:string,detail=""){this.socket?.emit("diagnostic",{cameraId:this.cameraId,stage,detail:detail.slice(0,160)})}
@@ -177,7 +192,11 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private fallback(stage:string,detail=""){
     if(this.fallbackSent)return;
     this.diagnostic(stage,detail);
-    this.fallbackSent=true;this.cleanup();this.fallbackRequested.emit();
+    this.fallbackSent=true;this.cleanup();
+    this.status.set(`WebRTC недоступен${detail?`: ${detail}`:""}`);
+    // Falling back to HLS masked signaling failures and contradicted the selected
+    // transport. It remains possible only where a caller asks for it explicitly.
+    if(this.allowHlsFallback)this.fallbackRequested.emit();
   }
 
   toggleOverlay(event:Event){
