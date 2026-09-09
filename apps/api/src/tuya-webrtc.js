@@ -132,11 +132,13 @@ export class TuyaWebRTCManager {
     if (!session || session.socket.id !== socket.id) {
       throw Object.assign(new Error("WebRTC session not found"), { code: "WEBRTC_SESSION_NOT_FOUND" });
     }
-    // Accept both SDP-line and raw-candidate forms at the bridge boundary. The
-    // camera protocol itself requires the raw "candidate:…" payload.
+    // Browser APIs expose the raw RTCIceCandidate value (`candidate:…`), but
+    // Tuya's MQTT 302 protocol requires its SDP-line form (`a=candidate:…`).
+    // Preserve an already-prefixed payload and normalize the browser form.
     if (type === "candidate") {
-      payload = String(payload || "").replace(/^a=/, "").replace(/\r?\n$/, "");
+      payload = String(payload || "").replace(/\r?\n$/, "");
       if (!payload) return;
+      if (!payload.startsWith("a=")) payload = `a=${payload}`;
     }
     const message = type === "offer"
       ? { mode: "webrtc", sdp: payload, stream_type: 1, auth: session.auth }
@@ -163,6 +165,7 @@ export class TuyaWebRTCManager {
       session.hub.client.publish(session.publishTopic, JSON.stringify(frame), { qos: 1 }, (error) => error ? reject(error) : resolve());
     });
     if(type==="offer"||type==="disconnect")console.info("Tuya WebRTC client signal",session.deviceId,type,sessionId.slice(0,8));
+    if(type==="candidate")console.info("Tuya WebRTC client candidate",session.deviceId,sessionId.slice(0,8),payload.startsWith("a=candidate:")?"sdp-line":"invalid-format");
     if (type === "disconnect") this.sessions.delete(sessionId);
   }
 

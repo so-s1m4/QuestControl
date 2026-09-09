@@ -266,7 +266,9 @@ class CameraStreamSession:
             # Explicitly relay any gathered local candidates to signaling
             for line in pc.localDescription.sdp.splitlines():
                 if line.startswith("a=candidate:"):
-                    cand_str = line[2:].strip()
+                    # Tuya's MQTT 302 protocol requires the SDP-line form
+                    # (`a=candidate:…`), not aiortc's parsed raw candidate.
+                    cand_str = line.strip()
                     try:
                         requests.post(
                             sig_url,

@@ -139,9 +139,9 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
         if(this.timeout)clearTimeout(this.timeout);
         this.video.nativeElement.play().catch(()=>{});
       };
-      // Tuya's MQTT bridge expects the raw RFC 5245 candidate ("candidate:…"),
-      // not the SDP-line form ("a=candidate:…"). Do not send an empty
-      // end-of-candidates marker: Tuya treats it as an invalid candidate.
+      // Browser WebRTC exposes a raw candidate (`candidate:…`). The backend
+      // converts it to Tuya MQTT's required SDP-line form (`a=candidate:…`).
+      // Do not send an empty end-of-candidates marker.
       this.peer.onicecandidate=event=>{
         const candidate=event.candidate?.candidate;
         if(!candidate)return;
