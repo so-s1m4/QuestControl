@@ -163,8 +163,16 @@ class CameraStreamSession:
                         logger.error("Tuya camera %s requires aiortc and av; refusing HLS fallback", self.camera_id)
                         time.sleep(15.0)
                         continue
-                    self.last_error = None
-                    self._run_webrtc_stream()
+                    completed = self._run_webrtc_stream()
+                    # A failed allocation, invalid ICE configuration or a
+                    # dropped session must count as a failure. Previously a
+                    # normal return reset the cadence to two seconds and
+                    # created an endless stream of Tuya sessions.
+                    if completed:
+                        consecutive_failures = 0
+                        self.last_error = None
+                    else:
+                        consecutive_failures += 1
                 else:
                     self.transport = "SOURCE"
                     self._run_capture_stream()
@@ -180,22 +188,25 @@ class CameraStreamSession:
             if self.is_online and (time.time() - self.last_frame_time > 10.0):
                 self._notify_camera_status(False)
 
-            backoff = min(15.0, 2.0 * (consecutive_failures or 1))
+            # Back off failed camera negotiations aggressively. This protects
+            # both Tuya's P2P service and an operator's foreground session.
+            backoff = min(60.0, 2.0 ** min(consecutive_failures, 6))
             time.sleep(backoff)
 
-    def _run_webrtc_stream(self):
+    def _run_webrtc_stream(self) -> bool:
         """
         Connects directly to Tuya camera WebRTC media stream via backend signaling bridge.
         """
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        async def run():
+        async def run() -> bool:
             sess_url = f"{self.api_url}/internal/tuya-webrtc/session"
             sess_resp = requests.post(sess_url, json={"cameraId": self.camera_id}, headers=self._headers(), timeout=10)
             if sess_resp.status_code != 200:
                 logger.warning("Failed to allocate Tuya WebRTC session for %s: %s", self.camera_id, sess_resp.text)
-                return
+                self.last_error = f"SESSION_ALLOCATION_HTTP_{sess_resp.status_code}"
+                return False
 
             sess_data = sess_resp.json()
             session_id = sess_data.get("sessionId")
@@ -207,6 +218,13 @@ class CameraStreamSession:
                 urls = raw_urls if isinstance(raw_urls, list) else [raw_urls]
                 for url in urls:
                     if not url:
+                        continue
+                    # aiortc's ICE URI parser cannot consume Tuya's bracketed
+                    # IPv6 STUN URI. Keep the valid IPv4 STUN/TURN servers;
+                    # a malformed optional IPv6 endpoint must not prevent the
+                    # entire worker from negotiating media.
+                    if str(url).startswith(("stun:[", "turn:[", "turns:[")):
+                        logger.info("Skipping unsupported bracketed IPv6 ICE URI for %s", self.camera_id)
                         continue
                     ice_servers.append(
                         RTCIceServer(
@@ -242,7 +260,8 @@ class CameraStreamSession:
             )
             if sig_resp.status_code != 200:
                 await pc.close()
-                return
+                self.last_error = f"OFFER_SIGNAL_HTTP_{sig_resp.status_code}"
+                return False
 
             # Explicitly relay any gathered local candidates to signaling
             for line in pc.localDescription.sdp.splitlines():
@@ -262,7 +281,8 @@ class CameraStreamSession:
             answer_sdp = sig_data.get("answer")
             if not answer_sdp:
                 await pc.close()
-                return
+                self.last_error = "TUYA_ANSWER_MISSING"
+                return False
 
             from aiortc import RTCSessionDescription
             from aiortc.sdp import candidate_from_sdp
@@ -274,6 +294,8 @@ class CameraStreamSession:
                     await pc.addIceCandidate(cand)
                 except Exception:
                     pass
+
+            camera_disconnected = asyncio.Event()
 
             async def poll_remote_candidates():
                 poll_count = 0
@@ -297,6 +319,10 @@ class CameraStreamSession:
                                         logger.debug("Applied Tuya remote ICE candidate on %s", self.camera_id)
                                     except Exception as e:
                                         logger.debug("Failed adding ICE candidate: %s", e)
+                                elif s.get("type") == "disconnect":
+                                    logger.info("Tuya camera disconnected WebRTC session for %s", self.camera_id)
+                                    camera_disconnected.set()
+                                    return
                     except Exception:
                         pass
 
@@ -326,13 +352,18 @@ class CameraStreamSession:
                             logger.warning("WebRTC frame read error on %s: %s", self.camera_id, e)
                             break
 
-            while self.running and pc.connectionState not in ("failed", "closed"):
+            connected_once = False
+            while self.running and not camera_disconnected.is_set() and pc.connectionState not in ("failed", "closed"):
+                connected_once = connected_once or pc.connectionState == "connected"
                 await asyncio.sleep(1.0)
 
             await pc.close()
+            if not connected_once:
+                self.last_error = self.last_error or "WEBRTC_CONNECTION_NOT_ESTABLISHED"
+            return connected_once
 
         try:
-            loop.run_until_complete(run())
+            return bool(loop.run_until_complete(run()))
         finally:
             loop.close()
 

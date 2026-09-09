@@ -72,6 +72,8 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private remoteAnswerAccepted=false;
   private remoteCandidates=new Set<string>();
   private pendingRemoteCandidates:string[]=[];
+  private pendingLocalCandidates:string[]=[];
+  private offerSignaled=false;
   private silentContext?:AudioContext;
   private silentOscillator?:OscillatorNode;
   private silentTrack?:MediaStreamTrack;
@@ -141,7 +143,13 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       // not the SDP-line form ("a=candidate:…"). Do not send an empty
       // end-of-candidates marker: Tuya treats it as an invalid candidate.
       this.peer.onicecandidate=event=>{
-        if(event.candidate?.candidate)this.send("candidate",event.candidate.candidate);
+        const candidate=event.candidate?.candidate;
+        if(!candidate)return;
+        // Tuya requires the offer before any trickled candidates. Candidate
+        // gathering can start inside setLocalDescription(), so buffer until
+        // the offer has been placed on the signaling channel.
+        if(!this.offerSignaled)this.pendingLocalCandidates.push(candidate);
+        else this.send("candidate",candidate);
       };
       this.peer.onconnectionstatechange=()=>{
         const state=this.peer?.connectionState;
@@ -161,6 +169,8 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       // installed locally. Rewriting it after setLocalDescription can make Chrome
       // reject an otherwise valid Tuya answer.
       this.send("offer",this.peer.localDescription?.sdp||offer.sdp||"");
+      this.offerSignaled=true;
+      for(const candidate of this.pendingLocalCandidates.splice(0))this.send("candidate",candidate);
     }catch(error){this.fallback("peer-error",error instanceof Error?error.message:String(error))}
   }
 
