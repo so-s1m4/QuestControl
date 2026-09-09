@@ -4747,33 +4747,56 @@ app.post("/api/ai/dataset/capture", auth, permit("devices:command"), async (req,
     }
   }
 
-  // Fresh frame cutoff polling: timestamp > settledAt
+  // Fresh frame cutoff polling: timestamp > settledAt. The API has a small
+  // local cache and the AI worker owns the continuous stream buffer. A stale
+  // item in the former must never prevent us from checking the latter.
   let frameObj = null;
-  const maxPollMs = 3000;
+  const maxPollMs = 8000;
   const pollStart = Date.now();
+  const frameTime = (frame) => {
+    if (!frame?.timestamp) return NaN;
+    if (typeof frame.timestamp === "number") {
+      // Worker timestamps are seconds since epoch, API timestamps are millis.
+      return frame.timestamp < 100_000_000_000 ? frame.timestamp * 1000 : frame.timestamp;
+    }
+    return new Date(frame.timestamp).getTime();
+  };
 
   while (Date.now() - pollStart <= maxPollMs) {
-    let cand = null;
+    let cachedCandidate = null;
     if (cameraFrameProvider) {
-      cand = cameraFrameProvider.getLatestFrame(input.cameraId);
+      cachedCandidate = cameraFrameProvider.getLatestFrame(input.cameraId);
     }
-    if (!cand?.buffer && localVisionService) {
-      cand = await localVisionService.getLatestFrame(input.cameraId).catch(() => null);
+    if (cachedCandidate?.buffer && frameTime(cachedCandidate) > settledAt) {
+      frameObj = cachedCandidate;
+      break;
     }
-    if (cand?.buffer) {
-      const frameTs = cand.timestamp ? new Date(cand.timestamp).getTime() : 0;
-      if (frameTs > settledAt) {
-        frameObj = cand;
+
+    // Always check the worker when the local candidate is stale. Before this
+    // fallback existed, one old event frame made manual dataset capture fail
+    // even though the worker had already decoded a fresh camera frame.
+    if (localVisionService) {
+      const workerCandidate = await localVisionService.getLatestFrame(input.cameraId).catch(() => null);
+      if (workerCandidate?.buffer && frameTime(workerCandidate) > settledAt) {
+        frameObj = workerCandidate;
+        if (cameraFrameProvider) {
+          cameraFrameProvider.pushFrame(
+            input.cameraId,
+            workerCandidate.buffer,
+            workerCandidate.mimeType || "image/jpeg",
+            frameTime(workerCandidate),
+          );
+        }
         break;
       }
     }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 150));
   }
 
   if (!frameObj?.buffer) {
     return res.status(503).json({
       error: "FRAME_UNAVAILABLE",
-      message: "No fresh camera frame available after PTZ settling (timestamp older than cutoff)",
+      message: "Camera stream did not provide a fresh frame after PTZ settling. Check that the AI worker is online and the camera stream is active.",
     });
   }
 

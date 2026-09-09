@@ -292,14 +292,17 @@ export class LocalVisionService {
       });
       if (!resp.ok) return null;
       const data = await resp.json();
-      const first = Array.isArray(data?.frames) ? data.frames[0] : null;
-      const b64 = typeof first === "string" ? first : first?.base64;
+      // The worker returns its circular buffer in chronological order. Pick
+      // the last item: using index 0 made a capture wait on an old frame even
+      // while newer frames were already available after PTZ settling.
+      const latest = Array.isArray(data?.frames) ? data.frames.at(-1) : null;
+      const b64 = typeof latest === "string" ? latest : latest?.base64;
       if (!b64) return null;
       let frameTs = null;
-      if (typeof first?.timestamp === "number") {
-        frameTs = new Date(first.timestamp * 1000).toISOString();
-      } else if (first?.timestamp) {
-        frameTs = new Date(first.timestamp).toISOString();
+      if (typeof latest?.timestamp === "number") {
+        frameTs = new Date(latest.timestamp * 1000).toISOString();
+      } else if (latest?.timestamp) {
+        frameTs = new Date(latest.timestamp).toISOString();
       }
       return {
         timestamp: frameTs,
@@ -623,5 +626,4 @@ export class LocalVisionService {
     return await resp.json();
   }
 }
-
 

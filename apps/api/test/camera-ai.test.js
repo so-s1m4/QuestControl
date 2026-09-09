@@ -513,6 +513,28 @@ test("LocalVisionService getLatestFrame parses base64 and returns frame buffer",
   }
 });
 
+test("LocalVisionService getLatestFrame selects the newest worker-buffered frame", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        frames: [
+          { timestamp: 1725800000, base64: Buffer.from("stale").toString("base64") },
+          { timestamp: 1725800002, base64: Buffer.from("fresh").toString("base64") },
+        ],
+      }),
+    });
+
+    const service = new LocalVisionService({ baseUrl: "http://ai-service:8088", internalSecret: "test-sec" });
+    const frame = await service.getLatestFrame("cam-test-123");
+    assert.equal(frame.buffer.toString(), "fresh");
+    assert.equal(frame.timestamp, "2024-09-08T12:53:22.000Z");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("LocalVisionService sends X-Internal-Secret on all outbound calls", async () => {
   const originalFetch = globalThis.fetch;
   const recordedHeaders = [];
