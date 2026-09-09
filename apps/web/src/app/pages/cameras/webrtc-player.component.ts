@@ -168,9 +168,10 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       // The remote answer must be generated from the exact SDP the browser has
       // installed locally. Rewriting it after setLocalDescription can make Chrome
       // reject an otherwise valid Tuya answer.
-      this.send("offer",this.peer.localDescription?.sdp||offer.sdp||"");
+      const offerAccepted=await this.send("offer",this.peer.localDescription?.sdp||offer.sdp||"");
+      if(!offerAccepted)return;
       this.offerSignaled=true;
-      for(const candidate of this.pendingLocalCandidates.splice(0))this.send("candidate",candidate);
+      for(const candidate of this.pendingLocalCandidates.splice(0))void this.send("candidate",candidate);
     }catch(error){this.fallback("peer-error",error instanceof Error?error.message:String(error))}
   }
 
@@ -212,11 +213,12 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     }
   }
 
-  private send(type:"offer"|"candidate"|"disconnect",payload:string){
-    if(!this.socket?.connected||!this.sessionId)return;
-    this.socket.emit("signal",{sessionId:this.sessionId,type,payload},(result:{success?:boolean;error?:string}|undefined)=>{
-      if(result?.success===false)this.fallback("signal-rejected",result.error||type);
-    });
+  private send(type:"offer"|"candidate"|"disconnect",payload:string):Promise<boolean>{
+    if(!this.socket?.connected||!this.sessionId)return Promise.resolve(false);
+    return new Promise(resolve=>this.socket?.emit("signal",{sessionId:this.sessionId,type,payload},(result:{success?:boolean;error?:string}|undefined)=>{
+      if(result?.success===false){this.fallback("signal-rejected",result.error||type);resolve(false);}
+      else resolve(true);
+    }));
   }
 
   private diagnostic(stage:string,detail=""){this.socket?.emit("diagnostic",{cameraId:this.cameraId,stage,detail:detail.slice(0,160)})}
