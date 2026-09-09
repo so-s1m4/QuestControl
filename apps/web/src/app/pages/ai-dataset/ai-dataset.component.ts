@@ -399,6 +399,15 @@ interface CameraItem {
       .workspace-layout { grid-template-columns: 310px minmax(0, 1fr); }
       .queue-editor-split { grid-template-columns: 230px minmax(0, 1fr); }
     }
+    /* Desktop navigation is rendered by app-root as a fixed 280px sidebar,
+       while this route is rendered directly by router-outlet. Reserve that
+       column here instead of allowing the page to sit underneath it. */
+    @media (min-width: 1001px) {
+      .ai-page { width: calc(100% - 280px); margin-left: 280px; }
+    }
+    @media (min-width: 761px) and (max-width: 1000px) {
+      .ai-page { width: calc(100% - 228px); margin-left: 228px; }
+    }
     @media (max-width: 980px) {
       .ai-page { padding: 24px 20px 42px; }
       .workspace-layout { grid-template-columns: 1fr; }
