@@ -48,6 +48,17 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
                     @if(aiStates()[camera.id]?.motion){
                       <span class="chip motion">Движение</span>
                     }
+                    @if(headsetStates()[camera.id]; as hs){
+                      @if(hs.modelStatus === 'MODEL_UNAVAILABLE' || hs.status === 'MODEL_UNAVAILABLE'){
+                        <span class="chip vr-error" title="VR модель недоступна">
+                          ⚠️ VR недоступна
+                        </span>
+                      } @else {
+                        <span class="chip vr" [class.warn]="(hs.notOnBaseCount ?? hs.outsideZoneCount) > 0" [title]="'На базе: ' + (hs.onChargingBaseCount ?? hs.chargingBaseCount) + ', не на базе: ' + (hs.notOnBaseCount ?? hs.outsideZoneCount) + (hs.notOnBaseHeadsets?.length ? ' (в квадратах: ' + hs.notOnBaseHeadsets.join(', ') + ')' : '')">
+                          🥽 {{hs.totalDetected}}
+                        </span>
+                      }
+                    }
                   </div>
                   @if(camera.provider==="TUYA"&&activeCameraId()===camera.id){<em>⌨ Стрелки</em>}
                 </footer>
@@ -64,6 +75,9 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
                   @if(camera.room_id){
                     <button class="ai-btn" [disabled]="inspecting()[camera.id]" (click)="inspectRoom(camera)">
                       {{inspecting()[camera.id]?'Осмотр…':'🔄 Осмотр'}}
+                    </button>
+                    <button class="ai-btn" [disabled]="inspectingVr()[camera.id] || headsetStates()[camera.id]?.modelStatus === 'MODEL_UNAVAILABLE'" [title]="headsetStates()[camera.id]?.modelStatus === 'MODEL_UNAVAILABLE' ? 'VR модель недоступна' : 'VR осмотр комнаты'" (click)="inspectVr(camera)">
+                      {{inspectingVr()[camera.id]?'VR…':'🥽 VR'}}
                     </button>
                   }
                   <button class="ai-btn" [class.active-tracking]="trackingStates()[camera.id]" (click)="toggleTracking(camera)">
@@ -132,6 +146,9 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
     .chip.people.active{background:#ecfdf3;color:#027a48}
     .chip.occupied{background:#fef3f2;color:#b42318}
     .chip.motion{background:#eff8ff;color:#175cd3}
+    .chip.vr{background:#e0f2fe;color:#0369a1}
+    .chip.vr.warn{background:#fef2f2;color:#b91c1c}
+    .chip.vr-error{background:#fee2e2;color:#991b1b;border:1px solid #f87171}
     .ai-summary{padding:6px 10px;background:#f8f9fc;border-bottom:1px solid #eef0f4;font-size:11px}
     .ai-summary small{display:block;color:#667085;font-size:9px;font-weight:900}
     .ai-summary p{margin:2px 0 0;color:#1e293b;line-height:1.3}
@@ -159,9 +176,11 @@ export class CameraOverlayComponent{
   cameras=signal<Camera[]>([]);selectedIds=signal<string[]>([]);players=signal<Record<string,Player>>({});collapsed=signal(false);
   nightModes=signal<Record<string,NightMode>>({});controlErrors=signal<Record<string,string>>({});activeCameraId=signal<string|null>(null);
   aiStates=signal<Record<string,AIState>>({});
+  headsetStates=signal<Record<string,any>>({});
   trackingStates=signal<Record<string,boolean>>({});
   analyzing=signal<Record<string,boolean>>({});
   inspecting=signal<Record<string,boolean>>({});
+  inspectingVr=signal<Record<string,boolean>>({});
   aiDescriptions=signal<Record<string,string>>({});
   eventsCameraId=signal<string|null>(null);
   cameraEvents=signal<AIEvent[]>([]);
@@ -187,6 +206,11 @@ export class CameraOverlayComponent{
             motion:Boolean(st.motion),
             lastUpdated:st.lastUpdated
           }}));
+        }
+      });
+      this.rootSocket.on("camera:headset:state",(st:any)=>{
+        if(st?.cameraId){
+          this.headsetStates.update(v=>({...v,[st.cameraId]:st}));
         }
       });
     }catch{}
@@ -269,6 +293,24 @@ export class CameraOverlayComponent{
         }
       },
       error:()=>{this.inspecting.update(v=>({...v,[camera.id]:false}))}
+    });
+  }
+
+  inspectVr(camera:Camera){
+    if(!camera.room_id)return;
+    this.inspectingVr.update(v=>({...v,[camera.id]:true}));
+    this.http.post<any>(`/api/rooms/${camera.room_id}/headset/inspect`,{}).subscribe({
+      next:res=>{
+        this.inspectingVr.update(v=>({...v,[camera.id]:false}));
+        if(res?.summary){
+          this.aiDescriptions.update(v=>({...v,[camera.id]:res.summary}));
+        }
+      },
+      error:err=>{
+        this.inspectingVr.update(v=>({...v,[camera.id]:false}));
+        const msg = err.error?.message || "Ошибка VR осмотра";
+        this.controlErrors.update(v=>({...v,[camera.id]:msg}));
+      }
     });
   }
 

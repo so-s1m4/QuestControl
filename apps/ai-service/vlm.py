@@ -7,7 +7,7 @@ import socket
 import threading
 import time
 import urllib.parse
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 logger = logging.getLogger("questcontrol.ai.vlm")

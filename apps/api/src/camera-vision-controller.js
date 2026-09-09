@@ -1,10 +1,12 @@
 export class CameraVisionController {
-  constructor({ tuya, db, frameProvider, visionService, eventEngine, settleDelayMs = 1200 } = {}) {
+  constructor({ tuya, db, frameProvider, visionService, eventEngine, headsetEngine, activityEngine, settleDelayMs = 1200 } = {}) {
     this.tuya = tuya;
     this.db = db;
     this.frameProvider = frameProvider;
     this.visionService = visionService;
     this.eventEngine = eventEngine;
+    this.headsetEngine = headsetEngine || null;
+    this.activityEngine = activityEngine || null;
     this.settleDelayMs = settleDelayMs;
 
     this.defaultPresets = ["Entrance", "Center", "Puzzle Area", "Exit", "Corner"];
@@ -14,10 +16,39 @@ export class CameraVisionController {
     this.trackingEnabled = new Map();
     /** @type {Map<string, number>} */
     this.manualPtzLockUntil = new Map();
+    /** @type {Map<string, string>} */
+    this.currentPresets = new Map();
+    /** @type {Map<string, boolean>} */
+    this.isMoving = new Map();
   }
 
   recordManualPtz(cameraId, lockoutDurationMs = 15_000) {
     this.manualPtzLockUntil.set(cameraId, Date.now() + lockoutDurationMs);
+  }
+
+  getCurrentPreset(cameraId) {
+    return this.currentPresets.get(cameraId) || "Center";
+  }
+
+  isManualPtzLocked(cameraId) {
+    const lockUntil = this.manualPtzLockUntil.get(cameraId) || 0;
+    return Date.now() < lockUntil;
+  }
+
+  async notifyMoving(cameraId, isMoving, preset = "") {
+    this.isMoving.set(cameraId, Boolean(isMoving));
+    if (preset) {
+      this.currentPresets.set(cameraId, preset);
+    }
+    if (this.headsetEngine) {
+      this.headsetEngine.setCameraMoving(cameraId, isMoving, preset);
+    }
+    if (this.activityEngine) {
+      this.activityEngine.setCameraMoving(cameraId, isMoving, preset);
+    }
+    if (this.visionService?.setCameraMoving) {
+      await this.visionService.setCameraMoving(cameraId, isMoving, preset).catch(() => {});
+    }
   }
 
   async getCamera(cameraId) {
@@ -37,15 +68,19 @@ export class CameraVisionController {
       throw new Error("Tuya integration not configured");
     }
 
+    await this.notifyMoving(camera.id, true, this.getCurrentPreset(camera.id));
     await this.tuya.ptz(camera.external_id, direction);
 
-    if (durationMs > 0 && direction !== "STOP") {
-      setTimeout(async () => {
-        try {
-          await this.tuya.ptz(camera.external_id, "STOP");
-        } catch {}
-      }, durationMs);
-    }
+    const totalTime = (durationMs > 0 ? durationMs : 400) + (this.settleDelayMs || 0);
+    setTimeout(async () => {
+      try {
+        if (durationMs > 0 && direction !== "STOP") {
+          await this.tuya.ptz(camera.external_id, "STOP").catch(() => {});
+        }
+      } finally {
+        await this.notifyMoving(camera.id, false, this.getCurrentPreset(camera.id));
+      }
+    }, totalTime);
   }
 
   async lookLeft(cameraId, durationMs = 300) {
@@ -91,50 +126,79 @@ export class CameraVisionController {
     const camera = await this.getCamera(cameraId);
     if (!camera) throw new Error("Camera not found");
 
-    // Check calibrated preset in database
-    const { rows } = await this.db.query(
-      "SELECT ptz_preset FROM camera_presets WHERE camera_id = $1 AND name = $2",
-      [cameraId, presetName]
-    );
+    await this.notifyMoving(cameraId, true, presetName);
 
-    if (rows[0]?.ptz_preset) {
-      const val = String(rows[0].ptz_preset).trim();
-      if (val.startsWith("{") && val.endsWith("}")) {
-        try {
-          const parsed = JSON.parse(val);
-          if (parsed.direction) {
-            await this.sendPtz(camera, parsed.direction, parsed.durationMs || 600);
-            return { preset: presetName, status: "completed", mode: "calibrated" };
-          }
-          if (Array.isArray(parsed.steps)) {
-            for (const step of parsed.steps) {
-              await this.sendPtz(camera, step.direction, step.durationMs || 400);
-              await new Promise((r) => setTimeout(r, (step.durationMs || 400) + 100));
+    let result = null;
+    try {
+      // Check calibrated preset in database
+      const { rows } = await this.db.query(
+        "SELECT ptz_preset FROM camera_presets WHERE camera_id = $1 AND name = $2",
+        [cameraId, presetName]
+      );
+
+      if (rows[0]?.ptz_preset) {
+        const val = String(rows[0].ptz_preset).trim();
+        if (val.startsWith("{") && val.endsWith("}")) {
+          try {
+            const parsed = JSON.parse(val);
+            if (parsed.direction) {
+              await this.sendPtz(camera, parsed.direction, parsed.durationMs || 600);
+              result = { preset: presetName, status: "completed", mode: "calibrated" };
+            } else if (Array.isArray(parsed.steps)) {
+              for (const step of parsed.steps) {
+                await this.sendPtz(camera, step.direction, step.durationMs || 400);
+                await new Promise((r) => setTimeout(r, (step.durationMs || 400) + 100));
+              }
+              result = { preset: presetName, status: "completed", mode: "calibrated_steps" };
             }
-            return { preset: presetName, status: "completed", mode: "calibrated_steps" };
-          }
-        } catch {}
+          } catch {}
+        }
+        if (!result && /^[0-9A-Za-z_-]{1,10}$/.test(val)) {
+          try {
+            await this.tuya.sendCommands(camera.external_id, [{ code: "ptz_preset", value: val }]);
+            result = { preset: presetName, status: "completed", mode: "device_preset" };
+          } catch {}
+        }
       }
-      if (/^[0-9A-Za-z_-]{1,10}$/.test(val)) {
-        try {
-          await this.tuya.sendCommands(camera.external_id, [{ code: "ptz_preset", value: val }]);
-          return { preset: presetName, status: "completed", mode: "device_preset" };
-        } catch {}
+
+      if (!result) {
+        // Standard calibrated directional fallback
+        const normalized = String(presetName || "").toLowerCase().trim();
+        if (normalized.includes("left") || normalized.includes("entrance")) {
+          await this.sendPtz(camera, "LEFT", 700);
+        } else if (normalized.includes("right") || normalized.includes("exit")) {
+          await this.sendPtz(camera, "RIGHT", 700);
+        } else if (normalized.includes("puzzle") || normalized.includes("corner")) {
+          await this.sendPtz(camera, "DOWN", 400);
+        } else {
+          await this.sendPtz(camera, "UP", 300);
+        }
+        result = { preset: presetName, status: "completed", mode: "fallback_direction" };
       }
+    } finally {
+      if (this.settleDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, this.settleDelayMs));
+      }
+      await this.notifyMoving(cameraId, false, presetName);
     }
 
-    // Standard calibrated directional fallback
-    const normalized = String(presetName || "").toLowerCase().trim();
-    if (normalized.includes("left") || normalized.includes("entrance")) {
-      await this.sendPtz(camera, "LEFT", 700);
-    } else if (normalized.includes("right") || normalized.includes("exit")) {
-      await this.sendPtz(camera, "RIGHT", 700);
-    } else if (normalized.includes("puzzle") || normalized.includes("corner")) {
-      await this.sendPtz(camera, "DOWN", 400);
-    } else {
-      await this.sendPtz(camera, "UP", 300);
+    return result;
+  }
+
+  async moveToPresetAndSettle(cameraId, presetName) {
+    const startedAt = Date.now();
+    let moveResult = null;
+    if (presetName && presetName !== "default") {
+      moveResult = await this.lookAtPreset(cameraId, presetName);
     }
-    return { preset: presetName, status: "completed", mode: "fallback_direction" };
+    const settledAt = Date.now();
+    return {
+      cameraId,
+      preset: presetName,
+      startedAt,
+      settledAt,
+      moveResult,
+    };
   }
 
   async inspectRoom(roomId) {
@@ -154,55 +218,61 @@ export class CameraVisionController {
       };
     }
 
+    if (this.isManualPtzLocked(camera.id)) {
+      const err = new Error("Камера заблокирована ручным управлением оператора (15 сек)");
+      err.code = "MANUAL_PTZ_ACTIVE";
+      throw err;
+    }
+
+    const initialPreset = this.getCurrentPreset(camera.id);
+
     // 2. Get presets
     const presets = await this.getPresets(camera.id);
     const inspectionPresets = presets.slice(0, 4); // Inspect up to 4 angles
     const observations = [];
 
-    for (const preset of inspectionPresets) {
-      try {
-        await this.lookAtPreset(camera.id, preset.name);
-        // Settle delay
-        if (this.settleDelayMs > 0) {
-          await new Promise((r) => setTimeout(r, this.settleDelayMs));
-        }
-      } catch (err) {
-        console.warn(`Preset ${preset.name} movement error:`, err.message);
-      }
-
-      try {
-        let frameItem = this.frameProvider?.getLatestFrame(camera.id);
-        if (!frameItem?.buffer && this.visionService?.getLatestFrame) {
-          frameItem = await this.visionService.getLatestFrame(camera.id);
-          if (frameItem?.buffer && this.frameProvider) {
-            this.frameProvider.pushFrame(camera.id, frameItem.buffer);
-          }
-        }
-        let count = 0;
-        let detection = null;
-        if (frameItem?.buffer && this.visionService) {
-          detection = await this.visionService.detect({
-            cameraId: camera.id,
-            imageBuffer: frameItem.buffer,
-          });
-          count = Number(detection?.peopleCount || 0);
-        }
-
-        observations.push({
-          preset: preset.name,
-          peopleCount: count,
-          timestamp: new Date().toISOString(),
-          people: detection?.people || [],
-        });
-      } catch (err) {
-        console.warn(`Preset ${preset.name} inspection error:`, err.message);
-      }
-    }
-
-    // Return camera to center
     try {
-      await this.lookAtPreset(camera.id, "Center");
-    } catch {}
+      for (const preset of inspectionPresets) {
+        try {
+          await this.lookAtPreset(camera.id, preset.name);
+        } catch (err) {
+          console.warn(`Preset ${preset.name} movement error:`, err.message);
+        }
+
+        try {
+          let frameItem = this.frameProvider?.getLatestFrame(camera.id);
+          if (!frameItem?.buffer && this.visionService?.getLatestFrame) {
+            frameItem = await this.visionService.getLatestFrame(camera.id);
+            if (frameItem?.buffer && this.frameProvider) {
+              this.frameProvider.pushFrame(camera.id, frameItem.buffer);
+            }
+          }
+          let count = 0;
+          let detection = null;
+          if (frameItem?.buffer && this.visionService) {
+            detection = await this.visionService.detect({
+              cameraId: camera.id,
+              imageBuffer: frameItem.buffer,
+            });
+            count = Number(detection?.peopleCount || 0);
+          }
+
+          observations.push({
+            preset: preset.name,
+            peopleCount: count,
+            timestamp: new Date().toISOString(),
+            people: detection?.people || [],
+          });
+        } catch (err) {
+          console.warn(`Preset ${preset.name} inspection error:`, err.message);
+        }
+      }
+    } finally {
+      // Rule 8: Return camera to initial preset
+      try {
+        await this.lookAtPreset(camera.id, initialPreset);
+      } catch {}
+    }
 
     // Deduplicate: take maximum detected across any single preset to avoid double-counting
     const maxPeople = observations.length > 0
@@ -217,6 +287,7 @@ export class CameraVisionController {
       roomId,
       cameraId: camera.id,
       cameraName: camera.name,
+      initialPreset,
       occupied: maxPeople > 0,
       estimatedPeople: maxPeople,
       observations,

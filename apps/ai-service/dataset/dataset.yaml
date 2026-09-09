@@ -1,0 +1,9 @@
+# QuestControl VR Headset Detection Dataset
+# Note: 'path' is omitted so Ultralytics resolves relative to this YAML file's directory,
+# ensuring identical behavior from repository root, apps/ai-service, and inside Docker (/app).
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: vr_headset

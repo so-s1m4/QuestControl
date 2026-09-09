@@ -41,6 +41,7 @@ type InstallPromptEvent = Event & {
               <a routerLink="/inventory" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m21 8-9 5-9-5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>Инвентарь</a>
               <a routerLink="/users" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M18 20a5.5 5.5 0 0 0-2.5-4.6"/></svg>Пользователи</a>
               <a routerLink="/camera-settings" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.55 2.55-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55v.09h-3.6v-.09a1.7 1.7 0 0 0-1.03-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.55-2.55.06-.06A1.7 1.7 0 0 0 5.6 15a1.7 1.7 0 0 0-1.55-1.03H4v-3.6h.05A1.7 1.7 0 0 0 5.6 9.34a1.7 1.7 0 0 0-.34-1.88L5.2 7.4l2.55-2.55.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.55v-.09h3.6v.09a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.55 2.55-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.03h.09v3.6h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>Камеры: настройки</a>
+              <a routerLink="/ai-dataset" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>AI Датасет и Модель</a>
               <a routerLink="/integrations" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 3-3a4 4 0 0 1 6 5l-3 3M16 16l-3 3a4 4 0 0 1-6-5l3-3M9 15l6-6"/></svg>Интеграции API</a>
             </nav>
           }
@@ -97,6 +98,7 @@ type InstallPromptEvent = Event & {
                 <a routerLink="/inventory" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Инвентарь</b><span>Магниты и расходники</span></a>
                 <a routerLink="/users" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Пользователи</b><span>Доступ команды</span></a>
                 <a routerLink="/camera-settings" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Настройки камер</b><span>Планы и привязка камер</span></a>
+                <a routerLink="/ai-dataset" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>AI Датасет и Модель</b><span>Разметка, обучение и валидация моделей</span></a>
                 <a routerLink="/integrations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Интеграции API</b><span>Источники и форматы бронирований</span></a>
                 <a routerLink="/bookings" [queryParams]="{ history: '1' }" (click)="mobileMenuOpen.set(false)"><b>Импорт истории</b><span>Служебная загрузка старых броней</span></a>
               }

@@ -16,6 +16,21 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
       <div class="ai-badge" [class.detected]="peopleCount()>0">
         <span>PEOPLE: {{peopleCount()}}</span>
       </div>
+      @if(headsetState(); as hs){
+        @if(hs.modelStatus === 'MODEL_UNAVAILABLE' || hs.status === 'MODEL_UNAVAILABLE'){
+          <div class="vr-badge error">
+            <span>VR: МОДЕЛЬ НЕДОСТУПНА</span>
+          </div>
+        } @else {
+          <div class="vr-badge">
+            <span>VR: {{hs.totalDetected}}</span>
+            <small>База: {{hs.onChargingBaseCount ?? hs.chargingBaseCount}}</small>
+            @if((hs.notOnBaseCount ?? hs.outsideZoneCount) > 0){
+              <strong class="warn">Не на базе: {{hs.notOnBaseCount ?? hs.outsideZoneCount}}</strong>
+            }
+          </div>
+        }
+      }
     }
     <button class="ai-toggle-btn" [class.on]="showAiOverlay()" (click)="toggleOverlay($event)" [title]="showAiOverlay()?'Скрыть AI рамки':'Показать AI рамки'">AI</button>
     @if(status()){<p class="status">{{status()}}</p>}
@@ -26,6 +41,9 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
     .ai-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4}
     .ai-badge{position:absolute;left:10px;top:10px;z-index:6;padding:4px 8px;border-radius:6px;background:#101828d9;color:#fff;font-size:11px;font-weight:900;letter-spacing:.06em;box-shadow:0 2px 8px #0004}
     .ai-badge.detected{background:#079455eb}
+    .vr-badge{position:absolute;left:10px;top:38px;z-index:6;padding:4px 8px;border-radius:6px;background:#0f172ae6;color:#38bdf8;font-size:11px;font-weight:700;display:flex;gap:6px;align-items:center;box-shadow:0 2px 8px #0004}
+    .vr-badge.error{background:#7f1d1de6;color:#fca5a5;border:1px solid #ef4444}
+    .vr-badge .warn{color:#f87171;background:#7f1d1d80;padding:1px 4px;border-radius:3px}
     .ai-toggle-btn{position:absolute;right:10px;top:10px;z-index:7;padding:3px 7px;border-radius:5px;border:1px solid #ffffff40;background:#101828c0;color:#94a3b8;font-size:10px;font-weight:900;cursor:pointer}
     .ai-toggle-btn.on{background:#4058df;color:#fff;border-color:#7183ff}
     .status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;padding:8px 11px;border-radius:7px;background:#101828c9;color:#fff;font-size:12px;white-space:nowrap;z-index:5}
@@ -39,6 +57,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   status=signal("Подключение WebRTC…");
   showAiOverlay=signal(true);
   peopleCount=signal(0);
+  headsetState=signal<any>(null);
 
   private socket?:Socket;
   private rootSocket?:Socket;
@@ -67,6 +86,12 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
             this.latestPeople=st.people;
             this.drawOverlay();
           }
+        }
+      });
+      this.rootSocket.on("camera:headset:state",(st:any)=>{
+        if(st?.cameraId===this.cameraId){
+          this.headsetState.set(st);
+          this.drawOverlay();
         }
       });
     }catch{}
@@ -186,8 +211,6 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     if(!ctx)return;
     ctx.clearRect(0,0,w,h);
 
-    if(!this.latestPeople?.length)return;
-
     // Calculate aspect-ratio fit rect inside video element
     const vw=v.videoWidth||w;
     const vh=v.videoHeight||h;
@@ -196,6 +219,50 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     const renderH=vh*scale;
     const offsetX=(w-renderW)/2;
     const offsetY=(h-renderH)/2;
+
+    // 1. Draw VR Headset Zones & Detections
+    const hs = this.headsetState();
+    if(hs?.assignedZonesState){
+      for(const zone of Object.values(hs.assignedZonesState) as any[]){
+        if(zone.status === "NOT_VISIBLE") continue;
+
+        if(zone.bbox){
+          const bx = offsetX + (zone.bbox.x * renderW);
+          const by = offsetY + (zone.bbox.y * renderH);
+          const bw = zone.bbox.width * renderW;
+          const bh = zone.bbox.height * renderH;
+
+          ctx.lineWidth = 2;
+          if(zone.status === "UNKNOWN"){
+            ctx.strokeStyle = "#eab308";
+            ctx.setLineDash([4, 4]);
+          } else if(zone.status === "OCCUPIED"){
+            ctx.strokeStyle = zone.type === "WORK_ZONE" ? "#f97316" : "#10b981";
+            ctx.setLineDash([]);
+          } else {
+            ctx.strokeStyle = "#94a3b8";
+            ctx.setLineDash([]);
+          }
+
+          ctx.strokeRect(bx, by, bw, bh);
+          ctx.setLineDash([]);
+
+          const label = zone.type === "WORK_ZONE" && zone.status === "OCCUPIED"
+            ? `VR: ${zone.headsetId || zone.name} (НЕ НА БАЗЕ)`
+            : `VR: ${zone.headsetId || zone.name} (${zone.status})`;
+          const textWidth = ctx.measureText(label).width;
+          ctx.fillStyle = zone.status === "OCCUPIED"
+            ? (zone.type === "WORK_ZONE" ? "#ea580ce6" : "#10b981e6")
+            : (zone.status === "UNKNOWN" ? "#ca8a04e6" : "#475569e6");
+          ctx.fillRect(bx, Math.max(0, by - 18), textWidth + 8, 18);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText(label, bx + 4, Math.max(12, by - 4));
+        }
+      }
+    }
+
+    // 2. Draw People Detection Boxes
+    if(!this.latestPeople?.length)return;
 
     ctx.lineWidth=2.5;
     ctx.strokeStyle="#10b981";

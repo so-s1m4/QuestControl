@@ -24,6 +24,8 @@ import { TuyaWebRTCManager } from "./tuya-webrtc.js";
 import { CameraFrameProvider } from "./camera-frame-provider.js";
 import { LocalVisionService } from "./local-vision-service.js";
 import { CameraEventEngine } from "./camera-event-engine.js";
+import { HeadsetTrackingEngine } from "./headset-tracking-engine.js";
+import { ActivityIntelligenceEngine } from "./activity-intelligence-engine.js";
 import { CameraVisionController } from "./camera-vision-controller.js";
 import { CameraAIAgent } from "./camera-ai-agent.js";
 import { runMigrations } from "./migrator.js";
@@ -130,7 +132,23 @@ const localVisionService = new LocalVisionService({ baseUrl: env.AI_SERVICE_URL,
 async function syncAiWorkersSafe() {
   try {
     const { rows } = await db.query(
-      "SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.ai_enabled = true"
+      `SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id,
+        capture.id AS capture_session_id,
+        COALESCE(capture.auto_capture_enabled, false) AS auto_capture_enabled,
+        COALESCE(capture.capture_interval_sec, 12) AS capture_interval_sec,
+        COALESCE((
+          SELECT jsonb_object_agg(s.action_type, jsonb_build_object('enabled', s.enabled, 'config', s.config))
+          FROM activity_settings s WHERE s.room_id = c.room_id
+        ), '{}'::jsonb) AS activity_settings
+       FROM cameras c
+       LEFT JOIN rooms r ON r.id = c.room_id
+       LEFT JOIN LATERAL (
+         SELECT id, auto_capture_enabled, capture_interval_sec
+         FROM ai_capture_sessions
+         WHERE camera_id=c.id AND room_id=c.room_id AND status='ACTIVE'
+         ORDER BY created_at DESC LIMIT 1
+       ) capture ON true
+       WHERE c.ai_enabled = true`
     );
     await localVisionService.syncWorkers(rows);
   } catch (err) {
@@ -178,12 +196,86 @@ const cameraEventEngine = new CameraEventEngine({
     }
   },
 });
+const headsetTrackingEngine = new HeadsetTrackingEngine({
+  db,
+  io,
+  onNotification: async (type, data) => {
+    try {
+      let photoBuffer = null;
+      if (data?.imageBuffer || data?.frameBuffer) {
+        const rawBuffer = data.imageBuffer || data.frameBuffer;
+        const zones = data.zones || (data.cameraId ? headsetTrackingEngine.getZones(data.cameraId, data.preset) : []);
+        photoBuffer = await localVisionService.annotateHeadsets({
+          imageBuffer: rawBuffer,
+          headsets: data.detectedHeadsets || [],
+          zones,
+          notOnBaseCount: data.notOnBaseCount ?? 0,
+          onChargingBaseCount: data.onChargingBaseCount ?? 0,
+          cameraName: data.cameraName || "Камера",
+          preset: data.preset || "default",
+          timestamp: data.time || new Date().toLocaleTimeString("ru-RU"),
+        }).catch(() => rawBuffer);
+      } else if (data?.cameraId) {
+        const frame = cameraFrameProvider.getLatestFrame(data.cameraId) ||
+          await localVisionService.getLatestFrame(data.cameraId).catch(() => null);
+        if (frame?.buffer) {
+          const rawBuffer = frame.buffer;
+          const zones = headsetTrackingEngine.getZones(data.cameraId, data.preset);
+          photoBuffer = await localVisionService.annotateHeadsets({
+            imageBuffer: rawBuffer,
+            headsets: data.detectedHeadsets || [],
+            zones,
+            notOnBaseCount: data.notOnBaseCount ?? 0,
+            onChargingBaseCount: data.onChargingBaseCount ?? 0,
+            cameraName: data.cameraName || "Камера",
+            preset: data.preset || "default",
+            timestamp: data.time || new Date().toLocaleTimeString("ru-RU"),
+          }).catch(() => rawBuffer);
+        }
+      }
+
+      if (type === "HEADSET_NOT_ON_BASE") {
+        await sendTelegramImportantLog("headsetNotOnBase", "⚠️ Не все VR-шлемы на базе", [
+          ["Ожидается шлемов", data.expectedHeadsetCount ? String(data.expectedHeadsetCount) : "—"],
+          ["Всего не на базе", String(data.notOnBaseCount ?? 0)],
+          ["В рабочих квадратах", Array.isArray(data.notOnBaseHeadsets) && data.notOnBaseHeadsets.length ? data.notOnBaseHeadsets.join(", ") : "—"],
+          ["Вне зон", String(data.outsideZoneCount ?? 0)],
+          ["На зарядной базе", String(data.onChargingBaseCount ?? 0)],
+          ["Отсутствует на базе", String(data.missingFromBaseCount ?? 0)],
+          ["Не локализовано", String(data.unlocatedCount ?? 0)],
+          ["Камера", data.cameraName || data.cameraId],
+          ["Ракурс", data.preset || "—"],
+          ["Время", data.time || new Date().toLocaleTimeString("ru-RU")],
+        ], { photoBuffer });
+      } else if (type === "HEADSET_ALL_ON_BASE") {
+        await sendTelegramImportantLog("headsetAllOnBase", "✅ Все VR-шлемы на базе (CHARGING_BASE)", [
+          ["Камера", data.cameraName || data.cameraId],
+          ["Ожидалось шлемов", data.expectedHeadsetCount ? String(data.expectedHeadsetCount) : "—"],
+          ["На зарядной базе", String(data.onChargingBaseCount ?? 0)],
+          ["Ракурс", data.preset || "—"],
+          ["Время", data.time || new Date().toLocaleTimeString("ru-RU")],
+        ]);
+      }
+    } catch (err) {
+      console.error("Failed to send Telegram VR notification:", err.message);
+    }
+  },
+});
+const activityIntelligenceEngine = new ActivityIntelligenceEngine({
+  db,
+  io,
+  visionService: localVisionService,
+  telegramBot,
+  sendTelegramAlertFn: sendTelegramImportantLog,
+});
 const cameraVisionController = new CameraVisionController({
   tuya,
   db,
   frameProvider: cameraFrameProvider,
   visionService: localVisionService,
   eventEngine: cameraEventEngine,
+  headsetEngine: headsetTrackingEngine,
+  activityEngine: activityIntelligenceEngine,
 });
 const cameraAIAgent = new CameraAIAgent({
   db,
@@ -266,6 +358,8 @@ const telegramImportantLogEvents = [
   "roomEmpty",
   "unusualActivity",
   "cameraOffline",
+  "headsetNotOnBase",
+  "headsetAllOnBase",
 ];
 const defaultTelegramImportantLogSettings = {
   recipientUserId: null,
@@ -279,6 +373,8 @@ const defaultTelegramImportantLogSettings = {
     roomEmpty: true,
     unusualActivity: true,
     cameraOffline: true,
+    headsetNotOnBase: true,
+    headsetAllOnBase: true,
   },
 };
 const telegramImportantLogSettingsInput = z.object({
@@ -3103,6 +3199,9 @@ app.patch("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
     [input.roomId, room.location_id, input.name, input.provider, input.externalId || null, input.streamKey || null, req.params.id]
   );
   await audit(req, "camera.update", "camera", rows[0].id, before, rows[0]);
+  if (headsetTrackingEngine?.setCameraRoom) {
+    headsetTrackingEngine.setCameraRoom(rows[0].id, rows[0].room_id);
+  }
   void syncAiWorkersSafe();
   res.json(rows[0]);
 });
@@ -3114,6 +3213,9 @@ app.patch("/cameras/:id/room", auth, permit("cameras:manage"), async (req,res) =
   const { rows } = await db.query("UPDATE cameras SET room_id=$1,location_id=$2 WHERE id=$3 RETURNING *",[roomId,room.location_id,req.params.id]);
   if (!rows[0]) return res.status(404).json({ error:"CAMERA_NOT_FOUND" });
   await audit(req,"camera.room.assign","camera",req.params.id,null,{roomId});
+  if (headsetTrackingEngine?.setCameraRoom) {
+    headsetTrackingEngine.setCameraRoom(rows[0].id, rows[0].room_id);
+  }
   res.json(rows[0]);
 });
 
@@ -3179,6 +3281,9 @@ app.patch("/cameras/:id/assignment", auth, async (req,res) => {
     [input.locationId,input.zoneId,roomId,locationChanged,req.params.id]
   );
   await audit(req,"camera.assignment.update","camera",req.params.id,before,rows[0]);
+  if (headsetTrackingEngine?.setCameraRoom) {
+    headsetTrackingEngine.setCameraRoom(rows[0].id, rows[0].room_id);
+  }
   res.json(rows[0]);
 });
 
@@ -4359,6 +4464,468 @@ app.post("/rooms/:id/ai/query", auth, permit("cameras:read"), async (req, res) =
   res.json(response);
 });
 
+app.get("/rooms/:id/headset/state", auth, permit("cameras:read"), async (req, res) => {
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  const roomState = await headsetTrackingEngine.getRoomHeadsetState(req.params.id);
+  res.json(roomState);
+});
+
+app.post("/rooms/:id/headset/inspect", auth, permit("devices:command"), async (req, res) => {
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  try {
+    const report = await headsetTrackingEngine.inspectRoomHeadsets(req.params.id, {
+      cameraVisionController,
+      visionService: localVisionService,
+      frameProvider: cameraFrameProvider,
+    });
+    await audit(req, "room.headset.inspect", "room", req.params.id, null, report);
+    res.json(report);
+  } catch (err) {
+    if (err.code === "MANUAL_PTZ_ACTIVE") {
+      return res.status(423).json({ error: "MANUAL_PTZ_ACTIVE", message: err.message });
+    }
+    throw err;
+  }
+});
+
+app.patch("/rooms/:id/headset/settings", auth, permit("devices:command"), async (req, res) => {
+  const input = z.object({
+    expectedHeadsetCount: z.number().int().min(0).max(100).nullable().optional(),
+  }).parse(req.body);
+
+  const room = (await db.query("SELECT * FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  const count = input.expectedHeadsetCount !== undefined ? input.expectedHeadsetCount : room.expected_headset_count;
+  const { rows } = await db.query(
+    "UPDATE rooms SET expected_headset_count=$1 WHERE id=$2 RETURNING *",
+    [count, req.params.id]
+  );
+  headsetTrackingEngine.setRoomExpectedHeadsets(req.params.id, count);
+  await audit(req, "room.headset_settings.update", "rooms", req.params.id, null, rows[0]);
+  res.json(rows[0]);
+});
+
+// AI Dataset & Model CRM Lifecycle Routes
+app.get("/api/ai/dataset/status", auth, permit("cameras:read"), async (_req, res) => {
+  const status = await localVisionService.getPipelineStatus();
+  res.json(status);
+});
+
+app.post("/api/ai/dataset/sessions/start", auth, permit("devices:command"), async (req, res) => {
+  const input = z.object({
+    roomId: z.string().min(1),
+    cameraId: z.string().min(1),
+    notes: z.string().optional().default(""),
+    autoCaptureEnabled: z.boolean().optional().default(false),
+    captureIntervalSec: z.number().int().min(3).max(3600).optional().default(12),
+  }).parse(req.body);
+
+  const camera = (await db.query("SELECT * FROM cameras WHERE id=$1", [input.cameraId])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [input.roomId])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+
+  if (camera.room_id !== input.roomId) {
+    return res.status(400).json({ error: "CAMERA_ROOM_MISMATCH", message: "Camera does not belong to specified room" });
+  }
+  if (!(await cameraAllowed(req, input.cameraId))) {
+    return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  }
+  if (!(await locationAllowed(req, room.location_id))) {
+    return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  }
+
+  const client = await db.connect();
+  let session = null;
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "UPDATE ai_capture_sessions SET status='CLOSED', closed_at=now() WHERE room_id=$1 AND camera_id=$2 AND status='ACTIVE'",
+      [input.roomId, input.cameraId]
+    );
+    const { rows } = await client.query(
+      `INSERT INTO ai_capture_sessions
+       (room_id, camera_id, status, notes, created_by, auto_capture_enabled, capture_interval_sec)
+       VALUES ($1, $2, 'ACTIVE', $3, $4, $5, $6) RETURNING *`,
+      [input.roomId, input.cameraId, input.notes, req.user?.sub || null, input.autoCaptureEnabled, input.captureIntervalSec]
+    );
+    session = rows[0];
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  await audit(req, "ai.dataset.session_start", "ai_capture_session", session.id, null, session);
+  void syncAiWorkersSafe();
+  res.status(201).json(session);
+});
+
+app.post("/api/ai/dataset/sessions/:id/stop", auth, permit("devices:command"), async (req, res) => {
+  const sess = (await db.query(
+    "SELECT s.*, r.location_id FROM ai_capture_sessions s JOIN rooms r ON r.id = s.room_id WHERE s.id=$1",
+    [req.params.id]
+  )).rows[0];
+  if (!sess) return res.status(404).json({ error: "SESSION_NOT_FOUND" });
+
+  if (!(await cameraAllowed(req, sess.camera_id))) {
+    return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  }
+  if (!(await locationAllowed(req, sess.location_id))) {
+    return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  }
+
+  const { rows } = await db.query(
+    "UPDATE ai_capture_sessions SET status='CLOSED', closed_at=now() WHERE id=$1 RETURNING *",
+    [req.params.id]
+  );
+  const updated = rows[0];
+  await audit(req, "ai.dataset.session_stop", "ai_capture_session", req.params.id, sess, updated);
+  void syncAiWorkersSafe();
+  res.json(updated);
+});
+
+app.get("/api/ai/dataset/sessions/active", auth, permit("cameras:read"), async (req, res) => {
+  const { rows } = await db.query(
+    "SELECT s.*, r.name as room_name, c.name as camera_name, r.location_id FROM ai_capture_sessions s JOIN rooms r ON r.id=s.room_id JOIN cameras c ON c.id=s.camera_id WHERE s.status='ACTIVE' ORDER BY s.created_at DESC"
+  );
+  const filtered = [];
+  for (const row of rows) {
+    if ((await cameraAllowed(req, row.camera_id)) && (await locationAllowed(req, row.location_id))) {
+      filtered.push(row);
+    }
+  }
+  res.json({ sessions: filtered });
+});
+
+app.get("/api/ai/dataset/queue", auth, permit("cameras:read"), async (req, res) => {
+  const statusFilter = String(req.query.status || "all");
+  const result = await localVisionService.getVerificationQueue(statusFilter);
+  const items = Array.isArray(result.items) ? result.items : [];
+  const filtered = [];
+  for (const item of items) {
+    if (!item.cameraId || !item.roomId) {
+      if (isOwner(req)) filtered.push(item);
+      continue;
+    }
+    const camera = (await db.query("SELECT id, room_id FROM cameras WHERE id=$1", [item.cameraId])).rows[0];
+    const room = (await db.query("SELECT id, location_id FROM rooms WHERE id=$1", [item.roomId])).rows[0];
+    if (!camera || !room || camera.room_id !== item.roomId) {
+      if (isOwner(req)) filtered.push(item);
+      continue;
+    }
+    if (!(await cameraAllowed(req, item.cameraId))) {
+      continue;
+    }
+    if (!(await locationAllowed(req, room.location_id))) {
+      continue;
+    }
+    filtered.push(item);
+  }
+  res.json({ items: filtered, count: filtered.length });
+});
+
+app.get("/api/ai/dataset/samples/:id/recovery", auth, async (req, res) => {
+  if (!isOwner(req)) {
+    return res.status(403).json({ error: "OWNER_REQUIRED", message: "Only owners may access the sample recovery route" });
+  }
+  const meta = await localVisionService.getSampleMetadata(req.params.id);
+  if (!meta) {
+    return res.status(404).json({ error: "SAMPLE_NOT_FOUND" });
+  }
+  const imgBuffer = await localVisionService.getSampleImage(req.params.id);
+  res.json({
+    sampleId: req.params.id,
+    metadata: meta,
+    hasImage: Boolean(imgBuffer && imgBuffer.length > 0),
+  });
+});
+
+app.get("/api/ai/dataset/samples/:id/image", auth, permit("cameras:read"), async (req, res) => {
+  const meta = await localVisionService.getSampleMetadata(req.params.id);
+  if (!meta) {
+    return res.status(404).json({ error: "SAMPLE_NOT_FOUND" });
+  }
+  if (!meta.cameraId || !meta.roomId) {
+    return res.status(403).json({ error: "SAMPLE_SCOPING_FAILED", message: "Sample is missing camera or room scoping" });
+  }
+  const camera = (await db.query("SELECT id, room_id FROM cameras WHERE id=$1", [meta.cameraId])).rows[0];
+  const room = (await db.query("SELECT id, location_id FROM rooms WHERE id=$1", [meta.roomId])).rows[0];
+  if (!camera || !room) {
+    return res.status(403).json({ error: "SAMPLE_SCOPING_FAILED", message: "Sample camera or room could not be resolved" });
+  }
+  if (camera.room_id !== meta.roomId) {
+    return res.status(403).json({ error: "CAMERA_ROOM_MISMATCH", message: "Camera does not belong to specified room" });
+  }
+  if (!(await cameraAllowed(req, meta.cameraId))) {
+    return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  }
+  if (!(await locationAllowed(req, room.location_id))) {
+    return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  }
+  const imgBuffer = await localVisionService.getSampleImage(req.params.id);
+  if (!imgBuffer) {
+    return res.status(404).json({ error: "SAMPLE_IMAGE_NOT_FOUND" });
+  }
+  res.set("Content-Type", "image/jpeg");
+  res.set("Cache-Control", "no-cache, no-store");
+  res.send(imgBuffer);
+});
+
+app.post("/api/ai/dataset/capture", auth, permit("devices:command"), async (req, res) => {
+  const input = z.object({
+    cameraId: z.string().min(1),
+    roomId: z.string().min(1),
+    preset: z.string().optional().default("default"),
+    captureSessionId: z.string().optional().nullable(),
+  }).parse(req.body);
+
+  const camera = (await db.query("SELECT * FROM cameras WHERE id=$1", [input.cameraId])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [input.roomId])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+
+  // Camera-room membership validation
+  if (camera.room_id !== input.roomId) {
+    return res.status(400).json({ error: "CAMERA_ROOM_MISMATCH", message: "Camera does not belong to specified room" });
+  }
+
+  // Location and camera permissions
+  if (!(await cameraAllowed(req, input.cameraId))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  // Server session validation / binding
+  let resolvedSessionId = null;
+  if (input.captureSessionId) {
+    const sessRow = (await db.query(
+      "SELECT id, room_id, camera_id, status FROM ai_capture_sessions WHERE id=$1",
+      [input.captureSessionId]
+    )).rows[0];
+    if (!sessRow || sessRow.status !== "ACTIVE") {
+      return res.status(400).json({ error: "SESSION_INVALID", message: "Capture session is not active or not found" });
+    }
+    if (sessRow.room_id !== input.roomId || sessRow.camera_id !== input.cameraId) {
+      return res.status(400).json({ error: "SESSION_MISMATCH", message: "Capture session room or camera mismatch" });
+    }
+    resolvedSessionId = sessRow.id;
+  } else {
+    const activeRow = (await db.query(
+      "SELECT id FROM ai_capture_sessions WHERE room_id=$1 AND camera_id=$2 AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1",
+      [input.roomId, input.cameraId]
+    )).rows[0];
+    if (!activeRow) {
+      return res.status(400).json({
+        error: "NO_ACTIVE_SESSION",
+        message: "No active capture session exists for this camera and room. Start a capture session before capturing.",
+      });
+    }
+    resolvedSessionId = activeRow.id;
+  }
+
+  // Unified PTZ navigation and settling
+  let settledAt = Date.now();
+  if (input.preset && input.preset !== "default" && cameraVisionController) {
+    try {
+      const moveRes = await cameraVisionController.moveToPresetAndSettle(input.cameraId, input.preset);
+      settledAt = moveRes.settledAt;
+    } catch (err) {
+      return res.status(502).json({
+        error: "PRESET_UNAVAILABLE",
+        message: `PTZ preset navigation failed: ${err?.message || err}`,
+      });
+    }
+  }
+
+  // Fresh frame cutoff polling: timestamp > settledAt
+  let frameObj = null;
+  const maxPollMs = 3000;
+  const pollStart = Date.now();
+
+  while (Date.now() - pollStart <= maxPollMs) {
+    let cand = null;
+    if (cameraFrameProvider) {
+      cand = cameraFrameProvider.getLatestFrame(input.cameraId);
+    }
+    if (!cand?.buffer && localVisionService) {
+      cand = await localVisionService.getLatestFrame(input.cameraId).catch(() => null);
+    }
+    if (cand?.buffer) {
+      const frameTs = cand.timestamp ? new Date(cand.timestamp).getTime() : 0;
+      if (frameTs > settledAt) {
+        frameObj = cand;
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  if (!frameObj?.buffer) {
+    return res.status(503).json({
+      error: "FRAME_UNAVAILABLE",
+      message: "No fresh camera frame available after PTZ settling (timestamp older than cutoff)",
+    });
+  }
+
+  const detection = await localVisionService.detectHeadsets({
+    cameraId: input.cameraId,
+    imageBuffer: frameObj.buffer,
+    conf: 0.35,
+  }).catch(() => ({ headsets: [] }));
+
+  const initialBboxes = (detection.headsets || []).map((h) => ({
+    classId: 0,
+    x: h.bbox.x,
+    y: h.bbox.y,
+    width: h.bbox.width,
+    height: h.bbox.height,
+  }));
+
+  const collectRes = await localVisionService.collectPtzFrame({
+    cameraId: input.cameraId,
+    roomId: input.roomId,
+    preset: input.preset,
+    imageBuffer: frameObj.buffer,
+    timestamp: frameObj.timestamp || new Date().toISOString(),
+    captureSessionId: resolvedSessionId,
+    initialBboxes,
+    autoEnqueue: true,
+  });
+
+  await audit(req, "ai.dataset.capture", "camera", input.cameraId, null, collectRes);
+  res.json(collectRes);
+});
+
+app.post("/api/ai/dataset/samples/:id/verify", auth, permit("devices:command"), async (req, res) => {
+  const meta = await localVisionService.getSampleMetadata(req.params.id);
+  if (!meta) {
+    return res.status(404).json({ error: "SAMPLE_NOT_FOUND" });
+  }
+  if (!meta.cameraId || !meta.roomId) {
+    return res.status(403).json({ error: "SAMPLE_SCOPING_FAILED", message: "Sample is missing camera or room scoping" });
+  }
+  const camera = (await db.query("SELECT id, room_id FROM cameras WHERE id=$1", [meta.cameraId])).rows[0];
+  const room = (await db.query("SELECT id, location_id FROM rooms WHERE id=$1", [meta.roomId])).rows[0];
+  if (!camera || !room) {
+    return res.status(403).json({ error: "SAMPLE_SCOPING_FAILED", message: "Sample camera or room could not be resolved" });
+  }
+  if (camera.room_id !== meta.roomId) {
+    return res.status(403).json({ error: "CAMERA_ROOM_MISMATCH", message: "Camera does not belong to specified room" });
+  }
+  if (!(await cameraAllowed(req, meta.cameraId))) {
+    return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  }
+  if (!(await locationAllowed(req, room.location_id))) {
+    return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  }
+
+  const input = z.object({
+    approved: z.boolean().default(true),
+    correctedBboxes: z.array(z.object({
+      classId: z.number().int().default(0),
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      width: z.number().gt(0).max(1),
+      height: z.number().gt(0).max(1),
+    })).optional().nullable(),
+    negativeConfirmed: z.boolean().optional().default(false),
+    notes: z.string().optional().default(""),
+  }).parse(req.body);
+
+  const operatorId = req.user?.username || req.user?.id || "operator";
+  const result = await localVisionService.verifySample({
+    sampleId: req.params.id,
+    operatorId,
+    approved: input.approved,
+    correctedBboxes: input.correctedBboxes,
+    negativeConfirmed: input.negativeConfirmed,
+    notes: input.notes,
+  });
+
+  await audit(req, "ai.dataset.verify_sample", "ai_sample", req.params.id, null, result);
+  res.json(result);
+});
+
+app.post("/api/ai/dataset/export", auth, permit("devices:command"), async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "ADMIN_OR_OWNER_REQUIRED" });
+  }
+
+  const input = z.object({
+    version: z.string().regex(/^v\d+\.\d+\.\d+$/).default("v1.0.0"),
+  }).parse(req.body || {});
+
+  const result = await localVisionService.exportDatasetSplits({ version: input.version });
+  await audit(req, "ai.dataset.export", "ai_dataset", input.version, null, result);
+  res.json(result);
+});
+
+app.post("/api/ai/model/train", auth, permit("devices:command"), async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "ADMIN_OR_OWNER_REQUIRED" });
+  }
+
+  const input = z.object({
+    epochs: z.number().int().min(1).max(200).optional().default(10),
+    batchSize: z.number().int().min(1).max(64).optional().default(8),
+    imgSize: z.number().int().min(160).max(1280).optional().default(640),
+  }).parse(req.body || {});
+
+  const operatorId = req.user?.username || req.user?.id || "operator";
+  const result = await localVisionService.trainHeadsetModel({
+    epochs: input.epochs,
+    batchSize: input.batchSize,
+    imgSize: input.imgSize,
+    operatorId,
+  });
+
+  await audit(req, "ai.model.train", "ai_model", "candidate_vr_headset", null, result);
+  res.status(202).json(result);
+});
+
+app.get("/api/ai/model/job-status", auth, permit("cameras:read"), async (_req, res) => {
+  const status = await localVisionService.getPipelineJobStatus();
+  res.json(status);
+});
+
+app.post("/api/ai/model/activate", auth, permit("devices:command"), async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "ADMIN_OR_OWNER_REQUIRED" });
+  }
+
+  const input = z.object({
+    version: z.string().optional().default("v1.0.0"),
+  }).parse(req.body || {});
+
+  const operatorId = req.user?.username || req.user?.id || "operator";
+  const result = await localVisionService.activateCandidateModel({
+    version: input.version,
+    operatorId,
+  });
+
+  await audit(req, "ai.model.activate", "ai_model", "vr_headset_yolo", null, result);
+  res.json(result);
+});
+
+app.post("/api/ai/model/rollback", auth, permit("devices:command"), async (req, res) => {
+  if (!["OWNER", "ADMIN"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "ADMIN_OR_OWNER_REQUIRED" });
+  }
+
+  const operatorId = req.user?.username || req.user?.id || "operator";
+  const result = await localVisionService.rollbackModel({ operatorId });
+  await audit(req, "ai.model.rollback", "ai_model", "vr_headset_yolo", null, result);
+  res.json(result);
+});
+
 // Internal signaling & stream worker endpoints (for local ai-service)
 const requireInternalSecret = (req, res, next) => {
   const secret = req.headers["x-internal-secret"] || req.query?.secret;
@@ -4377,7 +4944,23 @@ const internalSessions = new Map();
 
 app.get("/internal/cameras", requireInternalSecret, async (_req, res) => {
   const { rows } = await db.query(
-    "SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.ai_enabled = true"
+    `SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id,
+      capture.id AS capture_session_id,
+      COALESCE(capture.auto_capture_enabled, false) AS auto_capture_enabled,
+      COALESCE(capture.capture_interval_sec, 12) AS capture_interval_sec,
+      COALESCE((
+        SELECT jsonb_object_agg(s.action_type, jsonb_build_object('enabled', s.enabled, 'config', s.config))
+        FROM activity_settings s WHERE s.room_id = c.room_id
+      ), '{}'::jsonb) AS activity_settings
+     FROM cameras c
+     LEFT JOIN rooms r ON r.id = c.room_id
+     LEFT JOIN LATERAL (
+       SELECT id, auto_capture_enabled, capture_interval_sec
+       FROM ai_capture_sessions
+       WHERE camera_id=c.id AND room_id=c.room_id AND status='ACTIVE'
+       ORDER BY created_at DESC LIMIT 1
+     ) capture ON true
+     WHERE c.ai_enabled = true`
   );
   res.json(rows);
 });
@@ -4453,6 +5036,265 @@ app.get("/internal/tuya-webrtc/signals", requireInternalSecret, (req, res) => {
   res.json({ ok: true, signals });
 });
 
+// ==========================================
+// Activity Intelligence & Behavioral Detection Endpoints
+// ==========================================
+
+app.get("/api/activity/state", auth, permit("cameras:read"), async (req, res) => {
+  const roomId = req.query.roomId;
+  const cameraId = req.query.cameraId;
+  if (!roomId && !cameraId) {
+    return res.status(400).json({ error: "ROOM_OR_CAMERA_REQUIRED" });
+  }
+  if (roomId) {
+    const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [roomId])).rows[0];
+    if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+    if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+    const state = activityIntelligenceEngine.getRoomState(roomId);
+    if (state) return res.json(state);
+    const health = await activityIntelligenceEngine.getHealth();
+    return res.json({
+      roomId,
+      status: health.poseEstimatorStatus || health.status || "NOT_OBSERVED",
+      observationStatus: "NOT_OBSERVED",
+      activeEvents: [],
+      peopleCount: 0,
+      health,
+    });
+  }
+  if (cameraId) {
+    if (!(await cameraAllowed(req, cameraId))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+    const state = activityIntelligenceEngine.getCameraState(cameraId);
+    if (state) return res.json(state);
+    const health = await activityIntelligenceEngine.getHealth();
+    return res.json({
+      cameraId,
+      status: health.poseEstimatorStatus || health.status || "NOT_OBSERVED",
+      observationStatus: "NOT_OBSERVED",
+      activeEvents: [],
+      peopleCount: 0,
+      health,
+    });
+  }
+});
+
+app.get("/api/activity/events", auth, permit("cameras:read"), async (req, res) => {
+  const { roomId, locationId, cameraId, limit } = req.query;
+  if (locationId && !(await locationAllowed(req, locationId))) {
+    return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  }
+  if (roomId) {
+    const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [roomId])).rows[0];
+    if (room && !(await locationAllowed(req, room.location_id))) {
+      return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+    }
+  }
+  if (cameraId && !(await cameraAllowed(req, cameraId))) {
+    return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  }
+
+  const events = await activityIntelligenceEngine.getRecentEvents({
+    roomId,
+    locationId,
+    cameraId,
+    limit: limit ? parseInt(limit, 10) : 50,
+  });
+  res.json({ events });
+});
+
+app.get("/api/activity/health", auth, permit("cameras:read"), async (_req, res) => {
+  const health = await localVisionService.getActivityHealth();
+  res.json(health);
+});
+
+app.get("/api/activity/plugins", auth, permit("cameras:read"), async (_req, res) => {
+  const plugins = await localVisionService.getActivityPlugins();
+  res.json(plugins);
+});
+
+app.put("/api/activity/plugins/:actionType/enable", auth, permit("settings:manage"), async (req, res) => {
+  // A process-global flag would leak a setting from one room into another and
+  // disappear after a worker restart.  Activity settings are deliberately
+  // persisted and scoped through PUT /api/activity/settings instead.
+  res.status(410).json({ error: "ROOM_SCOPED_SETTINGS_REQUIRED" });
+});
+
+app.get("/api/activity/settings", auth, permit("cameras:read"), async (req, res) => {
+  const { roomId, actionType } = req.query;
+  if (!roomId) return res.status(400).json({ error: "ROOM_ID_REQUIRED" });
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [roomId])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  let q = "SELECT * FROM activity_settings WHERE room_id = $1";
+  const params = [roomId];
+  if (actionType) {
+    params.push(actionType);
+    q += " AND action_type = $2";
+  }
+  const { rows } = await db.query(q, params);
+  res.json({ settings: rows });
+});
+
+app.put("/api/activity/settings", auth, permit("settings:manage"), async (req, res) => {
+  const input = z.object({
+    roomId: z.string().min(1),
+    actionType: z.string().min(1),
+    enabled: z.boolean().optional(),
+    config: z.record(z.any()).optional(),
+  }).parse(req.body);
+
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [input.roomId])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  const { rows } = await db.query(
+    `INSERT INTO activity_settings(room_id, location_id, action_type, enabled, config, updated_at)
+     VALUES($1, $2, $3, COALESCE($4, false), COALESCE($5, '{}'::jsonb), now())
+     ON CONFLICT(room_id, action_type) DO UPDATE SET
+       enabled = COALESCE($4, activity_settings.enabled),
+       config = COALESCE($5, activity_settings.config),
+       updated_at = now()
+     RETURNING *`,
+    [input.roomId, room.location_id, input.actionType, input.enabled, input.config ? JSON.stringify(input.config) : null]
+  );
+  await audit(req, "activity.settings.update", "activity_settings", input.roomId, null, rows[0]);
+  // Worker configuration is derived from these persisted, room-scoped rows.
+  // Sync immediately; restart bootstrap uses the same query.
+  void syncAiWorkersSafe();
+  res.json(rows[0]);
+});
+
+app.post("/rooms/:id/activity/inspect", auth, permit("devices:command"), async (req, res) => {
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [req.params.id])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+
+  const { rows: cameras } = await db.query(
+    "SELECT id FROM cameras WHERE room_id = $1 AND ai_enabled = true",
+    [req.params.id]
+  );
+  if (cameras.length === 0) {
+    return res.json({ status: "NO_ACTIVE_CAMERAS", events: [] });
+  }
+
+  const results = [];
+  for (const cam of cameras) {
+    const frame = cameraFrameProvider.getLatestFrame(cam.id);
+    const result = await activityIntelligenceEngine.processFrame({
+      cameraId: cam.id,
+      roomId: req.params.id,
+      locationId: room.location_id,
+      imageBuffer: frame?.buffer || null,
+      timestamp: frame?.timestamp || null,
+      presetName: cameraVisionController.getCurrentPreset(cam.id),
+    });
+    results.push(result);
+  }
+  await audit(req, "room.activity.inspect", "room", req.params.id, null, { resultsCount: results.length });
+  res.json({ roomId: req.params.id, results });
+});
+
+app.post("/api/activity/dataset/samples", auth, permit("devices:command"), async (req, res) => {
+  const input = z.object({
+    roomId: z.string().min(1),
+    cameraId: z.string().min(1),
+    actionType: z.string().min(1),
+    label: z.enum(["POSITIVE", "HARD_NEGATIVE", "BACKGROUND"]).default("POSITIVE"),
+    videoClipPath: z.string().optional(),
+    durationSec: z.number().optional(),
+    keypointsData: z.record(z.any()).optional().default({}),
+    metadata: z.record(z.any()).optional().default({}),
+  }).parse(req.body);
+
+  const room = (await db.query("SELECT location_id FROM rooms WHERE id=$1", [input.roomId])).rows[0];
+  if (!room) return res.status(404).json({ error: "ROOM_NOT_FOUND" });
+  if (!(await locationAllowed(req, room.location_id))) return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  const camera = (await db.query(
+    "SELECT c.id FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1 AND c.room_id=$2 AND COALESCE(c.location_id, r.location_id)=$3",
+    [input.cameraId, input.roomId, room.location_id]
+  )).rows[0];
+  if (!camera) return res.status(403).json({ error: "CAMERA_ROOM_FORBIDDEN" });
+
+  // Requirement 9: Auto/pseudo-labels remain UNVERIFIED until operator approval!
+  const { rows } = await db.query(
+    `INSERT INTO activity_dataset_samples(
+      location_id, room_id, camera_id, action_type, label, verification_status,
+      video_clip_path, duration_sec, keypoints_data, metadata
+    ) VALUES($1, $2, $3, $4, $5, 'UNVERIFIED', $6, $7, $8, $9) RETURNING *`,
+    [
+      room.location_id,
+      input.roomId,
+      input.cameraId,
+      input.actionType,
+      input.label,
+      input.videoClipPath || null,
+      input.durationSec || null,
+      JSON.stringify(input.keypointsData || {}),
+      JSON.stringify(input.metadata || {}),
+    ]
+  );
+  await audit(req, "activity.dataset.sample_captured", "activity_sample", rows[0].id, null, rows[0]);
+  res.status(201).json(rows[0]);
+});
+
+app.put("/api/activity/dataset/samples/:id/verify", auth, permit("settings:manage"), async (req, res) => {
+  const input = z.object({
+    approved: z.boolean(),
+    label: z.enum(["POSITIVE", "HARD_NEGATIVE", "BACKGROUND"]).optional(),
+  }).parse(req.body);
+
+  const operatorId = req.user?.id || req.user?.email || "operator";
+  const newStatus = input.approved ? "VERIFIED" : "REJECTED";
+  const sample = (await db.query(
+    "SELECT id, location_id, room_id FROM activity_dataset_samples WHERE id=$1",
+    [req.params.id]
+  )).rows[0];
+  if (!sample) return res.status(404).json({ error: "SAMPLE_NOT_FOUND" });
+  if (!sample.location_id) {
+    if (!isOwner(req)) return res.status(403).json({ error: "SAMPLE_SCOPE_UNKNOWN_OWNER_REQUIRED" });
+  } else if (!(await locationAllowed(req, sample.location_id))) {
+    return res.status(403).json({ error: "LOCATION_FORBIDDEN" });
+  }
+
+  let query = "UPDATE activity_dataset_samples SET verification_status=$1, operator_id=$2, verified_at=now()";
+  const params = [newStatus, operatorId];
+  if (input.label) {
+    params.push(input.label);
+    query += `, label=$${params.length}`;
+  }
+  params.push(req.params.id);
+  query += ` WHERE id=$${params.length} RETURNING *`;
+
+  const { rows } = await db.query(query, params);
+  if (!rows[0]) return res.status(404).json({ error: "SAMPLE_NOT_FOUND" });
+
+  await audit(req, "activity.dataset.sample_verified", "activity_sample", req.params.id, null, rows[0]);
+  res.json(rows[0]);
+});
+
+app.get("/api/activity/dataset/samples", auth, permit("cameras:read"), async (req, res) => {
+  const { actionType, status, limit } = req.query;
+  let q = "SELECT * FROM activity_dataset_samples WHERE TRUE";
+  const params = [];
+  if (!isOwner(req)) {
+    params.push(req.user.sub);
+    q += ` AND location_id IN (SELECT location_id FROM user_locations WHERE user_id=$${params.length})`;
+  }
+  if (actionType) {
+    params.push(actionType);
+    q += ` AND action_type = $${params.length}`;
+  }
+  if (status) {
+    params.push(status);
+    q += ` AND verification_status = $${params.length}`;
+  }
+  params.push(limit ? parseInt(limit, 10) : 50);
+  q += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+
+  const { rows } = await db.query(q, params);
+  res.json({ samples: rows });
+});
+
 app.post("/internal/tuya/hls", requireInternalSecret, async (req, res) => {
   const { cameraId } = req.body || {};
   const camera = (await db.query("SELECT * FROM cameras WHERE id=$1", [cameraId])).rows[0];
@@ -4520,11 +5362,74 @@ app.post("/internal/ai/camera-state", requireInternalSecret, async (req, res) =>
   res.json({ ok: true, status });
 });
 
+// The AI worker sends completed pose/action inference here.  Scope is never
+// accepted from the worker: the API derives camera -> room -> location from
+// PostgreSQL before persistence, Socket.IO or Telegram can occur.
+app.post("/internal/ai/camera-activity", requireInternalSecret, async (req, res) => {
+  const { cameraId, preset, timestamp, result: rawResult, image } = req.body || {};
+  if (!cameraId || !rawResult || typeof rawResult !== "object") {
+    return res.status(400).json({ error: "INVALID_ACTIVITY_PAYLOAD" });
+  }
+  const camera = (await db.query(
+    "SELECT c.id, c.room_id, COALESCE(c.location_id, r.location_id) AS location_id, c.ai_enabled FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1",
+    [cameraId]
+  )).rows[0];
+  if (!camera || camera.ai_enabled === false) return res.json({ ok: true, ignored: true });
+
+  const { rows: enabledSettings } = camera.room_id
+    ? await db.query("SELECT action_type FROM activity_settings WHERE room_id=$1 AND enabled=true", [camera.room_id])
+    : { rows: [] };
+  const enabledActions = new Set(enabledSettings.map((row) => row.action_type));
+  const safeEvents = Array.isArray(rawResult.events)
+    ? rawResult.events.filter((event) => enabledActions.has(event?.actionType || event?.action_type))
+    : [];
+  const result = { ...rawResult, events: safeEvents };
+  let imageBuffer = null;
+  if (safeEvents.length && typeof image === "string" && image.length <= 9_000_000) {
+    try { imageBuffer = Buffer.from(image, "base64"); } catch { imageBuffer = null; }
+  }
+  const state = await activityIntelligenceEngine.processResult({
+    cameraId: camera.id,
+    roomId: camera.room_id,
+    locationId: camera.location_id,
+    presetName: typeof preset === "string" ? preset : "default",
+    timestamp: typeof timestamp === "number" ? new Date(timestamp * 1000).toISOString() : null,
+    result,
+    imageBuffer,
+  });
+  res.json({ ok: true, state });
+});
+
+app.post("/internal/ai/camera-headsets", requireInternalSecret, async (req, res) => {
+  const { cameraId, preset, headsets = [], status, modelStatus } = req.body || {};
+  const camera = (
+    await db.query(
+      "SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.id=$1",
+      [cameraId]
+    )
+  ).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+
+  const state = await headsetTrackingEngine.processDetections({
+    cameraId: camera.id,
+    preset: preset || "default",
+    detectedHeadsets: Array.isArray(headsets) ? headsets : [],
+    status: status || modelStatus || "READY",
+    modelStatus: modelStatus || status || "READY",
+    roomId: camera.room_id,
+    locationId: camera.location_id,
+    cameraName: camera.name,
+  });
+
+  res.json({ ok: true, state });
+});
+
 app.patch("/cameras/:id/ai/settings", auth, permit("cameras:manage"), async (req, res) => {
   const input = z.object({
     aiEnabled: z.boolean().optional(),
     trackingEnabled: z.boolean().optional(),
     analysisEnabled: z.boolean().optional(),
+    headsetTrackingEnabled: z.boolean().optional(),
   }).parse(req.body);
 
   const before = (await db.query("SELECT * FROM cameras WHERE id=$1", [req.params.id])).rows[0];
@@ -4534,10 +5439,11 @@ app.patch("/cameras/:id/ai/settings", auth, permit("cameras:manage"), async (req
   const aiEnabled = input.aiEnabled ?? before.ai_enabled ?? true;
   const trackingEnabled = input.trackingEnabled ?? before.tracking_enabled ?? false;
   const analysisEnabled = input.analysisEnabled ?? before.analysis_enabled ?? true;
+  const headsetTrackingEnabled = input.headsetTrackingEnabled ?? before.headset_tracking_enabled ?? false;
 
   const { rows } = await db.query(
-    `UPDATE cameras SET ai_enabled=$1, tracking_enabled=$2, analysis_enabled=$3 WHERE id=$4 RETURNING *`,
-    [aiEnabled, trackingEnabled, analysisEnabled, req.params.id]
+    `UPDATE cameras SET ai_enabled=$1, tracking_enabled=$2, analysis_enabled=$3, headset_tracking_enabled=$4 WHERE id=$5 RETURNING *`,
+    [aiEnabled, trackingEnabled, analysisEnabled, headsetTrackingEnabled, req.params.id]
   );
 
   cameraVisionController.setTracking(req.params.id, trackingEnabled);
@@ -4581,6 +5487,130 @@ app.post("/cameras/:id/presets/:name/goto", auth, permit("devices:command"), asy
   await cameraVisionController.lookAtPreset(camera.id, req.params.name);
   await audit(req, "camera.preset.goto", "camera", camera.id, null, { preset: req.params.name });
   res.json({ ok: true, preset: req.params.name });
+});
+
+app.get("/cameras/:id/headset/zones", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const preset = req.query.preset ? String(req.query.preset) : null;
+  const zones = headsetTrackingEngine.getZones(req.params.id, preset);
+  res.json(zones);
+});
+
+app.post("/cameras/:id/headset/zones", auth, permit("cameras:manage"), async (req, res) => {
+  const camera = (await db.query("SELECT id FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, camera.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+
+  const input = z.object({
+    presetName: z.string().min(1).max(80).default("default"),
+    name: z.string().min(1).max(80),
+    zoneType: z.enum(["WORK_ZONE", "CHARGING_BASE"]).default("WORK_ZONE"),
+    headsetId: z.string().max(80).optional().nullable(),
+    x: z.number().min(0).max(1).default(0),
+    y: z.number().min(0).max(1).default(0),
+    width: z.number().min(0).max(1).default(0.1),
+    height: z.number().min(0).max(1).default(0.1),
+    polygon: z.array(z.object({ x: z.number(), y: z.number() })).optional().nullable(),
+    baseStationId: z.string().min(1).max(80).default("default"),
+    isCanonicalBase: z.boolean().default(false),
+    expectedHeadsetCount: z.number().int().min(0).max(100).optional().nullable(),
+    enabled: z.boolean().default(true),
+  }).parse(req.body);
+
+  const camRoom = (await db.query("SELECT room_id FROM cameras WHERE id=$1", [camera.id])).rows[0]?.room_id;
+
+  let effectiveBaseStationId = input.baseStationId;
+  if (input.zoneType === "CHARGING_BASE" && (!req.body?.baseStationId || req.body.baseStationId === "default")) {
+    if (camRoom) {
+      const existingBases = (
+        await db.query(
+          `SELECT z.id, z.name, z.camera_id, z.base_station_id
+           FROM camera_headset_zones z
+           JOIN cameras c ON c.id = z.camera_id
+           WHERE c.room_id = $1 AND z.zone_type = 'CHARGING_BASE'`,
+          [camRoom]
+        )
+      ).rows;
+      if (existingBases.length > 0 && !req.body?.baseStationId) {
+        const baseSlug = input.name.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") || "base";
+        effectiveBaseStationId = `${baseSlug}_${camera.id.slice(0, 8)}`;
+      }
+    }
+  }
+
+  if (input.zoneType === "CHARGING_BASE" && input.isCanonicalBase) {
+    if (!camRoom) {
+      return res.status(400).json({
+        error: "CANONICAL_BASE_REQUIRES_ROOM",
+        message: "Canonical charging base station requires camera to be assigned to a room.",
+      });
+    }
+    const existingCanonical = (
+      await db.query(
+        `SELECT z.id, z.camera_id
+         FROM camera_headset_zones z
+         JOIN cameras c ON c.id = z.camera_id
+         WHERE (z.room_id = $1 OR c.room_id = $1) AND z.base_station_id = $2 AND z.is_canonical_base = true`,
+        [camRoom, effectiveBaseStationId]
+      )
+    ).rows[0];
+    if (existingCanonical) {
+      return res.status(400).json({
+        error: "CANONICAL_BASE_ALREADY_EXISTS",
+        message: `A canonical view already exists for base station '${effectiveBaseStationId}' in this room (zone ${existingCanonical.id}). Only one canonical view is permitted per physical base station per room.`,
+      });
+    }
+  }
+
+  const { rows } = await db.query(
+    `INSERT INTO camera_headset_zones(
+       camera_id, room_id, preset_name, name, zone_type, headset_id, x, y, width, height, polygon,
+       base_station_id, is_canonical_base, expected_headset_count, enabled
+     )
+     VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     RETURNING *`,
+    [
+      camera.id,
+      camRoom || null,
+      input.presetName,
+      input.name,
+      input.zoneType,
+      input.headsetId || null,
+      input.x,
+      input.y,
+      input.width,
+      input.height,
+      input.polygon ? JSON.stringify(input.polygon) : null,
+      effectiveBaseStationId,
+      input.isCanonicalBase,
+      input.expectedHeadsetCount ?? null,
+      input.enabled,
+    ]
+  );
+  headsetTrackingEngine.addZoneToCache(rows[0]);
+  await audit(req, "camera.headset_zone.create", "camera_headset_zones", rows[0].id, null, rows[0]);
+  res.status(201).json(rows[0]);
+});
+
+app.delete("/cameras/:id/headset/zones/:zoneId", auth, permit("cameras:manage"), async (req, res) => {
+  const camera = (await db.query("SELECT id FROM cameras WHERE id=$1", [req.params.id])).rows[0];
+  if (!camera) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
+  if (!(await cameraAllowed(req, camera.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+
+  const { rowCount } = await db.query("DELETE FROM camera_headset_zones WHERE id=$1 AND camera_id=$2", [
+    req.params.zoneId,
+    camera.id,
+  ]);
+  if (!rowCount) return res.status(404).json({ error: "ZONE_NOT_FOUND" });
+  headsetTrackingEngine.removeZoneFromCache(req.params.zoneId, camera.id);
+  await audit(req, "camera.headset_zone.delete", "camera_headset_zones", req.params.zoneId, null, null);
+  res.json({ ok: true });
+});
+
+app.get("/cameras/:id/headset/state", auth, permit("cameras:read"), async (req, res) => {
+  if (!(await cameraAllowed(req, req.params.id))) return res.status(403).json({ error: "CAMERA_FORBIDDEN" });
+  const state = headsetTrackingEngine.getState(req.params.id);
+  res.json(state);
 });
 
 app.get("/rooms/:id/doorbell-calls", auth, permit("cameras:read"), async (req,res) => {
@@ -5123,6 +6153,7 @@ async function runTelegramNotifications() {
 }
 // Restore camera AI state from PostgreSQL and run resilient stream worker supervisor
 await cameraEventEngine.loadStatesFromDb();
+await headsetTrackingEngine.loadStatesFromDb();
 const aiWorkerSupervisor = startAiWorkerSyncSupervisor({ db, localVisionService });
 
 

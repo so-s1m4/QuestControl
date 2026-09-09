@@ -21,6 +21,7 @@ import { WorkSchedulesComponent } from "./pages/work-schedules/work-schedules.co
 import { IntegrationsComponent } from "./pages/integrations/integrations.component";
 import { TelegramComponent } from "./pages/telegram/telegram.component";
 import { DocumentsComponent } from "./pages/documents/documents.component";
+import { AiDatasetComponent } from "./pages/ai-dataset/ai-dataset.component";
 export const routes: Routes = [
   { path: "login", component: LoginComponent },
   { path: "reception/checkin/:token", component: ReceptionCheckinComponent },
@@ -33,6 +34,7 @@ export const routes: Routes = [
     component: CameraSettingsComponent,
     canActivate: [authGuard],
   },
+  { path: "ai-dataset", component: AiDatasetComponent, canActivate: [authGuard] },
   { path: "krampus", component: KrampusComponent, canActivate: [authGuard] },
   { path: "users", component: UsersComponent, canActivate: [authGuard] },
   { path: "bookings", component: BookingsComponent, canActivate: [authGuard] },

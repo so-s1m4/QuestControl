@@ -27,14 +27,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY vlm.py receiver.py server.py ./
+RUN mkdir -p models /opt/models/base
+COPY vlm.py receiver.py server.py model_validator.py entrypoint.sh ./
+COPY models/ ./models/
+COPY scripts/ ./scripts/
+COPY dataset/ ./dataset/
+RUN chmod +x entrypoint.sh
+
+# Pre-bake general YOLO model at build time with SHA-256 verification (strictly offline at runtime)
+ARG BAKE_GENERAL_YOLO=true
+ARG YOLO11N_SHA256="0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1"
+RUN set -e; \
+    if [ "$BAKE_GENERAL_YOLO" = "true" ]; then \
+      curl -fSL https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt -o /opt/models/base/yolo11n.pt && \
+      echo "${YOLO11N_SHA256}  /opt/models/base/yolo11n.pt" | sha256sum -c - && \
+      cp /opt/models/base/yolo11n.pt /app/models/yolo11n.pt; \
+    fi
 
 ENV PORT=8088 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    YOLO_MODEL=/app/models/yolo11n.pt \
+    HEADSET_MODEL=/app/models/current/vr_headset_yolo.pt \
+    HEADSET_MODEL_METADATA=/app/models/current/model_metadata.json \
+    YOLO_OFFLINE=true \
+    ULTRALYTICS_OFFLINE=1 \
+    ULTRALYTICS_AUTOINSTALL=0
 
 EXPOSE 8088
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
   CMD curl -f http://localhost:8088/health || exit 1
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "server.py"]

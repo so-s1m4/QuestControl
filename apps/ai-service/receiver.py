@@ -3,11 +3,17 @@ import base64
 import io
 import logging
 import os
+import sys
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+
+_AI_SERVICE_DIR = str(Path(__file__).resolve().parent)
+if _AI_SERVICE_DIR not in sys.path:
+    sys.path.insert(0, _AI_SERVICE_DIR)
 
 import requests
 from PIL import Image
@@ -41,12 +47,14 @@ class CameraStreamSession:
         config: Dict[str, Any],
         api_url: str,
         semaphore: Optional[threading.BoundedSemaphore] = None,
+        activity_semaphore: Optional[threading.BoundedSemaphore] = None,
     ):
         self.camera_id = camera_id
         self.provider = provider.upper()
         self.config = config
         self.api_url = api_url.rstrip("/")
         self.semaphore = semaphore
+        self.activity_semaphore = activity_semaphore
         self.running = False
         self.thread: Optional[threading.Thread] = None
 
@@ -57,6 +65,13 @@ class CameraStreamSession:
         # Status & metrics
         self.last_frame_time: float = 0.0
         self.is_online: bool = False
+        self.is_moving: bool = False
+        self.current_preset: str = "default"
+        self.headset_detection_fn: Optional[Callable[[bytes, str, float], Dict[str, Any]]] = None
+        self.activity_detection_fn: Optional[Callable[[bytes, str, str, float, List[str]], Dict[str, Any]]] = None
+        self.dataset_capture_fn: Optional[Callable[[bytes, str, str, float, Dict[str, Any], List[Dict[str, Any]]], None]] = None
+        self.last_activity_inference_at: float = 0.0
+        self.last_auto_capture_at: float = 0.0
         self.previous_boxes: List[Dict[str, Any]] = []
         self.last_motion_time: float = 0.0
         self.internal_secret = os.environ.get("INTERNAL_API_SECRET", "").strip()
@@ -380,6 +395,10 @@ class CameraStreamSession:
         if not self.is_online:
             self._notify_camera_status(True)
 
+        if self.is_moving:
+            logger.debug("Skipping detection tick for %s because camera is moving/settling", self.camera_id)
+            return
+
         if not hasattr(self, "detection_fn") or not self.detection_fn:
             return
 
@@ -416,8 +435,107 @@ class CameraStreamSession:
                 headers=self._headers(),
                 timeout=3.0,
             )
+
+            # Headset tracking if enabled
+            if self.config.get("headset_tracking_enabled") and self.headset_detection_fn:
+                try:
+                    headsets_res = self.headset_detection_fn(image_bytes, self.camera_id, 0.4)
+                    h_status = headsets_res.get("status", "READY")
+                    requests.post(
+                        f"{self.api_url}/internal/ai/camera-headsets",
+                        json={
+                            "cameraId": self.camera_id,
+                            "preset": self.current_preset,
+                            "status": h_status,
+                            "modelStatus": h_status,
+                            "headsets": headsets_res.get("headsets", []),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
+                        headers=self._headers(),
+                        timeout=3.0,
+                    )
+                except Exception as h_err:
+                    logger.debug("Headset state push failed: %s", h_err)
+
         except Exception as exc:
             logger.debug("Failed to push camera state to API: %s", exc)
+        finally:
+            if self.semaphore and acquired:
+                self.semaphore.release()
+
+        self._maybe_auto_capture(image_bytes, now)
+
+        # Activity inference deliberately has a separate bounded semaphore.
+        # A slow pose model must never block the existing people/headset worker.
+        activity_settings = self.config.get("activity_settings") or {}
+        enabled_actions = [
+            str(action_type)
+            for action_type, setting in activity_settings.items()
+            if isinstance(setting, dict) and setting.get("enabled")
+        ]
+        activity_interval = max(0.25, float(self.config.get("activity_interval_sec", 0.75)))
+        if not enabled_actions or not self.activity_detection_fn or now - self.last_activity_inference_at < activity_interval:
+            return
+
+        activity_acquired = True
+        if self.activity_semaphore:
+            activity_acquired = self.activity_semaphore.acquire(blocking=False)
+        if not activity_acquired:
+            logger.debug("Skipping activity tick for %s due to activity backpressure", self.camera_id)
+            return
+        try:
+            self.last_activity_inference_at = now
+            activity_result = self.activity_detection_fn(
+                image_bytes, self.camera_id, self.current_preset, now, enabled_actions
+            )
+            events = activity_result.get("events", []) if isinstance(activity_result, dict) else []
+            # Frames are sent only after a confirmed event, never for each tick.
+            payload = {
+                "cameraId": self.camera_id,
+                "preset": self.current_preset,
+                "timestamp": now,
+                "result": activity_result if isinstance(activity_result, dict) else {},
+            }
+            if events:
+                payload["image"] = base64.b64encode(image_bytes).decode("ascii")
+            requests.post(
+                f"{self.api_url}/internal/ai/camera-activity",
+                json=payload,
+                headers=self._headers(),
+                timeout=4.0,
+            )
+        except Exception as activity_err:
+            logger.debug("Activity state push failed for %s: %s", self.camera_id, activity_err)
+        finally:
+            if self.activity_semaphore and activity_acquired:
+                self.activity_semaphore.release()
+
+    def _maybe_auto_capture(self, image_bytes: bytes, now: float) -> None:
+        """Sparsely collect model-suggested frames during an operator session."""
+        if not self.config.get("auto_capture_enabled") or not self.config.get("capture_session_id"):
+            return
+        if not self.dataset_capture_fn or not self.headset_detection_fn:
+            return
+        interval = max(3.0, float(self.config.get("capture_interval_sec", 12)))
+        if now - self.last_auto_capture_at < interval:
+            return
+        acquired = True
+        if self.semaphore:
+            acquired = self.semaphore.acquire(blocking=False)
+        if not acquired:
+            logger.debug("Skipping automatic dataset capture for %s due to inference backpressure", self.camera_id)
+            return
+        try:
+            detection = self.headset_detection_fn(image_bytes, self.camera_id, 0.35)
+            bboxes = [
+                {"classId": 0, **headset.get("bbox", {})}
+                for headset in detection.get("headsets", [])
+                if isinstance(headset, dict) and isinstance(headset.get("bbox"), dict)
+            ]
+            self.dataset_capture_fn(image_bytes, self.camera_id, self.current_preset, now, self.config, bboxes)
+            self.last_auto_capture_at = now
+        except Exception as exc:
+            logger.debug("Automatic dataset capture failed for %s: %s", self.camera_id, exc)
         finally:
             if self.semaphore and acquired:
                 self.semaphore.release()
@@ -496,8 +614,13 @@ class StreamWorkerManager:
         self.sessions: Dict[str, CameraStreamSession] = {}
         self.lock = threading.Lock()
         self.detection_fn: Optional[Callable[[bytes, str, float], Dict[str, Any]]] = None
+        self.headset_detection_fn: Optional[Callable[[bytes, str, float], Dict[str, Any]]] = None
+        self.activity_detection_fn: Optional[Callable[[bytes, str, str, float, List[str]], Dict[str, Any]]] = None
+        self.dataset_capture_fn: Optional[Callable[[bytes, str, str, float, Dict[str, Any], List[Dict[str, Any]]], None]] = None
         max_parallel = int(os.environ.get("MAX_PARALLEL_INFERENCE", "2"))
         self.semaphore = threading.BoundedSemaphore(max_parallel)
+        max_parallel_activity = int(os.environ.get("MAX_PARALLEL_ACTIVITY_INFERENCE", "1"))
+        self.activity_semaphore = threading.BoundedSemaphore(max_parallel_activity)
         self.internal_secret = os.environ.get("INTERNAL_API_SECRET", "").strip()
         if (not self.internal_secret or self.internal_secret in ("internal-ai-service-secret", DEV_SECRET_FALLBACK)) and not IS_PRODUCTION:
             self.internal_secret = DEV_SECRET_FALLBACK
@@ -505,6 +628,32 @@ class StreamWorkerManager:
 
     def set_detection_fn(self, fn: Callable[[bytes, str, float], Dict[str, Any]]):
         self.detection_fn = fn
+
+    def set_headset_detection_fn(self, fn: Callable[[bytes, str, float], Dict[str, Any]]):
+        self.headset_detection_fn = fn
+        with self.lock:
+            for session in self.sessions.values():
+                session.headset_detection_fn = fn
+
+    def set_activity_detection_fn(self, fn: Callable[[bytes, str, str, float, List[str]], Dict[str, Any]]):
+        self.activity_detection_fn = fn
+        with self.lock:
+            for session in self.sessions.values():
+                session.activity_detection_fn = fn
+
+    def set_dataset_capture_fn(self, fn: Callable[[bytes, str, str, float, Dict[str, Any], List[Dict[str, Any]]], None]):
+        self.dataset_capture_fn = fn
+        with self.lock:
+            for session in self.sessions.values():
+                session.dataset_capture_fn = fn
+
+    def set_camera_moving(self, camera_id: str, is_moving: bool, preset: str = ""):
+        with self.lock:
+            session = self.sessions.get(camera_id)
+            if session:
+                session.is_moving = is_moving
+                if preset:
+                    session.current_preset = preset
 
     def sync_cameras(self, cameras: List[Dict[str, Any]]):
         with self.lock:
@@ -528,10 +677,22 @@ class StreamWorkerManager:
                         config=cam,
                         api_url=self.api_url,
                         semaphore=self.semaphore,
+                        activity_semaphore=self.activity_semaphore,
                     )
+                    session.headset_detection_fn = self.headset_detection_fn
+                    session.activity_detection_fn = self.activity_detection_fn
+                    session.dataset_capture_fn = self.dataset_capture_fn
                     self.sessions[cid] = session
                     if self.detection_fn:
                         session.start(self.detection_fn)
+                else:
+                    # Settings (including room-scoped activity flags) may
+                    # change while the worker stays alive.
+                    session = self.sessions[cid]
+                    session.config = cam
+                    session.headset_detection_fn = self.headset_detection_fn
+                    session.activity_detection_fn = self.activity_detection_fn
+                    session.dataset_capture_fn = self.dataset_capture_fn
 
             for cid in list(self.sessions.keys()):
                 if cid not in incoming_ids:
@@ -586,4 +747,3 @@ class StreamWorkerManager:
 
         self.bootstrap_thread = threading.Thread(target=_bootstrap_loop, daemon=True, name="worker-bootstrap")
         self.bootstrap_thread.start()
-

@@ -8,7 +8,7 @@ export class CameraFrameProvider {
     this.subscribers = new Map();
   }
 
-  pushFrame(cameraId, buffer, mimeType = "image/jpeg") {
+  pushFrame(cameraId, buffer, mimeType = "image/jpeg", timestamp = undefined) {
     if (!cameraId || !buffer) return;
     const now = Date.now();
     let queue = this.buffers.get(cameraId);
@@ -17,11 +17,12 @@ export class CameraFrameProvider {
       this.buffers.set(cameraId, queue);
     }
 
-    queue.push({ buffer, timestamp: now, mimeType });
+    const effectiveTimestamp = timestamp !== undefined ? timestamp : now;
+    queue.push({ buffer, timestamp: effectiveTimestamp, mimeType });
 
     // Prune frames older than maxBufferSeconds or exceeding maxFramesPerCamera
     const cutoff = now - this.maxBufferSeconds * 1000;
-    while (queue.length > 1 && (queue[0].timestamp < cutoff || queue.length > this.maxFramesPerCamera)) {
+    while (queue.length > 1 && ((queue[0].timestamp && queue[0].timestamp < cutoff) || queue.length > this.maxFramesPerCamera)) {
       queue.shift();
     }
 

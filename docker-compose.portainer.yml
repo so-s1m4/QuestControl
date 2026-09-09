@@ -129,11 +129,17 @@ services:
     environment:
       PORT: "8088"
       NODE_ENV: production
-      YOLO_MODEL: yolo11n.pt
+      YOLO_MODEL: /app/models/yolo11n.pt
+      HEADSET_MODEL: ${HEADSET_MODEL:-/app/models/current/vr_headset_yolo.pt}
+      HEADSET_MODEL_METADATA: ${HEADSET_MODEL_METADATA:-/app/models/current/model_metadata.json}
       VLM_MODEL: moondream2
       VLM_ENDPOINT: http://vlm:11434
       API_INTERNAL_URL: http://api:3000
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+    volumes:
+      - ai_data:/app/data
+      - ai_dataset:/app/dataset
+      - ai_models:/app/models
     depends_on:
       api:
         condition: service_started
@@ -196,6 +202,9 @@ volumes:
   redis_data:
   certbot_data:
   ollama_data:
+  ai_data:
+  ai_dataset:
+  ai_models:
 
 networks:
   document-sandbox:

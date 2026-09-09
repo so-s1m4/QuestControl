@@ -16,7 +16,9 @@ services:
     healthcheck: { test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-me}", "ping"], interval: 10s, timeout: 5s, retries: 5 }
     restart: unless-stopped
   api:
-    build: ./apps/api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     env_file: .env
     environment:
       AI_SERVICE_URL: http://ai-service:8088
@@ -26,7 +28,10 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    networks: [default, document-sandbox]
+    networks:
+      default:
+        aliases: [quest-control-api]
+      document-sandbox:
     restart: unless-stopped
   migrate:
     build: ./apps/api
@@ -43,11 +48,17 @@ services:
     env_file: .env
     environment:
       PORT: 8088
-      YOLO_MODEL: yolo11n.pt
+      YOLO_MODEL: /app/models/yolo11n.pt
+      HEADSET_MODEL: ${HEADSET_MODEL:-/app/models/current/vr_headset_yolo.pt}
+      HEADSET_MODEL_METADATA: ${HEADSET_MODEL_METADATA:-/app/models/current/model_metadata.json}
       VLM_MODEL: moondream2
       VLM_ENDPOINT: ${VLM_ENDPOINT:-http://vlm:11434}
       API_INTERNAL_URL: http://api:3000
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+    volumes:
+      - ai_data:/app/data
+      - ai_dataset:/app/dataset
+      - ai_models:/app/models
     networks: [default]
     restart: unless-stopped
   vlm:
@@ -76,7 +87,7 @@ services:
   document-runner:
     build: ./apps/document-runner
     read_only: true
-    tmpfs: [/tmp:size=64M,noexec,nosuid]
+    tmpfs: ["/tmp:size=64M,noexec,nosuid"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     pids_limit: 32
@@ -86,6 +97,9 @@ services:
   web:
     build: ./apps/web
     depends_on: [api]
+    networks:
+      default:
+        aliases: [quest-control-web]
     restart: unless-stopped
   go2rtc:
     image: alexxit/go2rtc:latest
@@ -100,7 +114,7 @@ services:
     depends_on: [api, web]
     extra_hosts: ["host.docker.internal:host-gateway"]
     restart: unless-stopped
-volumes: { postgres_data: {}, redis_data: {}, ollama_data: {} }
+volumes: { postgres_data: {}, redis_data: {}, ollama_data: {}, ai_data: {}, ai_dataset: {}, ai_models: {} }
 networks:
   document-sandbox:
     internal: true
