@@ -94,7 +94,15 @@ YOLO_WORLD_CLASSES = [
     "Meta Quest headset",
     "Oculus headset",
     "helmet",
+    # Negative prompts identify the venue props that most often resemble a
+    # headset. They are used only to veto overlapping VR candidates below.
+    "decorative skull",
+    "human skull",
+    "over-ear headphones",
+    "headphones",
 ]
+YOLO_WORLD_NEGATIVE_CLASS_KEYWORDS = ("skull", "headphones")
+YOLO_WORLD_NEGATIVE_IOU = 0.35
 try:
     YOLO_WORLD_CONFIDENCE = float(os.environ.get("YOLO_WORLD_CONFIDENCE", "0.01"))
 except ValueError:
@@ -268,6 +276,7 @@ def run_headset_detection(
 ) -> Dict[str, Any]:
     ts = datetime.now(timezone.utc).isoformat()
     headsets = []
+    negative_objects = []
 
     if test_headsets is not None:
         return {
@@ -310,6 +319,27 @@ def run_headset_detection(
                     cls_id = int(box.cls[0]) if hasattr(box, "cls") and len(box.cls) > 0 else 0
                     cls_name = str(names.get(cls_id, "")).lower()
 
+                    xyxy = box.xyxy[0].tolist() if hasattr(box.xyxy[0], "tolist") else list(box.xyxy[0])
+                    conf = float(box.conf[0])
+                    x_norm = max(0.0, min(1.0, round(xyxy[0] / width, 4)))
+                    y_norm = max(0.0, min(1.0, round(xyxy[1] / height, 4)))
+                    w_norm = max(0.0, min(1.0, round((xyxy[2] - xyxy[0]) / width, 4)))
+                    h_norm = max(0.0, min(1.0, round((xyxy[3] - xyxy[1]) / height, 4)))
+                    candidate = {
+                        "confidence": round(conf, 2),
+                        "classId": cls_id,
+                        "className": cls_name or "headset",
+                        "bbox": {"x": x_norm, "y": y_norm, "width": w_norm, "height": h_norm},
+                    }
+
+                    if (
+                        model_override is None
+                        and HEADSET_MODEL_SOURCE == "yolo-world"
+                        and any(keyword in cls_name for keyword in YOLO_WORLD_NEGATIVE_CLASS_KEYWORDS)
+                    ):
+                        negative_objects.append(candidate)
+                        continue
+
                     is_headset = True
                     if names and len(names) > 1 and cls_name:
                         if HEADSET_CLASSES:
@@ -321,19 +351,7 @@ def run_headset_detection(
 
                     if not is_headset:
                         continue
-
-                    xyxy = box.xyxy[0].tolist() if hasattr(box.xyxy[0], "tolist") else list(box.xyxy[0])
-                    conf = float(box.conf[0])
-                    x_norm = max(0.0, min(1.0, round(xyxy[0] / width, 4)))
-                    y_norm = max(0.0, min(1.0, round(xyxy[1] / height, 4)))
-                    w_norm = max(0.0, min(1.0, round((xyxy[2] - xyxy[0]) / width, 4)))
-                    h_norm = max(0.0, min(1.0, round((xyxy[3] - xyxy[1]) / height, 4)))
-                    headsets.append({
-                        "confidence": round(conf, 2),
-                        "classId": cls_id,
-                        "className": cls_name or "headset",
-                        "bbox": {"x": x_norm, "y": y_norm, "width": w_norm, "height": h_norm},
-                    })
+                    headsets.append(candidate)
         except Exception as e:
             logger.warning("Headset YOLO inference error: %s", e)
 
@@ -348,6 +366,19 @@ def run_headset_detection(
         intersection = iw * ih
         union = a["width"] * a["height"] + b["width"] * b["height"] - intersection
         return intersection / union if union > 0 else 0.0
+
+    # Keep a low-confidence real headset when it has no competing label. A
+    # detection is suppressed only if the very same area is classified more
+    # confidently as a skull or headphones.
+    if negative_objects:
+        headsets = [
+            candidate for candidate in headsets
+            if not any(
+                _iou(candidate, negative) >= YOLO_WORLD_NEGATIVE_IOU
+                and negative["confidence"] > candidate["confidence"]
+                for negative in negative_objects
+            )
+        ]
 
     unique_headsets: List[Dict[str, Any]] = []
     for candidate in sorted(headsets, key=lambda item: item["confidence"], reverse=True):
