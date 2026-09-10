@@ -71,6 +71,14 @@ HEADSET_MODEL_METRICS = None
 HEADSET_MODEL_METADATA = None
 HEADSET_CLASSES: List[int] = []
 
+# Inventory detections below this confidence are intentionally ignored.  A false
+# missing-headset alert is more disruptive than waiting for a clear frame.
+try:
+    HEADSET_CONFIDENCE_THRESHOLD = float(os.environ.get("HEADSET_CONFIDENCE_THRESHOLD", "0.85"))
+except ValueError:
+    HEADSET_CONFIDENCE_THRESHOLD = 0.85
+HEADSET_CONFIDENCE_THRESHOLD = max(0.0, min(1.0, HEADSET_CONFIDENCE_THRESHOLD))
+
 raw_headset_classes = os.environ.get("HEADSET_CLASSES", "").strip()
 if raw_headset_classes:
     try:
@@ -179,7 +187,9 @@ def run_yolo_detection(image_bytes: bytes, camera_id: str, conf_threshold: float
                         h_norm = max(0.0, min(1.0, round((xyxy[3] - xyxy[1]) / height, 4)))
                         people.append({
                             "trackId": track_id,
-                            "confidence": round(conf, 2),
+                            # Keep three decimals so a genuine 85.1% result is
+                            # not rounded down to 85% before the API safeguard.
+                            "confidence": round(conf, 3),
                             "bbox": {"x": x_norm, "y": y_norm, "width": w_norm, "height": h_norm},
                         })
         except Exception as exc:
@@ -196,7 +206,7 @@ def run_yolo_detection(image_bytes: bytes, camera_id: str, conf_threshold: float
 def run_headset_detection(
     image_bytes: bytes,
     camera_id: str,
-    conf_threshold: float = 0.4,
+    conf_threshold: float = HEADSET_CONFIDENCE_THRESHOLD,
     test_headsets: Optional[List[Dict[str, Any]]] = None,
     model_override: Optional[Any] = None,
 ) -> Dict[str, Any]:
@@ -204,12 +214,16 @@ def run_headset_detection(
     headsets = []
 
     if test_headsets is not None:
+        confirmed_headsets = [
+            headset for headset in test_headsets
+            if float(headset.get("confidence", 1.0)) > conf_threshold
+        ]
         return {
             "cameraId": camera_id,
             "timestamp": ts,
             "status": "READY",
-            "headsetCount": len(test_headsets),
-            "headsets": test_headsets,
+            "headsetCount": len(confirmed_headsets),
+            "headsets": confirmed_headsets,
         }
 
     active_model = model_override or HEADSET_MODEL
@@ -254,12 +268,14 @@ def run_headset_detection(
                     y_norm = max(0.0, min(1.0, round(xyxy[1] / height, 4)))
                     w_norm = max(0.0, min(1.0, round((xyxy[2] - xyxy[0]) / width, 4)))
                     h_norm = max(0.0, min(1.0, round((xyxy[3] - xyxy[1]) / height, 4)))
-                    headsets.append({
-                        "confidence": round(conf, 2),
-                        "classId": cls_id,
-                        "className": cls_name or "headset",
-                        "bbox": {"x": x_norm, "y": y_norm, "width": w_norm, "height": h_norm},
-                    })
+                    # Strictly more than 85% is required to mark a headset.
+                    if conf > conf_threshold:
+                        headsets.append({
+                            "confidence": round(conf, 2),
+                            "classId": cls_id,
+                            "className": cls_name or "headset",
+                            "bbox": {"x": x_norm, "y": y_norm, "width": w_norm, "height": h_norm},
+                        })
         except Exception as e:
             logger.warning("Headset YOLO inference error: %s", e)
 
@@ -687,7 +703,7 @@ class AIServiceHandler(BaseHTTPRequestHandler):
         try:
             content_type = self.headers.get("Content-Type", "")
             camera_id = self.headers.get("X-Camera-Id", "")
-            conf_threshold = 0.4
+            conf_threshold = HEADSET_CONFIDENCE_THRESHOLD
             image_bytes = None
             test_headsets = None
 
@@ -701,7 +717,11 @@ class AIServiceHandler(BaseHTTPRequestHandler):
             if "application/json" in content_type:
                 data = json.loads(body.decode("utf-8"))
                 camera_id = str(data.get("cameraId", camera_id))
-                conf_threshold = float(data.get("conf", 0.4))
+                # A caller may request a stricter threshold, never a weaker one.
+                conf_threshold = max(
+                    HEADSET_CONFIDENCE_THRESHOLD,
+                    float(data.get("conf", HEADSET_CONFIDENCE_THRESHOLD)),
+                )
                 if "testHeadsets" in data:
                     test_headsets = data["testHeadsets"]
                 raw_img = data.get("image", "")

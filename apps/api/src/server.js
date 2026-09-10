@@ -202,6 +202,7 @@ const cameraEventEngine = new CameraEventEngine({
 const headsetTrackingEngine = new HeadsetTrackingEngine({
   db,
   io,
+  confidenceThreshold: 0.85,
   onNotification: async (type, data) => {
     try {
       let photoBuffer = null;
@@ -4819,7 +4820,7 @@ app.post("/api/ai/dataset/capture", auth, permit("devices:command"), async (req,
   const detection = await localVisionService.detectHeadsets({
     cameraId: input.cameraId,
     imageBuffer: frameObj.buffer,
-    conf: 0.35,
+    conf: 0.85,
   }).catch(() => ({ headsets: [] }));
 
   const initialBboxes = (detection.headsets || []).map((h) => ({

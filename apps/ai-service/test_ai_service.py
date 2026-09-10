@@ -288,6 +288,16 @@ class TestHeadsetDetectionAndMoving(unittest.TestCase):
         self.assertEqual(len(res["headsets"]), 2)
         self.assertEqual(res["headsets"][0]["confidence"], 0.94)
 
+    def test_headset_detection_ignores_confidence_at_or_below_85_percent(self):
+        from server import run_headset_detection
+        result = run_headset_detection(b"", "cam-confidence", conf_threshold=0.85, test_headsets=[
+            {"confidence": 0.85, "bbox": {"x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1}},
+            {"confidence": 0.84, "bbox": {"x": 0.2, "y": 0.2, "width": 0.1, "height": 0.1}},
+            {"confidence": 0.86, "bbox": {"x": 0.3, "y": 0.3, "width": 0.1, "height": 0.1}},
+        ])
+        self.assertEqual(result["headsetCount"], 1)
+        self.assertEqual(result["headsets"][0]["confidence"], 0.86)
+
     def test_run_headset_detection_real_jpeg_inference_pipeline(self):
         import server
         from server import run_headset_detection

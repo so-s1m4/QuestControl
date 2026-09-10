@@ -690,7 +690,7 @@ class CameraStreamSession:
             # Headset tracking if enabled
             if self.config.get("headset_tracking_enabled") and self.headset_detection_fn:
                 try:
-                    headsets_res = self.headset_detection_fn(image_bytes, self.camera_id, 0.4)
+                    headsets_res = self.headset_detection_fn(image_bytes, self.camera_id, 0.85)
                     h_status = headsets_res.get("status", "READY")
                     requests.post(
                         f"{self.api_url}/internal/ai/camera-headsets",

@@ -64,7 +64,8 @@ export class HeadsetTrackingEngine {
     visionService,
     frameProvider,
     onNotification,
-    confidenceThreshold = 0.65,
+    // Only detections above 85% are allowed to affect inventory state.
+    confidenceThreshold = 0.85,
     debounceFrames = 3,
     notificationCooldownMs = 60_000,
   } = {}) {
@@ -389,6 +390,11 @@ export class HeadsetTrackingEngine {
     suppressNotification = false,
   }) {
     const cid = String(cameraId);
+
+    // Defence in depth: even if another caller bypasses the vision-service
+    // threshold, uncertain boxes can never be counted, drawn or alerted on.
+    detectedHeadsets = (Array.isArray(detectedHeadsets) ? detectedHeadsets : [])
+      .filter((headset) => Number(headset?.confidence) > this.confidenceThreshold);
 
     // Fail-safe: if model is unavailable, freeze state mutations, do not mark zones EMPTY
     if (status === "MODEL_UNAVAILABLE" || modelStatus === "MODEL_UNAVAILABLE") {

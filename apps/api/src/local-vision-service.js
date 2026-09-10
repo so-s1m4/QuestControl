@@ -76,7 +76,7 @@ export class LocalVisionService {
     return this.detect({ cameraId: param1, imageBuffer, conf });
   }
 
-  async detectHeadsets({ cameraId, imageBuffer, conf = 0.4, testHeadsets = null }) {
+  async detectHeadsets({ cameraId, imageBuffer, conf = 0.85, testHeadsets = null }) {
     try {
       const headers = this._headers({
         "Content-Type": "application/json",
@@ -626,4 +626,3 @@ export class LocalVisionService {
     return await resp.json();
   }
 }
-

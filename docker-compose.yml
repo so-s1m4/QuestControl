@@ -51,6 +51,7 @@ services:
       YOLO_MODEL: /app/models/yolo11n.pt
       HEADSET_MODEL: ${HEADSET_MODEL:-/app/models/current/vr_headset_yolo.pt}
       HEADSET_MODEL_METADATA: ${HEADSET_MODEL_METADATA:-/app/models/current/model_metadata.json}
+      HEADSET_CONFIDENCE_THRESHOLD: ${HEADSET_CONFIDENCE_THRESHOLD:-0.85}
       VLM_MODEL: moondream2
       VLM_ENDPOINT: ${VLM_ENDPOINT:-http://vlm:11434}
       API_INTERNAL_URL: http://api:3000
