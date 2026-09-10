@@ -486,6 +486,7 @@ export class AiDatasetComponent implements OnDestroy {
   private startY = 0;
   private imgBounds: DOMRect | null = null;
   private pollTimer: any = null;
+  private reportedActivationJobId = "";
 
   constructor() {
     this.loadAll();
@@ -615,6 +616,23 @@ export class AiDatasetComponent implements OnDestroy {
       next: (js) => {
         if (this.status()) {
           this.status.update((old) => old ? { ...old, jobStatus: js } : null);
+        }
+        const jobType = js?.jobType || js?.job_type;
+        const jobId = js?.jobId || js?.job_id || "";
+        const jobState = js?.status;
+        if (
+          jobType === "activation" &&
+          jobId &&
+          jobId !== this.reportedActivationJobId &&
+          ["COMPLETED", "FAILED", "ACTIVATION_STATE_UNCERTAIN"].includes(jobState)
+        ) {
+          this.reportedActivationJobId = jobId;
+          if (jobState === "COMPLETED") {
+            this.notice.set("Активация завершена. Обновляю проверенный статус модели.");
+          } else {
+            this.error.set(`Активация модели не выполнена: ${js?.error || js?.message || jobState}`);
+          }
+          this.loadStatus();
         }
       },
     });
@@ -821,8 +839,22 @@ export class AiDatasetComponent implements OnDestroy {
     this.http.post<any>("/api/ai/model/activate", { version: this.exportVersion }).subscribe({
       next: (res) => {
         this.activating.set(false);
-        this.notice.set(`Модель успешно активирована (релиз ${res.releaseId}, mAP50: ${this.formatMetric(res.metrics?.mAP50)}).`);
-        this.loadAll();
+        // Activation runs in the AI service background. A 202/STARTED result
+        // only means that validation began; it is not proof of an active
+        // model. In particular, do not show a fake "release undefined" success
+        // while the candidate is missing or fails its holdout quality gate.
+        if (res?.status === "STARTED") {
+          this.notice.set("Проверка и активация модели запущены. Дождитесь статуса COMPLETED.");
+          this.checkJobStatus();
+          return;
+        }
+        if (res?.releaseId && res?.metrics?.mAP50 !== undefined) {
+          this.notice.set(`Модель успешно активирована (релиз ${res.releaseId}, mAP50: ${this.formatMetric(res.metrics.mAP50)}).`);
+          this.loadAll();
+          return;
+        }
+        this.error.set(res?.message || "Активация не подтверждена: модель не была активирована.");
+        this.checkJobStatus();
       },
       error: (err) => {
         this.activating.set(false);

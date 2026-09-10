@@ -4980,7 +4980,10 @@ app.post("/api/ai/model/activate", auth, permit("devices:command"), async (req, 
   });
 
   await audit(req, "ai.model.activate", "ai_model", "vr_headset_yolo", null, result);
-  res.json(result);
+  // The AI service validates and swaps the candidate asynchronously. Preserve
+  // that fact at the API boundary so callers cannot mistake job acceptance for
+  // a completed activation.
+  res.status(result?.status === "STARTED" ? 202 : 200).json(result);
 });
 
 app.post("/api/ai/model/rollback", auth, permit("devices:command"), async (req, res) => {
