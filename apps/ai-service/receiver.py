@@ -104,6 +104,7 @@ class CameraStreamSession:
         api_url: str,
         semaphore: Optional[threading.BoundedSemaphore] = None,
         activity_semaphore: Optional[threading.BoundedSemaphore] = None,
+        webrtc_start_lock: Optional[threading.Lock] = None,
     ):
         self.camera_id = camera_id
         self.provider = provider.upper()
@@ -111,6 +112,12 @@ class CameraStreamSession:
         self.api_url = api_url.rstrip("/")
         self.semaphore = semaphore
         self.activity_semaphore = activity_semaphore
+        # Tuya rate-limits WebRTC session allocation at account level.  A
+        # service restart used to start every camera simultaneously, causing
+        # each worker to get HTTP 429 and permanently fall back to HLS.
+        # Serialize only the short allocation phase; the media sessions still
+        # run in parallel once their session IDs have been issued.
+        self.webrtc_start_lock = webrtc_start_lock
         self.running = False
         self.thread: Optional[threading.Thread] = None
 
@@ -295,12 +302,22 @@ class CameraStreamSession:
 
         async def run() -> bool:
             sess_url = f"{self.api_url}/internal/tuya-webrtc/session"
-            sess_resp = requests.post(
-                sess_url,
-                json={"cameraId": self.camera_id, "streamType": self.tuya_stream_type},
-                headers=self._headers(),
-                timeout=10,
-            )
+            if self.webrtc_start_lock:
+                self.webrtc_start_lock.acquire()
+            try:
+                sess_resp = requests.post(
+                    sess_url,
+                    json={"cameraId": self.camera_id, "streamType": self.tuya_stream_type},
+                    headers=self._headers(),
+                    timeout=10,
+                )
+                # Leave room between MQTT P2P allocations. This is deliberately
+                # after the request so the next camera cannot make Tuya process
+                # multiple session creations concurrently.
+                time.sleep(float(os.environ.get("TUYA_WEBRTC_START_SPACING_SECONDS", "2")))
+            finally:
+                if self.webrtc_start_lock:
+                    self.webrtc_start_lock.release()
             if sess_resp.status_code != 200:
                 logger.warning("Failed to allocate Tuya WebRTC session for %s: %s", self.camera_id, sess_resp.text)
                 self.last_error = f"SESSION_ALLOCATION_HTTP_{sess_resp.status_code}"
@@ -830,6 +847,7 @@ class StreamWorkerManager:
         self.semaphore = threading.BoundedSemaphore(max_parallel)
         max_parallel_activity = int(os.environ.get("MAX_PARALLEL_ACTIVITY_INFERENCE", "1"))
         self.activity_semaphore = threading.BoundedSemaphore(max_parallel_activity)
+        self.webrtc_start_lock = threading.Lock()
         self.internal_secret = os.environ.get("INTERNAL_API_SECRET", "").strip()
         if (not self.internal_secret or self.internal_secret in ("internal-ai-service-secret", DEV_SECRET_FALLBACK)) and not IS_PRODUCTION:
             self.internal_secret = DEV_SECRET_FALLBACK
@@ -887,6 +905,7 @@ class StreamWorkerManager:
                         api_url=self.api_url,
                         semaphore=self.semaphore,
                         activity_semaphore=self.activity_semaphore,
+                        webrtc_start_lock=self.webrtc_start_lock,
                     )
                     session.headset_detection_fn = self.headset_detection_fn
                     session.activity_detection_fn = self.activity_detection_fn
