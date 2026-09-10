@@ -3526,6 +3526,7 @@ test("P1 Canonical base: inspectRoomHeadsets returns CONFIGURATION_INVALID witho
 test("LocalVisionService: dataset pipeline and model lifecycle methods communicate with AI service", async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];
+  let exportFailure = false;
 
   try {
     globalThis.fetch = async (url, options) => {
@@ -3587,6 +3588,16 @@ test("LocalVisionService: dataset pipeline and model lifecycle methods communica
         };
       }
       if (url.includes("/pipeline/export")) {
+        if (exportFailure) {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({
+              error: "DATASET_INSUFFICIENT",
+              message: "At least 3 independent capture sessions required",
+            }),
+          };
+        }
         return {
           ok: true,
           json: async () => ({
@@ -3673,6 +3684,14 @@ test("LocalVisionService: dataset pipeline and model lifecycle methods communica
     // 7. exportDatasetSplits
     const exportRes = await lvs.exportDatasetSplits({ version: "v1.0.0" });
     assert.equal(exportRes.status, "EXPORTED");
+
+    // Pipeline validation errors must retain their HTTP status and message so
+    // the API route can return them without crashing its process.
+    exportFailure = true;
+    await assert.rejects(
+      () => lvs.exportDatasetSplits({ version: "v1.0.1" }),
+      (error) => error.status === 400 && error.code === "DATASET_INSUFFICIENT" && /3 independent/.test(error.message),
+    );
 
     // 8. trainHeadsetModel
     const trainRes = await lvs.trainHeadsetModel({ epochs: 10, batchSize: 8, operatorId: "op_admin" });

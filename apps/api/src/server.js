@@ -4931,9 +4931,25 @@ app.post("/api/ai/dataset/export", auth, permit("devices:command"), async (req, 
     version: z.string().regex(/^v\d+\.\d+\.\d+$/).default("v1.0.0"),
   }).parse(req.body || {});
 
-  const result = await localVisionService.exportDatasetSplits({ version: input.version });
-  await audit(req, "ai.dataset.export", "ai_dataset", input.version, null, result);
-  res.json(result);
+  try {
+    const result = await localVisionService.exportDatasetSplits({ version: input.version });
+    await audit(req, "ai.dataset.export", "ai_dataset", input.version, null, result);
+    res.json(result);
+  } catch (error) {
+    // Express 4 does not catch rejected async route handlers.  Without this
+    // boundary a normal pipeline validation failure becomes an unhandled
+    // rejection, restarts the API container, and leaks to the UI as 502.
+    const upstreamStatus = Number(error?.status);
+    const isValidationFailure = upstreamStatus >= 400 && upstreamStatus < 500;
+    const status = isValidationFailure ? upstreamStatus : 502;
+    const message = error?.message || "EXPORT_FAILED";
+    console.error(req.requestId, "Dataset export failed:", message);
+    res.status(status).json({
+      error: error?.code || (isValidationFailure ? "EXPORT_FAILED" : "AI_SERVICE_UNAVAILABLE"),
+      message,
+      requestId: req.requestId,
+    });
+  }
 });
 
 app.post("/api/ai/model/train", auth, permit("devices:command"), async (req, res) => {

@@ -465,11 +465,17 @@ export class LocalVisionService {
       method: "POST",
       headers: this._headers({ "Content-Type": "application/json" }),
       body: JSON.stringify({ version }),
-      signal: AbortSignal.timeout(15000),
+      // Copying and checksumming a real dataset can take longer than a small
+      // inference request.  Keep the request alive long enough to receive the
+      // pipeline's structured validation error instead of aborting mid-export.
+      signal: AbortSignal.timeout(60000),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-      throw new Error(err.message || err.error || "EXPORT_FAILED");
+      const error = new Error(err.message || err.error || "EXPORT_FAILED");
+      error.status = resp.status;
+      error.code = err.error || "EXPORT_FAILED";
+      throw error;
     }
     return await resp.json();
   }
