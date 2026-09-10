@@ -761,8 +761,11 @@ def export_dataset_splits(
 
         curr_link = out_p / "current"
 
+        # Ultralytics resolves `path: .` against the worker process directory,
+        # not necessarily the directory containing this YAML.  Point it at the
+        # immutable release explicitly so training always reads its own images.
         dataset_yaml_content = f"""# QuestControl VR Headset YOLO Dataset
-path: .
+path: {rel_dir.resolve()}
 train: images/train
 val: images/val
 test: images/test

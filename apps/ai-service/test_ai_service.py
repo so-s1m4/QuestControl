@@ -2137,7 +2137,8 @@ test: images/test
         """
         P0 requirement:
         Two successive dataset exports must create immutable version directories (releases/v1.0.0 and releases/v2.0.0).
-        v2 dataset.yaml must specify 'path: .' and resolve strictly v2 images and labels, never v1.
+        v2 dataset.yaml must specify its immutable release directory and resolve
+        strictly v2 images and labels, never v1.
         """
         from dataset_pipeline import (
             collect_ptz_frame,
@@ -2173,10 +2174,10 @@ test: images/test
         )
         self.assertEqual(summary1["version"], "v1.0.0")
 
-        # Verify v1.0.0 YAML has path: .
+        # Verify v1.0.0 YAML targets its own immutable release directory.
         v1_yaml_p = self.dataset_dir / "releases" / "v1.0.0" / "dataset.yaml"
         self.assertTrue(v1_yaml_p.is_file())
-        self.assertIn("path: .", v1_yaml_p.read_text(encoding="utf-8"))
+        self.assertIn(f"path: {(self.dataset_dir / 'releases' / 'v1.0.0').resolve()}", v1_yaml_p.read_text(encoding="utf-8"))
 
         # 2. Add new sample for v2.0.0
         raw2 = collect_ptz_frame(
@@ -2203,10 +2204,10 @@ test: images/test
         )
         self.assertEqual(summary2["version"], "v2.0.0")
 
-        # Verify v2.0.0 YAML has path: .
+        # Verify v2.0.0 YAML targets its own immutable release directory.
         v2_yaml_p = self.dataset_dir / "releases" / "v2.0.0" / "dataset.yaml"
         self.assertTrue(v2_yaml_p.is_file())
-        self.assertIn("path: .", v2_yaml_p.read_text(encoding="utf-8"))
+        self.assertIn(f"path: {(self.dataset_dir / 'releases' / 'v2.0.0').resolve()}", v2_yaml_p.read_text(encoding="utf-8"))
 
         # Verify active manifest resolved through dataset/current/dataset.yaml
         resolved = resolve_active_dataset_manifest(self.dataset_dir)
