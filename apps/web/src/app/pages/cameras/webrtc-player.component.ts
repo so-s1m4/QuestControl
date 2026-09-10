@@ -78,8 +78,20 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private silentOscillator?:OscillatorNode;
   private silentTrack?:MediaStreamTrack;
   private latestPeople:Person[]=[];
+  private reconnectTimer?:ReturnType<typeof setTimeout>;
+  private reconnectAttempt=0;
+  private destroyed=false;
+  private readonly visibilityHandler=()=>this.handleVisibilityChange();
 
   ngAfterViewInit(){
+    document.addEventListener("visibilitychange",this.visibilityHandler);
+    this.connect();
+  }
+
+  private connect(){
+    if(this.destroyed||document.visibilityState!=="visible")return;
+    this.fallbackSent=false;
+    this.status.set("Подключение WebRTC…");
     // Access tokens are intentionally session-scoped. Reading a legacy localStorage
     // key left the signaling namespace unauthenticated and made every player fall
     // back to HLS even when the Tuya device supported WebRTC.
@@ -104,7 +116,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       });
     }catch{}
 
-    this.socket=io("/webrtc",{path:"/socket.io",auth:{token},transports:["websocket"],timeout:10_000});
+    this.socket=io("/webrtc",{path:"/socket.io",auth:{token},transports:["websocket"],timeout:10_000,reconnection:false});
     this.socket.on("signal",(message:SignalMessage)=>void this.onSignal(message));
     this.socket.on("connect_error",error=>this.fallback("socket-connect-error",error.message));
     this.socket.on("connect",()=>{
@@ -116,6 +128,32 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       });
     });
     this.timeout=setTimeout(()=>this.fallback("media-timeout"),15_000);
+  }
+
+  private handleVisibilityChange(){
+    if(this.destroyed)return;
+    if(document.visibilityState==="hidden"){
+      // Mobile/desktop browsers suspend WebSockets and WebRTC while hidden.
+      // Explicitly release Tuya's P2P slot; reconnecting the old peer after a
+      // long pause is unreliable and caused the permanent "websocket error".
+      this.cleanup();
+      return;
+    }
+    this.reconnectAttempt=0;
+    this.scheduleReconnect(150);
+  }
+
+  private scheduleReconnect(delay?:number){
+    if(this.destroyed||this.allowHlsFallback||document.visibilityState!=="visible"||this.reconnectTimer)return;
+    const retryDelay=delay ?? Math.min(12_000,1_000*(2**Math.min(this.reconnectAttempt,4)));
+    this.reconnectTimer=setTimeout(()=>{
+      this.reconnectTimer=undefined;
+      if(this.destroyed||document.visibilityState!=="visible")return;
+      this.cleanup();
+      this.stream=new MediaStream();
+      this.reconnectAttempt+=1;
+      this.connect();
+    },retryDelay);
   }
 
   private async startPeer(iceServers:RTCIceServer[]){
@@ -231,6 +269,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     // Falling back to HLS masked signaling failures and contradicted the selected
     // transport. It remains possible only where a caller asks for it explicitly.
     if(this.allowHlsFallback)this.fallbackRequested.emit();
+    else this.scheduleReconnect();
   }
 
   toggleOverlay(event:Event){
@@ -345,6 +384,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private cleanup(){
     if(this.timeout)clearTimeout(this.timeout);
     if(this.disconnectTimeout)clearTimeout(this.disconnectTimeout);
+    this.timeout=undefined;this.disconnectTimeout=undefined;
     if(this.sessionId)this.send("disconnect","");
     this.peer?.close();this.socket?.disconnect();
     this.rootSocket?.disconnect();
@@ -357,5 +397,10 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     for(const track of this.stream.getTracks())track.stop();
   }
 
-  ngOnDestroy(){this.cleanup()}
+  ngOnDestroy(){
+    this.destroyed=true;
+    document.removeEventListener("visibilitychange",this.visibilityHandler);
+    if(this.reconnectTimer)clearTimeout(this.reconnectTimer);
+    this.cleanup();
+  }
 }
