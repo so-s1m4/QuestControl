@@ -86,7 +86,15 @@ YOLO_WORLD_ERROR = None
 # "Helmet" is deliberately included: on the venue cameras Quest headsets are
 # often side-on, and YOLO-World consistently scores that silhouette under this
 # broader visual term. The detector still returns it only as a VR candidate.
-YOLO_WORLD_CLASSES = ["VR headset", "Meta Quest headset", "Oculus headset", "helmet"]
+YOLO_WORLD_CLASSES = [
+    "VR headset",
+    "VR goggles",
+    "VR helmet",
+    "head-mounted display",
+    "Meta Quest headset",
+    "Oculus headset",
+    "helmet",
+]
 try:
     YOLO_WORLD_CONFIDENCE = float(os.environ.get("YOLO_WORLD_CONFIDENCE", "0.01"))
 except ValueError:

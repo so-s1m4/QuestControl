@@ -1,4 +1,5 @@
 import { AfterViewInit, Component, ElementRef, EventEmitter, Input, OnDestroy, Output, inject, signal, ViewChild } from "@angular/core";
+import { HttpClient } from "@angular/common/http";
 import { io, Socket } from "socket.io-client";
 import { firstValueFrom } from "rxjs";
 import { AuthService } from "../../core/auth.service";
@@ -53,6 +54,7 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
 })
 export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private readonly auth=inject(AuthService);
+  private readonly http=inject(HttpClient);
   @Input({required:true}) cameraId!:string;
   /** HLS is only a deliberate compatibility choice, never a silent WebRTC fallback. */
   @Input() allowHlsFallback=false;
@@ -83,6 +85,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private latestPeople:Person[]=[];
   private reconnectTimer?:ReturnType<typeof setTimeout>;
   private reconnectAttempt=0;
+  private headsetStatePoll?:ReturnType<typeof setInterval>;
   private refreshAttempted=false;
   private destroyed=false;
   private readonly visibilityHandler=()=>this.handleVisibilityChange();
@@ -119,6 +122,13 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
         }
       });
     }catch{}
+    // Socket events are transient: a camera card opened after the last event
+    // used to have no VR overlay until a new detection happened. Fetch the
+    // persisted state immediately and keep it fresh as a fallback.
+    this.loadHeadsetState();
+    if(!this.headsetStatePoll){
+      this.headsetStatePoll=setInterval(()=>this.loadHeadsetState(),3_000);
+    }
 
     this.socket=io("/webrtc",{path:"/socket.io",auth:{token},transports:["websocket"],timeout:10_000,reconnection:false});
     this.socket.on("signal",(message:SignalMessage)=>void this.onSignal(message));
@@ -142,6 +152,18 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       });
     });
     this.timeout=setTimeout(()=>this.fallback("media-timeout"),15_000);
+  }
+
+  private loadHeadsetState(){
+    this.http.get<any>(`/api/cameras/${this.cameraId}/headset/state`).subscribe({
+      next:state=>{
+        if(state?.cameraId===this.cameraId){
+          this.headsetState.set(state);
+          this.drawOverlay();
+        }
+      },
+      error:()=>{}
+    });
   }
 
   private handleVisibilityChange(){
@@ -439,6 +461,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
     if(this.timeout)clearTimeout(this.timeout);
     if(this.disconnectTimeout)clearTimeout(this.disconnectTimeout);
     this.timeout=undefined;this.disconnectTimeout=undefined;
+    if(this.headsetStatePoll){clearInterval(this.headsetStatePoll);this.headsetStatePoll=undefined;}
     if(this.sessionId)this.send("disconnect","");
     this.peer?.close();this.socket?.disconnect();
     this.rootSocket?.disconnect();
