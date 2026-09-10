@@ -5015,7 +5015,7 @@ app.post("/internal/tuya-webrtc/session", requireInternalSecret, async (req, res
 });
 
 app.post("/internal/tuya-webrtc/signal", requireInternalSecret, async (req, res) => {
-  const { sessionId, type, payload } = req.body || {};
+  const { sessionId, type, payload, waitForAnswer = true } = req.body || {};
   const sess = internalSessions.get(sessionId);
   if (!sess) return res.status(404).json({ error: "SESSION_NOT_FOUND" });
 
@@ -5040,6 +5040,13 @@ app.post("/internal/tuya-webrtc/signal", requireInternalSecret, async (req, res)
     }
 
     await tuyaWebRTC.signal({ sessionId, socket: sess.dummySocket, type, payload: payload || "" });
+    // A real browser signals the offer, then immediately trickles its ICE
+    // candidates while the camera is preparing the answer. The AI worker needs
+    // that same sequence. Keep the old wait-by-default behaviour for callers
+    // that rely on it, but let the worker collect the answer via /signals.
+    if (type === "offer" && waitForAnswer === false) {
+      return res.json({ ok: true, pending: true });
+    }
     if (answerPromise) {
       const answer = await answerPromise;
       const initialCandidates = sess.pendingSignals

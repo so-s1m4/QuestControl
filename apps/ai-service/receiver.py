@@ -260,7 +260,15 @@ class CameraStreamSession:
             sig_url = f"{self.api_url}/internal/tuya-webrtc/signal"
             sig_resp = requests.post(
                 sig_url,
-                json={"sessionId": session_id, "type": "offer", "payload": pc.localDescription.sdp},
+                json={
+                    "sessionId": session_id,
+                    "type": "offer",
+                    "payload": pc.localDescription.sdp,
+                    # Do not wait for the answer here. Tuya expects the local
+                    # ICE candidates immediately after the offer, just like
+                    # the browser player sends them.
+                    "waitForAnswer": False,
+                },
                 headers=self._headers(),
                 timeout=10,
             )
@@ -285,8 +293,35 @@ class CameraStreamSession:
                     except Exception:
                         pass
 
-            sig_data = sig_resp.json()
-            answer_sdp = sig_data.get("answer")
+            # The bridge queues camera signals. Collect the answer only after
+            # the local candidates have been relayed; waiting for it before
+            # sending them makes Tuya close the P2P session without media.
+            answer_sdp = None
+            initial_remote_candidates = []
+            for _ in range(40):
+                try:
+                    response = requests.get(
+                        f"{self.api_url}/internal/tuya-webrtc/signals",
+                        params={"sessionId": session_id},
+                        headers=self._headers(),
+                        timeout=3,
+                    )
+                    if response.status_code == 200:
+                        for signal in response.json().get("signals", []):
+                            if signal.get("type") == "answer" and signal.get("payload"):
+                                answer_sdp = signal["payload"]
+                            elif signal.get("type") == "candidate" and signal.get("payload"):
+                                initial_remote_candidates.append(signal["payload"])
+                            elif signal.get("type") == "disconnect":
+                                self.last_error = "TUYA_DISCONNECTED_DURING_NEGOTIATION"
+                                await pc.close()
+                                return False
+                        if answer_sdp:
+                            break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.25)
+
             if not answer_sdp:
                 await pc.close()
                 self.last_error = "TUYA_ANSWER_MISSING"
@@ -296,9 +331,9 @@ class CameraStreamSession:
             from aiortc.sdp import candidate_from_sdp
             await pc.setRemoteDescription(RTCSessionDescription(sdp=answer_sdp, type="answer"))
 
-            for c_sdp in sig_data.get("candidates", []):
+            for c_sdp in initial_remote_candidates:
                 try:
-                    cand = candidate_from_sdp(c_sdp)
+                    cand = candidate_from_sdp(str(c_sdp).removeprefix("a="))
                     await pc.addIceCandidate(cand)
                 except Exception:
                     pass
@@ -322,7 +357,7 @@ class CameraStreamSession:
                             for s in signals:
                                 if s.get("type") == "candidate" and s.get("payload"):
                                     try:
-                                        cand = candidate_from_sdp(s["payload"])
+                                        cand = candidate_from_sdp(str(s["payload"]).removeprefix("a="))
                                         await pc.addIceCandidate(cand)
                                         logger.debug("Applied Tuya remote ICE candidate on %s", self.camera_id)
                                     except Exception as e:
