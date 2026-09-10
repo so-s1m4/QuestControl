@@ -82,6 +82,11 @@ class CameraStreamSession:
         # browser open.
         fallback_setting = config.get("tuya_ai_hls_fallback", os.environ.get("TUYA_AI_HLS_FALLBACK", "true"))
         self.tuya_ai_hls_fallback = str(fallback_setting).strip().lower() not in ("0", "false", "no", "off")
+        # Once Tuya has rejected this worker's direct P2P media session, keep
+        # this worker on HLS until it is restarted. Re-negotiating WebRTC after
+        # every short HLS session needlessly hits Tuya's allocation limit and
+        # can leave the frame buffer stale.
+        self._tuya_hls_fallback_active = False
         self.internal_secret = os.environ.get("INTERNAL_API_SECRET", "").strip()
         if (not self.internal_secret or self.internal_secret in ("internal-ai-service-secret", DEV_SECRET_FALLBACK)) and not IS_PRODUCTION:
             self.internal_secret = DEV_SECRET_FALLBACK
@@ -161,15 +166,19 @@ class CameraStreamSession:
         while self.running:
             try:
                 if self.provider == "TUYA":
-                    # A Tuya worker is deliberately WebRTC-only. HLS creates a
-                    # second cloud stream and hiding this dependency makes the AI
-                    # appear healthy while it is no longer using the live path.
                     if not AIORTC_AVAILABLE:
                         self.last_error = "WEBRTC_RUNTIME_UNAVAILABLE"
                         logger.error("Tuya camera %s requires aiortc and av; refusing HLS fallback", self.camera_id)
                         time.sleep(15.0)
                         continue
-                    completed = self._run_webrtc_stream()
+                    if self._tuya_hls_fallback_active:
+                        self.transport = "HLS_FALLBACK"
+                        frame_time_before_hls = self.last_frame_time
+                        self._run_capture_stream()
+                        completed = self.last_frame_time > frame_time_before_hls
+                    else:
+                        completed = self._run_webrtc_stream()
+
                     if not completed and self.tuya_ai_hls_fallback and self.running:
                         # Some Tuya firmware accepts browser WebRTC but closes
                         # aiortc's server P2P session after ICE. HLS is the
@@ -181,6 +190,7 @@ class CameraStreamSession:
                             self.last_error or "unknown error",
                         )
                         self.transport = "HLS_FALLBACK"
+                        self._tuya_hls_fallback_active = True
                         frame_time_before_hls = self.last_frame_time
                         self._run_capture_stream()
                         completed = self.last_frame_time > frame_time_before_hls
