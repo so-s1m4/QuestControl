@@ -1130,11 +1130,11 @@ test("HeadsetTrackingEngine freezes state while camera is moving or settling", a
   engine.setCameraMoving(cameraId, false);
 });
 
-test("HeadsetTrackingEngine ignores headset detections at or below 85% confidence", async () => {
+test("HeadsetTrackingEngine handles UNKNOWN status and suppresses immediate alert for low confidence", async () => {
   const notifications = [];
   const engine = new HeadsetTrackingEngine({
     db: null,
-    confidenceThreshold: 0.85,
+    confidenceThreshold: 0.65,
     onNotification: (type, data) => notifications.push({ type, data }),
   });
   const cameraId = "cam-vr-5";
@@ -1153,14 +1153,15 @@ test("HeadsetTrackingEngine ignores headset detections at or below 85% confidenc
     enabled: true,
   });
 
-  // Below-threshold boxes are ignored entirely: no zone marking and no alert.
+  // Low confidence detection (e.g. partially occluded headset, conf = 0.50 < 0.65)
   const state = await engine.processDetections({
     cameraId,
     preset: "default",
     detectedHeadsets: [{ confidence: 0.5, bbox: { x: 0.15, y: 0.15, width: 0.05, height: 0.05 } }],
   });
 
-  assert.equal(state.assignedZonesState["zone-u1"].status, "EMPTY");
+  assert.equal(state.assignedZonesState["zone-u1"].status, "UNKNOWN");
+  // Immediate Telegram alerts must be suppressed
   assert.equal(notifications.length, 0);
 });
 

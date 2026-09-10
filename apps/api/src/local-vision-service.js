@@ -26,7 +26,7 @@ export class LocalVisionService {
     }
   }
 
-  async detect({ cameraId, imageBuffer, conf = 0.25 }) {
+  async detect({ cameraId, imageBuffer, conf = 0.85 }) {
     if (!imageBuffer) {
       return { cameraId, timestamp: new Date().toISOString(), peopleCount: 0, people: [] };
     }
@@ -69,14 +69,14 @@ export class LocalVisionService {
     }
   }
 
-  async detectPeople(param1, imageBuffer, conf = 0.25) {
+  async detectPeople(param1, imageBuffer, conf = 0.85) {
     if (typeof param1 === "object" && param1 !== null && !Buffer.isBuffer(param1)) {
       return this.detect(param1);
     }
     return this.detect({ cameraId: param1, imageBuffer, conf });
   }
 
-  async detectHeadsets({ cameraId, imageBuffer, conf = 0.85, testHeadsets = null }) {
+  async detectHeadsets({ cameraId, imageBuffer, conf = 0.4, testHeadsets = null }) {
     try {
       const headers = this._headers({
         "Content-Type": "application/json",

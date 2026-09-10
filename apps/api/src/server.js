@@ -202,7 +202,6 @@ const cameraEventEngine = new CameraEventEngine({
 const headsetTrackingEngine = new HeadsetTrackingEngine({
   db,
   io,
-  confidenceThreshold: 0.85,
   onNotification: async (type, data) => {
     try {
       let photoBuffer = null;
@@ -4820,7 +4819,7 @@ app.post("/api/ai/dataset/capture", auth, permit("devices:command"), async (req,
   const detection = await localVisionService.detectHeadsets({
     cameraId: input.cameraId,
     imageBuffer: frameObj.buffer,
-    conf: 0.85,
+    conf: 0.35,
   }).catch(() => ({ headsets: [] }));
 
   const initialBboxes = (detection.headsets || []).map((h) => ({
@@ -5392,21 +5391,26 @@ app.post("/internal/ai/camera-state", requireInternalSecret, async (req, res) =>
   }
 
   if (status !== "OFFLINE" && peopleCount !== undefined) {
+    // The worker normally filters this already.  Keep the API boundary strict
+    // as well so an uncertain person can never occupy a room or start PTZ.
+    const confirmedPeople = Array.isArray(people)
+      ? people.filter((person) => Number(person?.confidence) > 0.85)
+      : [];
     const state = await cameraEventEngine.processDetection({
       cameraId: camera.id,
       roomId: camera.room_id,
       locationId: camera.location_id,
       detectionResult: {
-        peopleCount,
-        people: people || [],
+        peopleCount: confirmedPeople.length,
+        people: confirmedPeople,
         motion: Boolean(motion),
         unusual: Boolean(unusual),
         unusualDescription,
       },
     });
 
-    if (camera.tracking_enabled && Array.isArray(people) && people.length > 0) {
-      cameraVisionController.processAutoTracking(camera.id, people).catch(() => {});
+    if (camera.tracking_enabled && confirmedPeople.length > 0) {
+      cameraVisionController.processAutoTracking(camera.id, confirmedPeople).catch(() => {});
     }
 
     return res.json({ ok: true, state });

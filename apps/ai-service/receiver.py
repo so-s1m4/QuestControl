@@ -663,7 +663,7 @@ class CameraStreamSession:
                 return
 
         try:
-            detection = self.detection_fn(image_bytes, self.camera_id, 0.25)
+            detection = self.detection_fn(image_bytes, self.camera_id, 0.85)
             people = detection.get("people", [])
             people_count = len(people)
 
@@ -690,7 +690,7 @@ class CameraStreamSession:
             # Headset tracking if enabled
             if self.config.get("headset_tracking_enabled") and self.headset_detection_fn:
                 try:
-                    headsets_res = self.headset_detection_fn(image_bytes, self.camera_id, 0.85)
+                    headsets_res = self.headset_detection_fn(image_bytes, self.camera_id, 0.4)
                     h_status = headsets_res.get("status", "READY")
                     requests.post(
                         f"{self.api_url}/internal/ai/camera-headsets",

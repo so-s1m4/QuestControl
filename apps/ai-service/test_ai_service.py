@@ -288,15 +288,33 @@ class TestHeadsetDetectionAndMoving(unittest.TestCase):
         self.assertEqual(len(res["headsets"]), 2)
         self.assertEqual(res["headsets"][0]["confidence"], 0.94)
 
-    def test_headset_detection_ignores_confidence_at_or_below_85_percent(self):
-        from server import run_headset_detection
-        result = run_headset_detection(b"", "cam-confidence", conf_threshold=0.85, test_headsets=[
-            {"confidence": 0.85, "bbox": {"x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1}},
-            {"confidence": 0.84, "bbox": {"x": 0.2, "y": 0.2, "width": 0.1, "height": 0.1}},
-            {"confidence": 0.86, "bbox": {"x": 0.3, "y": 0.3, "width": 0.1, "height": 0.1}},
-        ])
-        self.assertEqual(result["headsetCount"], 1)
-        self.assertEqual(result["headsets"][0]["confidence"], 0.86)
+    def test_people_detection_ignores_confidence_at_or_below_85_percent(self):
+        import server
+        jpeg_bytes = self._create_real_jpeg_bytes()
+
+        at_threshold = MagicMock()
+        at_threshold.xyxy = [[100.0, 100.0, 220.0, 400.0]]
+        at_threshold.conf = [0.85]
+        at_threshold.id = [1]
+        above_threshold = MagicMock()
+        above_threshold.xyxy = [[300.0, 100.0, 420.0, 400.0]]
+        above_threshold.conf = [0.851]
+        above_threshold.id = [2]
+        result = MagicMock()
+        result.boxes = [at_threshold, above_threshold]
+        mock_model = MagicMock()
+        mock_model.track.return_value = [result]
+
+        original_model, original_available = server.YOLO_MODEL, server.YOLO_AVAILABLE
+        try:
+            server.YOLO_MODEL, server.YOLO_AVAILABLE = mock_model, True
+            detected = server.run_yolo_detection(jpeg_bytes, "cam-people", conf_threshold=0.25)
+            self.assertEqual(detected["peopleCount"], 1)
+            self.assertEqual(detected["people"][0]["trackId"], 2)
+            self.assertEqual(detected["people"][0]["confidence"], 0.851)
+            self.assertEqual(mock_model.track.call_args.kwargs["conf"], 0.85)
+        finally:
+            server.YOLO_MODEL, server.YOLO_AVAILABLE = original_model, original_available
 
     def test_run_headset_detection_real_jpeg_inference_pipeline(self):
         import server
