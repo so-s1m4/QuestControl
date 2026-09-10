@@ -301,6 +301,11 @@ class CameraStreamSession:
         asyncio.set_event_loop(loop)
 
         async def run() -> bool:
+            # A completed ICE/DTLS handshake alone is not a usable camera
+            # stream. Some Tuya firmware accepts the session and immediately
+            # closes it without sending an RTP video packet. Remember the
+            # frame timestamp so that this case cannot be reported as online.
+            frame_time_before_webrtc = self.last_frame_time
             sess_url = f"{self.api_url}/internal/tuya-webrtc/session"
             if self.webrtc_start_lock:
                 self.webrtc_start_lock.acquire()
@@ -535,9 +540,13 @@ class CameraStreamSession:
                 await asyncio.sleep(1.0)
 
             await pc.close()
+            received_video_frame = self.last_frame_time > frame_time_before_webrtc
             if not connected_once:
                 self.last_error = self.last_error or "WEBRTC_CONNECTION_NOT_ESTABLISHED"
-            return connected_once
+            elif not received_video_frame:
+                self.last_error = "WEBRTC_MEDIA_TIMEOUT"
+                logger.warning("Tuya WebRTC connected without a video frame on %s", self.camera_id)
+            return connected_once and received_video_frame
 
         try:
             return bool(loop.run_until_complete(run()))
