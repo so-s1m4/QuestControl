@@ -735,6 +735,10 @@ class CameraStreamSession:
                             "status": h_status,
                             "modelStatus": h_status,
                             "headsets": headsets_res.get("headsets", []),
+                            # The API correlates headset and person boxes to
+                            # exclude headsets actually worn by a visitor from
+                            # the unattended-storage alert.
+                            "people": people,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         },
                         headers=self._headers(),

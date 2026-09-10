@@ -238,9 +238,10 @@ const headsetTrackingEngine = new HeadsetTrackingEngine({
       }
 
       if (type === "HEADSET_NOT_ON_BASE") {
-        await sendTelegramImportantLog("headsetNotOnBase", "⚠️ Не все VR-шлемы на базе", [
+        await sendTelegramImportantLog("headsetNotOnBase", "⚠️ VR-шлем не на базе и не на человеке", [
           ["Ожидается шлемов", data.expectedHeadsetCount ? String(data.expectedHeadsetCount) : "—"],
           ["Всего не на базе", String(data.notOnBaseCount ?? 0)],
+          ["На людях", String(data.wornHeadsetCount ?? 0)],
           ["В рабочих квадратах", Array.isArray(data.notOnBaseHeadsets) && data.notOnBaseHeadsets.length ? data.notOnBaseHeadsets.join(", ") : "—"],
           ["Вне зон", String(data.outsideZoneCount ?? 0)],
           ["На зарядной базе", String(data.onChargingBaseCount ?? 0)],
@@ -5487,7 +5488,7 @@ app.post("/internal/ai/camera-activity", requireInternalSecret, async (req, res)
 });
 
 app.post("/internal/ai/camera-headsets", requireInternalSecret, async (req, res) => {
-  const { cameraId, preset, headsets = [], status, modelStatus } = req.body || {};
+  const { cameraId, preset, headsets = [], people = [], status, modelStatus } = req.body || {};
   const camera = (
     await db.query(
       "SELECT c.*, COALESCE(c.location_id, r.location_id) AS location_id FROM cameras c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.id=$1",
@@ -5500,6 +5501,9 @@ app.post("/internal/ai/camera-headsets", requireInternalSecret, async (req, res)
     cameraId: camera.id,
     preset: preset || "default",
     detectedHeadsets: Array.isArray(headsets) ? headsets : [],
+    // Person confidence was already filtered by the worker; retain the same
+    // threshold at this boundary before using it to suppress an alert.
+    people: Array.isArray(people) ? people.filter((person) => Number(person?.confidence) > 0.85) : [],
     status: status || modelStatus || "READY",
     modelStatus: modelStatus || status || "READY",
     roomId: camera.room_id,

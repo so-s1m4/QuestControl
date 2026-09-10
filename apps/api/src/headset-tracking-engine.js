@@ -56,6 +56,37 @@ export function getBboxCenter(bbox) {
   return { x: bx + bw / 2, y: by + bh / 2 };
 }
 
+/**
+ * Returns true only when a detected headset is positioned at the head of a
+ * detected person.  A headset held at waist/chest level deliberately does not
+ * match: it must still be treated as unattended when it is outside its base.
+ */
+export function isHeadsetWornByPerson(headset, people = []) {
+  const headsetBox = headset?.bbox;
+  if (!headsetBox || !Array.isArray(people)) return false;
+
+  const center = getBboxCenter(headsetBox);
+  return people.some((person) => {
+    const box = person?.bbox;
+    if (!box) return false;
+
+    const x = Number(box.x ?? 0);
+    const y = Number(box.y ?? 0);
+    const width = Number(box.width ?? 0);
+    const height = Number(box.height ?? 0);
+    if (width <= 0 || height <= 0) return false;
+
+    // A little horizontal slack covers a turned head. Vertically accept just
+    // the upper part of the person box, not a controller/headset held below.
+    return (
+      center.x >= x - width * 0.12 &&
+      center.x <= x + width * 1.12 &&
+      center.y >= y - height * 0.15 &&
+      center.y <= y + height * 0.42
+    );
+  });
+}
+
 export class HeadsetTrackingEngine {
   constructor({
     db,
@@ -379,6 +410,7 @@ export class HeadsetTrackingEngine {
     cameraId,
     preset = null,
     detectedHeadsets = [],
+    people = [],
     status = "READY",
     modelStatus = "READY",
     roomId = null,
@@ -389,6 +421,12 @@ export class HeadsetTrackingEngine {
     suppressNotification = false,
   }) {
     const cid = String(cameraId);
+    // A headset being worn is not a misplaced headset. Keep it out of zone
+    // accounting and subtract it from the expected stored inventory below.
+    const wornHeadsets = detectedHeadsets.filter((headset) => isHeadsetWornByPerson(headset, people));
+    const unattendedHeadsets = detectedHeadsets.filter((headset) => !isHeadsetWornByPerson(headset, people));
+    const wornHeadsetCount = wornHeadsets.length;
+    detectedHeadsets = unattendedHeadsets;
 
     // Fail-safe: if model is unavailable, freeze state mutations, do not mark zones EMPTY
     if (status === "MODEL_UNAVAILABLE" || modelStatus === "MODEL_UNAVAILABLE") {
@@ -506,6 +544,13 @@ export class HeadsetTrackingEngine {
         resolvedExpectedCount = this.getRoomExpectedHeadsets(effRoomId);
       }
     }
+
+    // `resolvedExpectedCount` is the physical inventory. For the storage
+    // check, headsets currently worn by people are legitimate absences from a
+    // charging base and must never trigger the "not on base" Telegram alert.
+    const expectedStoredCount = resolvedExpectedCount !== null
+      ? Math.max(0, resolvedExpectedCount - wornHeadsetCount)
+      : null;
 
     const matchedHeadsetIndices = new Set();
     const assignedZonesState = {};
@@ -759,22 +804,22 @@ export class HeadsetTrackingEngine {
     let notOnBaseCount = physicalMisplacedCount;
     let countConflict = false;
 
-    if (resolvedExpectedCount !== null && resolvedExpectedCount !== undefined && resolvedExpectedCount > 0) {
-      missingFromBaseCount = Math.max(0, resolvedExpectedCount - onChargingBaseCount);
+    if (expectedStoredCount !== null && expectedStoredCount > 0) {
+      missingFromBaseCount = Math.max(0, expectedStoredCount - onChargingBaseCount);
       unlocatedCount = Math.max(0, missingFromBaseCount - physicalMisplacedCount);
       notOnBaseCount = missingFromBaseCount;
       if (physicalMisplacedCount > notOnBaseCount) {
         countConflict = true;
       }
     }
-    const candidateNotOnBaseCount = (resolvedExpectedCount !== null && resolvedExpectedCount !== undefined && resolvedExpectedCount > 0)
+    const candidateNotOnBaseCount = (expectedStoredCount !== null && expectedStoredCount > 0)
       ? missingFromBaseCount
       : candidateMisplacedCount;
 
     let currentBaseCandidate = "NOT_CONFIGURED";
-    if (resolvedExpectedCount !== null && resolvedExpectedCount !== undefined && resolvedExpectedCount > 0) {
+    if (expectedStoredCount !== null && expectedStoredCount > 0) {
       if (
-        onChargingBaseCount === resolvedExpectedCount &&
+        onChargingBaseCount === expectedStoredCount &&
         notOnBaseCount === 0 &&
         unlocatedCount === 0 &&
         missingFromBaseCount === 0 &&
@@ -843,6 +888,7 @@ export class HeadsetTrackingEngine {
             outsideZoneCount,
             onChargingBaseCount,
             expectedHeadsetCount: resolvedExpectedCount,
+            wornHeadsetCount,
             missingFromBaseCount,
             unlocatedCount,
             countConflict,
@@ -885,6 +931,7 @@ export class HeadsetTrackingEngine {
             outsideZoneCount,
             onChargingBaseCount,
             expectedHeadsetCount: resolvedExpectedCount,
+            wornHeadsetCount,
             missingFromBaseCount,
             unlocatedCount,
             countConflict,
@@ -893,14 +940,16 @@ export class HeadsetTrackingEngine {
             imageBuffer,
             zones: activeZones,
             time: new Date().toLocaleTimeString("ru-RU"),
-            text: `⚠️ Не все VR-шлемы на базе. Всего не на базе: ${notOnBaseCount} (в квадратах: ${notOnBaseHeadsets.join(", ") || "—"}, вне зон: ${outsideZoneCount}, не локализовано: ${unlocatedCount}), на базе: ${onChargingBaseCount}/${resolvedExpectedCount ?? "—"}`,
+            text: `⚠️ Шлем обнаружен не на базе и не на человеке. Всего: ${notOnBaseCount} (в квадратах: ${notOnBaseHeadsets.join(", ") || "—"}, вне зон: ${outsideZoneCount}, не локализовано: ${unlocatedCount}), на базе: ${onChargingBaseCount}/${expectedStoredCount ?? "—"}, на людях: ${wornHeadsetCount}`,
           });
         }
       }
     }
 
     // After return of all headsets to charging table, send single recovery message: «✅ Все VR-шлемы на базе (CHARGING_BASE)»
-    if (currentBaseCandidate === "ALL_ON_BASE" && baseDeb.consecutiveCount >= this.debounceFrames) {
+    // Do not claim that *all* headsets returned to the base while one is
+    // currently worn. It is a valid non-alert condition, but not a recovery.
+    if (currentBaseCandidate === "ALL_ON_BASE" && wornHeadsetCount === 0 && baseDeb.consecutiveCount >= this.debounceFrames) {
       const wasViolated =
         (prevState?.notOnBaseCount || 0) > 0 ||
         (prevState?.outsideZoneCount || 0) > 0 ||
@@ -988,6 +1037,7 @@ export class HeadsetTrackingEngine {
       notOnBaseHeadsets,
       countConflict,
       expectedHeadsetCount: resolvedExpectedCount,
+      wornHeadsetCount,
       missingFromBaseCount,
       unlocatedCount,
       storageStatus,

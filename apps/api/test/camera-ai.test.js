@@ -13,7 +13,7 @@ import { LocalVisionService } from "../src/local-vision-service.js";
 import { AiWorkerSupervisor } from "../src/ai-worker-supervisor.js";
 import { TelegramBot } from "../src/telegram.js";
 import { runMigrations } from "../src/migrator.js";
-import { HeadsetTrackingEngine, pointInPolygon, isInsideZone } from "../src/headset-tracking-engine.js";
+import { HeadsetTrackingEngine, pointInPolygon, isInsideZone, isHeadsetWornByPerson } from "../src/headset-tracking-engine.js";
 
 test("CameraFrameProvider stores and samples frames correctly", () => {
   const provider = new CameraFrameProvider({ maxBufferSeconds: 10, maxFramesPerCamera: 5 });
@@ -947,6 +947,38 @@ test("HeadsetTrackingEngine maps spatial identity strictly to assigned WORK_ZONE
   assert.equal(s3.assignedZonesState["zone-1"].status, "OCCUPIED");
   assert.equal(s3.assignedZonesState["zone-1"].headsetId, "H1");
   assert.ok(publishedEvents.some((e) => e.type === "HEADSET_ZONE_OCCUPIED" && e.headsetId === "H1"));
+});
+
+test("HeadsetTrackingEngine alerts only for an unattended headset, not one being worn", async () => {
+  const notifications = [];
+  const engine = new HeadsetTrackingEngine({
+    db: null,
+    io: null,
+    onNotification: (type, data) => notifications.push({ type, data }),
+    debounceFrames: 1,
+  });
+
+  const wornHeadset = { confidence: 0.95, bbox: { x: 0.44, y: 0.16, width: 0.12, height: 0.12 } };
+  const person = { confidence: 0.96, bbox: { x: 0.3, y: 0.1, width: 0.4, height: 0.7 } };
+  assert.equal(isHeadsetWornByPerson(wornHeadset, [person]), true);
+
+  await engine.processDetections({
+    cameraId: "cam-worn-headset",
+    detectedHeadsets: [wornHeadset],
+    people: [person],
+    expectedHeadsetCount: 1,
+  });
+  assert.equal(notifications.length, 0, "a headset worn by a person must not alert");
+
+  await engine.processDetections({
+    cameraId: "cam-loose-headset",
+    detectedHeadsets: [{ confidence: 0.95, bbox: { x: 0.8, y: 0.75, width: 0.1, height: 0.1 } }],
+    people: [person],
+    expectedHeadsetCount: 1,
+  });
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].type, "HEADSET_NOT_ON_BASE");
+  assert.equal(notifications[0].data.wornHeadsetCount, 0);
 });
 
 test("HeadsetTrackingEngine separates CHARGING_BASE from floor work zones and tracks outside headsets anonymously", async () => {

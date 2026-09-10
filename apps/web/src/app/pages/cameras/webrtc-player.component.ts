@@ -1,5 +1,7 @@
-import { AfterViewInit, Component, ElementRef, EventEmitter, Input, OnDestroy, Output, signal, ViewChild } from "@angular/core";
+import { AfterViewInit, Component, ElementRef, EventEmitter, Input, OnDestroy, Output, inject, signal, ViewChild } from "@angular/core";
 import { io, Socket } from "socket.io-client";
+import { firstValueFrom } from "rxjs";
+import { AuthService } from "../../core/auth.service";
 
 type StartResponse = { success:boolean; sessionId?:string; iceServers?:RTCIceServer[]; error?:string };
 type SignalMessage = { sessionId:string; type:"answer"|"candidate"|"disconnect"; payload:string };
@@ -50,6 +52,7 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
   `],
 })
 export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
+  private readonly auth=inject(AuthService);
   @Input({required:true}) cameraId!:string;
   /** HLS is only a deliberate compatibility choice, never a silent WebRTC fallback. */
   @Input() allowHlsFallback=false;
@@ -80,6 +83,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private latestPeople:Person[]=[];
   private reconnectTimer?:ReturnType<typeof setTimeout>;
   private reconnectAttempt=0;
+  private refreshAttempted=false;
   private destroyed=false;
   private readonly visibilityHandler=()=>this.handleVisibilityChange();
 
@@ -118,7 +122,17 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
 
     this.socket=io("/webrtc",{path:"/socket.io",auth:{token},transports:["websocket"],timeout:10_000,reconnection:false});
     this.socket.on("signal",(message:SignalMessage)=>void this.onSignal(message));
-    this.socket.on("connect_error",error=>this.fallback("socket-connect-error",error.message));
+    this.socket.on("connect_error",error=>{
+      // HTTP requests refresh an expired access token through the interceptor,
+      // while Socket.IO does not. Refresh and reconnect once so a camera does
+      // not falsely report "WebRTC unavailable: unauthorized" after a normal
+      // 15-minute access-token rotation.
+      if(error.message === "unauthorized" && !this.refreshAttempted){
+        void this.refreshSocketToken();
+        return;
+      }
+      this.fallback("socket-connect-error",error.message);
+    });
     this.socket.on("connect",()=>{
       this.socket?.emit("start",{cameraId:this.cameraId},(response:StartResponse)=>{
         if(!response?.success||!response.sessionId)return this.fallback("session-start-failed",response?.error||"");
@@ -154,6 +168,21 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       this.reconnectAttempt+=1;
       this.connect();
     },retryDelay);
+  }
+
+  private async refreshSocketToken(){
+    this.refreshAttempted=true;
+    this.cleanup();
+    this.status.set("Обновление доступа к камере…");
+    try{
+      await firstValueFrom(this.auth.refreshAccessToken());
+      if(this.destroyed)return;
+      this.stream=new MediaStream();
+      this.fallbackSent=false;
+      this.connect();
+    }catch{
+      this.fallback("socket-auth-refresh-failed","unauthorized");
+    }
   }
 
   private async startPeer(iceServers:RTCIceServer[]){
