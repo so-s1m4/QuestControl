@@ -329,12 +329,23 @@ class CameraStreamSession:
 
             from aiortc import RTCSessionDescription
             from aiortc.sdp import candidate_from_sdp
+
+            async def apply_remote_candidate(raw_candidate: str) -> None:
+                """Attach a Tuya trickle candidate to the bundled audio/video SDP."""
+                candidate = candidate_from_sdp(str(raw_candidate).removeprefix("a="))
+                # aiortc does not infer the media section from a parsed SDP
+                # candidate. Tuya sends bundle candidates, whose browser
+                # player applies to m-line 0; without this association ICE
+                # remains in "checking" forever.
+                candidate.sdpMid = "0"
+                candidate.sdpMLineIndex = 0
+                await pc.addIceCandidate(candidate)
+
             await pc.setRemoteDescription(RTCSessionDescription(sdp=answer_sdp, type="answer"))
 
             for c_sdp in initial_remote_candidates:
                 try:
-                    cand = candidate_from_sdp(str(c_sdp).removeprefix("a="))
-                    await pc.addIceCandidate(cand)
+                    await apply_remote_candidate(c_sdp)
                 except Exception:
                     pass
 
@@ -357,8 +368,7 @@ class CameraStreamSession:
                             for s in signals:
                                 if s.get("type") == "candidate" and s.get("payload"):
                                     try:
-                                        cand = candidate_from_sdp(str(s["payload"]).removeprefix("a="))
-                                        await pc.addIceCandidate(cand)
+                                        await apply_remote_candidate(s["payload"])
                                         logger.debug("Applied Tuya remote ICE candidate on %s", self.camera_id)
                                     except Exception as e:
                                         logger.debug("Failed adding ICE candidate: %s", e)
@@ -396,8 +406,13 @@ class CameraStreamSession:
                             break
 
             connected_once = False
+            connect_deadline = time.monotonic() + 20.0
             while self.running and not camera_disconnected.is_set() and pc.connectionState not in ("failed", "closed"):
                 connected_once = connected_once or pc.connectionState == "connected"
+                if not connected_once and time.monotonic() >= connect_deadline:
+                    self.last_error = "WEBRTC_CONNECTION_TIMEOUT"
+                    logger.warning("WebRTC connection timed out on %s", self.camera_id)
+                    break
                 await asyncio.sleep(1.0)
 
             await pc.close()
