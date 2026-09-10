@@ -124,7 +124,10 @@ export class CamerasComponent implements OnDestroy{
     try{
       const token=sessionStorage.getItem("access_token");
       if(token){
-        this.socket=io({path:"/ws",auth:{token}});
+        // Nginx exposes Socket.IO at /socket.io. The old /ws path returned
+        // the SPA HTML page with HTTP 200, so Socket.IO retried forever and
+        // intermittently showed a misleading WebSocket error.
+        this.socket=io({path:"/socket.io",transports:["websocket"],auth:{token}});
         this.socket.on("camera:ai:state",(data:{cameraId:string;peopleCount:number;occupied:boolean;motion:boolean})=>{
           if(data?.cameraId){
             this.aiStates.update(v=>({...v,[data.cameraId]:data}));
