@@ -101,6 +101,16 @@ except ValueError:
     YOLO_WORLD_CONFIDENCE = 0.01
 YOLO_WORLD_CONFIDENCE = max(0.001, min(0.5, YOLO_WORLD_CONFIDENCE))
 
+# The default Ultralytics inference size (640 px) loses useful detail from the
+# PTZ overview cameras.  A modestly larger input improves the separation of a
+# real headset from nearby props without changing the detector's classes or
+# confidence policy.  It remains configurable for lower-powered deployments.
+try:
+    YOLO_WORLD_IMAGE_SIZE = int(os.environ.get("YOLO_WORLD_IMAGE_SIZE", "960"))
+except ValueError:
+    YOLO_WORLD_IMAGE_SIZE = 960
+YOLO_WORLD_IMAGE_SIZE = max(640, min(1280, YOLO_WORLD_IMAGE_SIZE))
+
 raw_headset_classes = os.environ.get("HEADSET_CLASSES", "").strip()
 if raw_headset_classes:
     try:
@@ -289,7 +299,10 @@ def run_headset_detection(
                 if model_override is None and HEADSET_MODEL_SOURCE == "yolo-world"
                 else conf_threshold
             )
-            results = active_model(img, conf=effective_confidence, verbose=False)
+            inference_kwargs = {"conf": effective_confidence, "verbose": False}
+            if model_override is None and HEADSET_MODEL_SOURCE == "yolo-world":
+                inference_kwargs["imgsz"] = YOLO_WORLD_IMAGE_SIZE
+            results = active_model(img, **inference_kwargs)
             width, height = img.size
             for r in results:
                 names = getattr(r, "names", {})

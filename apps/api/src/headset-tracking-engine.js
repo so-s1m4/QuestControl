@@ -773,6 +773,12 @@ export class HeadsetTrackingEngine {
     // Rule 3: Anonymized outside-zone counter. Never assign H1/H2 to headsets outside zones!
     for (let i = 0; i < detectedHeadsets.length; i++) {
       if (!matchedHeadsetIndices.has(i)) {
+        // A weak open-vocabulary match is not evidence that a physical headset
+        // was moved.  In particular, decor and headphones can resemble a Quest
+        // headset in a single frame.  Work-zone occupancy already applies the
+        // same confidence rule above; enforce it for outside-zone evidence too.
+        const confidence = Number(detectedHeadsets[i]?.confidence ?? 1.0);
+        if (confidence < this.confidenceThreshold || detectedHeadsets[i]?.occluded) continue;
         outsideZoneCount++;
       }
     }
@@ -797,6 +803,10 @@ export class HeadsetTrackingEngine {
     // Headsets in WORK_ZONE floor squares or outside zones count as NOT ON BASE.
     const notOnBaseHeadsets = workZoneHeadsetsNotOnBase;
     const physicalMisplacedCount = notOnBaseHeadsets.length + outsideZoneCount;
+    // Missing detections on the charging rack are an inventory uncertainty,
+    // not visual proof that a headset is off the base.  Alerts therefore need
+    // a confidently observed headset in a work zone or outside all zones.
+    const hasVisualMisplacementEvidence = physicalMisplacedCount > 0;
     const candidateMisplacedCount = workZoneCandidates.length + outsideZoneCount;
 
     let missingFromBaseCount = 0;
@@ -866,7 +876,7 @@ export class HeadsetTrackingEngine {
     if (
       currentBaseCandidate === "NOT_ALL_ON_BASE" &&
       baseDeb.consecutiveCount >= this.debounceFrames &&
-      (notOnBaseCount > 0 || missingFromBaseCount > 0)
+      hasVisualMisplacementEvidence
     ) {
       if (
         baseDeb.consecutiveCount === this.debounceFrames ||
