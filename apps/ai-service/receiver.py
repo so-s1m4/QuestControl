@@ -331,6 +331,34 @@ class CameraStreamSession:
             pc.addTrack(AudioStreamTrack())
             pc.addTransceiver("video", direction="recvonly")
 
+            # Register before applying the remote SDP. aiortc emits `track`
+            # from setRemoteDescription(), so registering later loses Tuya's
+            # one and only video track even though DTLS reaches connected.
+            @pc.on("track")
+            async def on_track(track: MediaStreamTrack):
+                if track.kind != "video":
+                    return
+                logger.info("WebRTC video track received for camera %s", self.camera_id)
+                frame_interval = 0.8
+                last_processed = 0.0
+
+                while self.running:
+                    try:
+                        frame = await asyncio.wait_for(track.recv(), timeout=8.0)
+                        now = time.time()
+                        if now - last_processed >= frame_interval:
+                            last_processed = now
+                            img = frame.to_image()
+                            buf = io.BytesIO()
+                            img.save(buf, format="JPEG", quality=80)
+                            self._process_frame_bytes(buf.getvalue())
+                    except asyncio.TimeoutError:
+                        logger.warning("WebRTC frame timeout on camera %s", self.camera_id)
+                        break
+                    except Exception as e:
+                        logger.warning("WebRTC frame read error on %s: %s", self.camera_id, e)
+                        break
+
             @pc.on("connectionstatechange")
             def on_conn_state():
                 logger.info("WebRTC connection state on %s: %s", self.camera_id, pc.connectionState)
@@ -466,30 +494,6 @@ class CameraStreamSession:
                         pass
 
             asyncio.create_task(poll_remote_candidates())
-
-            @pc.on("track")
-            async def on_track(track: MediaStreamTrack):
-                if track.kind == "video":
-                    logger.info("WebRTC video track received for camera %s", self.camera_id)
-                    frame_interval = 0.8
-                    last_processed = 0.0
-
-                    while self.running:
-                        try:
-                            frame = await asyncio.wait_for(track.recv(), timeout=8.0)
-                            now = time.time()
-                            if now - last_processed >= frame_interval:
-                                last_processed = now
-                                img = frame.to_image()
-                                buf = io.BytesIO()
-                                img.save(buf, format="JPEG", quality=80)
-                                self._process_frame_bytes(buf.getvalue())
-                        except asyncio.TimeoutError:
-                            logger.warning("WebRTC frame timeout on camera %s", self.camera_id)
-                            break
-                        except Exception as e:
-                            logger.warning("WebRTC frame read error on %s: %s", self.camera_id, e)
-                            break
 
             connected_once = False
             connect_deadline = time.monotonic() + 20.0
