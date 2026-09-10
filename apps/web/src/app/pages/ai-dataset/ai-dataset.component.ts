@@ -50,6 +50,13 @@ interface CameraItem {
   status: string;
 }
 
+interface WorkerCameraStatus {
+  online?: boolean;
+  transport?: string;
+  lastError?: string | null;
+  lastFrame?: number;
+}
+
 @Component({
   selector: "app-ai-dataset",
   standalone: true,
@@ -122,13 +129,17 @@ interface CameraItem {
           <p class="section-desc">Получение свежего кадра в заданном пресете и добавление в очередь разметки.</p>
           
           <label>Камера
-            <select [(ngModel)]="selectedCameraId">
+            <select [(ngModel)]="selectedCameraId" (ngModelChange)="onCameraChange($event)">
               <option value="">Выберите камеру...</option>
               @for (cam of cameras(); track cam.id) {
-                <option [value]="cam.id">{{ cam.name }} ({{ cam.status }})</option>
+                <option [value]="cam.id" [disabled]="!cameraReady(cam.id)">{{ cam.name }} — {{ cameraCaptureLabel(cam.id) }}</option>
               }
             </select>
           </label>
+
+          @if (selectedCameraId && !cameraReady(selectedCameraId)) {
+            <p class="capture-unavailable">⚠️ Для этой камеры сейчас нет настоящего кадра. Выбери камеру со статусом «Готова · WebRTC».</p>
+          }
 
           <label>Пресет PTZ
             <input type="text" [(ngModel)]="capturePreset" placeholder="default / Base_1 / Shelf" />
@@ -155,13 +166,13 @@ interface CameraItem {
           }
 
           <div class="session-actions">
-            <button type="button" class="secondary" (click)="startNewSession()" [disabled]="!selectedCameraId">➕ Начать сессию</button>
+          <button type="button" class="secondary" (click)="startNewSession()" [disabled]="!selectedCameraId || !cameraReady(selectedCameraId)">➕ Начать сессию</button>
             @if (selectedSessionId) {
               <button type="button" class="danger" (click)="stopActiveSession()">⏹ Завершить</button>
             }
           </div>
 
-          <button class="primary btn-block" [disabled]="!selectedCameraId || capturing()" (click)="captureFrame()">
+          <button class="primary btn-block" [disabled]="!selectedCameraId || !cameraReady(selectedCameraId) || capturing()" (click)="captureFrame()">
             {{ capturing() ? 'Захват...' : '📸 Сделать снимок для датасета' }}
           </button>
         </section>
@@ -328,6 +339,7 @@ interface CameraItem {
     .panel-section { min-width: 0; padding: 18px; border: 1px solid #e1e6ef; border-radius: 16px; background: #fff; box-shadow: 0 10px 24px #22305d08; display: flex; flex-direction: column; gap: 12px; }
     .panel-section h3 { margin: 0; font-size: 15px; font-weight: 800; color: #273249; }
     .section-desc { margin: -3px 0 2px; font-size: 11px; color: #78869a; line-height: 1.5; }
+    .capture-unavailable { margin: -4px 0 0; padding: 8px 9px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; font-size: 11px; line-height: 1.4; }
     .panel-section label { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 11px; font-weight: 800; color: #56657a; }
     .panel-section select, .panel-section input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #d2dae7; border-radius: 8px; background: #fff; color: #273249; font-size: 13px; outline: none; }
     .panel-section select:focus, .panel-section input:focus, .notes-input:focus { border-color: #727af2; box-shadow: 0 0 0 3px #5966e715; }
@@ -433,6 +445,7 @@ export class AiDatasetComponent implements OnDestroy {
 
   status = signal<PipelineStatus | null>(null);
   cameras = signal<CameraItem[]>([]);
+  workerStatuses = signal<Record<string, WorkerCameraStatus>>({});
   queueItems = signal<QueueSample[]>([]);
   queueFilter = signal<string>("pending");
   selectedSample = signal<QueueSample | null>(null);
@@ -490,6 +503,7 @@ export class AiDatasetComponent implements OnDestroy {
   loadAll() {
     this.loadStatus();
     this.loadCameras();
+    this.loadWorkerStatuses();
     this.loadActiveSessions();
     this.loadQueue();
   }
@@ -505,6 +519,31 @@ export class AiDatasetComponent implements OnDestroy {
     this.http.get<CameraItem[]>("/api/cameras").subscribe({
       next: (cams) => this.cameras.set(cams),
     });
+  }
+
+  loadWorkerStatuses() {
+    this.http.get<{ cameras: Record<string, WorkerCameraStatus> }>("/api/ai/dataset/camera-status").subscribe({
+      next: (result) => this.workerStatuses.set(result.cameras || {}),
+      error: () => this.workerStatuses.set({}),
+    });
+  }
+
+  cameraReady(cameraId: string): boolean {
+    const worker = this.workerStatuses()[cameraId];
+    // Before the async health endpoint replies, keep the selector usable.
+    // Once a worker has reported, require a live WebRTC frame; HLS black
+    // placeholders are deliberately rejected by the server.
+    if (!worker) return true;
+    return worker.online === true && worker.transport === "WEBRTC" && !!worker.lastFrame;
+  }
+
+  cameraCaptureLabel(cameraId: string): string {
+    const worker = this.workerStatuses()[cameraId];
+    if (!worker) return "проверка потока…";
+    if (worker.online && worker.transport === "WEBRTC" && worker.lastFrame) return "Готова · WebRTC";
+    if (worker.lastError === "FRAME_NOT_READY") return "Нет кадра";
+    if (worker.lastError) return "Поток недоступен";
+    return "Подключение…";
   }
 
   loadActiveSessions() {

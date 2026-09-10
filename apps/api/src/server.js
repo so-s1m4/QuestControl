@@ -4521,6 +4521,19 @@ app.get("/api/ai/dataset/status", auth, permit("cameras:read"), async (_req, res
   res.json(status);
 });
 
+// Dataset capture must distinguish a live worker frame from a camera that is
+// merely online in Tuya but currently returning its loading placeholder.
+// Filter every worker entry through camera RBAC so this diagnostic cannot
+// reveal another location's camera IDs or state.
+app.get("/api/ai/dataset/camera-status", auth, permit("cameras:read"), async (req, res) => {
+  const workers = await localVisionService.getWorkerStatus();
+  const visible = {};
+  for (const [cameraId, worker] of Object.entries(workers || {})) {
+    if (await cameraAllowed(req, cameraId)) visible[cameraId] = worker;
+  }
+  res.json({ cameras: visible });
+});
+
 app.post("/api/ai/dataset/sessions/start", auth, permit("devices:command"), async (req, res) => {
   const input = z.object({
     roomId: z.string().min(1),
