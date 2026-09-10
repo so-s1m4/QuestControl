@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import io
 import logging
 import os
@@ -32,11 +33,66 @@ except ImportError:
 
 try:
     from aiortc import AudioStreamTrack, RTCIceServer, RTCPeerConnection, RTCConfiguration, MediaStreamTrack
+    from aiortc.rtcdtlstransport import RTCDtlsTransport, State as DtlsState
+    from OpenSSL import crypto as openssl_crypto
     import av
     AIORTC_AVAILABLE = True
 except ImportError:
     AIORTC_AVAILABLE = False
     logger.warning("aiortc or av not installed in current environment. Tuya WebRTC workers cannot start.")
+
+
+def certificate_digest_from_der(certificate_der: bytes, algorithm: str) -> str:
+    """Format a DTLS certificate fingerprint exactly as SDP specifies it."""
+    digest_name = algorithm.lower().replace("-", "")
+    digest = hashlib.new(digest_name, certificate_der).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+
+
+def _install_tuya_dtls_certificate_compatibility() -> None:
+    """Keep DTLS fingerprint validation when Tuya sends non-standard X.509 DER.
+
+    Some Tuya firmware appends bytes to its certificate. Chromium accepts the
+    DTLS peer, while cryptography refuses to parse it before aiortc can check
+    the SDP fingerprint. In that narrow case, validate the exact DER bytes
+    received over TLS against the advertised fingerprint; never bypass a
+    mismatch.
+    """
+    if not AIORTC_AVAILABLE:
+        return
+
+    original_validate = RTCDtlsTransport._validate_peer_identity
+    if getattr(original_validate, "_questcontrol_tuya_compat", False):
+        return
+
+    def validate_peer_identity(self, remote_parameters):
+        try:
+            return original_validate(self, remote_parameters)
+        except ValueError as exc:
+            if "parsing asn1 value" not in str(exc).lower():
+                raise
+            certificate = self._ssl.get_peer_certificate()
+            der = openssl_crypto.dump_certificate(openssl_crypto.FILETYPE_ASN1, certificate)
+            supported = 0
+            valid = 0
+            for fingerprint in remote_parameters.fingerprints:
+                algorithm = fingerprint.algorithm.lower()
+                if algorithm not in ("sha-256", "sha-384", "sha-512"):
+                    continue
+                supported += 1
+                if certificate_digest_from_der(der, algorithm) == fingerprint.value.upper():
+                    valid += 1
+            if not supported or valid != supported:
+                logger.error("Tuya DTLS fingerprint mismatch after DER compatibility fallback")
+                self._set_state(DtlsState.FAILED)
+                return
+            logger.warning("Accepted Tuya DTLS certificate with trailing DER data after fingerprint validation")
+
+    validate_peer_identity._questcontrol_tuya_compat = True
+    RTCDtlsTransport._validate_peer_identity = validate_peer_identity
+
+
+_install_tuya_dtls_certificate_compatibility()
 
 
 class CameraStreamSession:

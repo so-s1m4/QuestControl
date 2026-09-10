@@ -21,7 +21,7 @@ if _AI_SERVICE_DIR not in sys.path:
 os.environ["INTERNAL_API_SECRET"] = "test-internal-secret-1234567890123456"
 os.environ["MAX_PARALLEL_INFERENCE"] = "2"
 
-from receiver import CameraStreamSession, StreamWorkerManager
+from receiver import CameraStreamSession, StreamWorkerManager, certificate_digest_from_der
 from server import AIServiceHandler, dataset_frame_rejection_reason
 from vlm import resolve_and_pin_local_url
 
@@ -93,6 +93,14 @@ class TestDatasetFrameQualityGate(unittest.TestCase):
         buf = io.BytesIO()
         image.convert("RGB").save(buf, format="JPEG")
         self.assertIsNone(dataset_frame_rejection_reason(buf.getvalue()))
+
+
+class TestTuyaDtlsCompatibility(unittest.TestCase):
+    def test_der_fingerprint_uses_sdp_colon_format(self):
+        self.assertEqual(
+            certificate_digest_from_der(b"tuya-certificate-der", "sha-256"),
+            "33:82:64:94:92:94:AB:E1:6A:96:D4:68:52:36:DF:C4:98:85:F0:E7:15:74:5E:77:AC:C4:44:23:7C:19:5D:ED",
+        )
 
     def test_check_auth_accepts_valid_query_param(self):
         handler = MagicMock()
