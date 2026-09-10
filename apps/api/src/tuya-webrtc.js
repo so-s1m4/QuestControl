@@ -16,13 +16,16 @@ export class TuyaWebRTCManager {
   }
 
   async startSession({ deviceId, socket, streamType = 1, purpose = "browser" }) {
-    // A Tuya camera may accept only one useful P2P media path at a time.  The
-    // operator's live player is the foreground path, so it must never compete
-    // with the background AI worker for that limited camera-side resource.
-    if (purpose === "browser") {
-      await this.closeAiSessionsForDevice(deviceId);
-    } else if (purpose === "ai" && this.hasBrowserSession(deviceId)) {
-      throw Object.assign(new Error("Camera is being viewed in the browser"), { code: "TUYA_WEBRTC_IN_USE" });
+    // Most Tuya devices support parallel P2P viewers. Keep the AI worker and
+    // an operator's player independent by default. Some older firmware only
+    // permits one session; that compatibility mode can be enabled explicitly
+    // without changing application code.
+    if (process.env.TUYA_WEBRTC_SINGLE_SESSION === "true") {
+      if (purpose === "browser") {
+        await this.closeAiSessionsForDevice(deviceId);
+      } else if (purpose === "ai" && this.hasBrowserSession(deviceId)) {
+        throw Object.assign(new Error("Camera is being viewed in the browser"), { code: "TUYA_WEBRTC_IN_USE" });
+      }
     }
 
     const [device, config] = await Promise.all([
