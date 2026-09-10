@@ -5021,7 +5021,7 @@ app.post("/internal/tuya-webrtc/signal", requireInternalSecret, async (req, res)
 
   try {
     let answerPromise = null;
-    if (type === "offer") {
+    if (type === "offer" && waitForAnswer !== false) {
       answerPromise = new Promise((resolve, reject) => {
         const to = setTimeout(() => reject(new Error("Tuya answer timeout")), 10000);
         const existingAns = sess.pendingSignals.find((s) => s.type === "answer");
