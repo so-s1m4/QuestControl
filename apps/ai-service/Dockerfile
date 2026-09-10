@@ -21,11 +21,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvpx-dev \
     libgl1 \
     libglib2.0-0 \
+    fonts-dejavu-core \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+# Ultralytics loads Arial.ttf for its own reports even when plots are disabled.
+# Provide a compatible local font so air-gapped training never attempts a download.
+RUN mkdir -p /root/.config/Ultralytics && cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf /root/.config/Ultralytics/Arial.ttf
 # Fail the image build if the exact runtime needed by Tuya WebRTC is absent.
 RUN python -c "import aiortc, av; print('aiortc', aiortc.__version__, 'av', av.__version__)"
 
