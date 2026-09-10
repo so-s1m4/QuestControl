@@ -3124,9 +3124,13 @@ const isTuyaCamera = (device) => {
   return tuyaCameraCategories.has(category) || /(camera|камера|ipc|ptz|doorbell|door bell|video bell|дверн\w* звон)/i.test(description);
 };
 
-app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) => {
-  if (!tuya.configured) return res.status(503).json({ error: "TUYA_NOT_CONFIGURED" });
-  try {
+let tuyaCameraInventoryInFlight = null;
+
+async function syncTuyaCameraInventory() {
+  if (!tuya.configured) throw Object.assign(new Error("Tuya is not configured"), { code: "TUYA_NOT_CONFIGURED" });
+  if (tuyaCameraInventoryInFlight) return tuyaCameraInventoryInFlight;
+
+  tuyaCameraInventoryInFlight = (async () => {
     const devices = await tuya.listProjectDevices();
     const cameras = devices.filter(isTuyaCamera);
     const krampusRoomId = (await db.query(
@@ -3140,24 +3144,46 @@ app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) 
       const name = String(device.customName || device.name || device.productName || `Tuya ${externalId.slice(-6)}`).slice(0, 120);
       const status = (device.isOnline ?? device.online) ? "ONLINE" : "OFFLINE";
       const autoRoomId = /(lsc|ptz)/i.test(name) ? krampusRoomId : null;
-      const existing = await db.query("SELECT id FROM cameras WHERE provider='TUYA' AND external_id=$1 LIMIT 1", [externalId]);
+      const existing = await db.query(
+        "SELECT id,name,status,room_id FROM cameras WHERE provider='TUYA' AND external_id=$1 LIMIT 1",
+        [externalId]
+      );
       if (existing.rowCount) {
-        await db.query("UPDATE cameras SET name=$1,status=$2,room_id=COALESCE(room_id,$3) WHERE id=$4", [name, status, autoRoomId, existing.rows[0].id]);
-        updated += 1;
+        const row = existing.rows[0];
+        const nextRoomId = row.room_id || autoRoomId;
+        if (row.name !== name || row.status !== status || row.room_id !== nextRoomId) {
+          await db.query("UPDATE cameras SET name=$1,status=$2,room_id=$3 WHERE id=$4", [name, status, nextRoomId, row.id]);
+          updated += 1;
+        }
       } else {
+        // ai_enabled has a database default, but setting it explicitly makes
+        // auto-discovered cameras immediately visible to the worker manager.
         await db.query(
-          "INSERT INTO cameras(room_id,name,provider,external_id,status,config) VALUES($1,$2,'TUYA',$3,$4,$5)",
+          "INSERT INTO cameras(room_id,name,provider,external_id,status,config,ai_enabled) VALUES($1,$2,'TUYA',$3,$4,$5,true)",
           [autoRoomId, name, externalId, status, { category: device.category || null, productId: device.productId || null }]
         );
         created += 1;
       }
     }
     const result = { discovered: devices.length, cameras: cameras.length, created, updated };
-    await audit(req, "camera.sync", "integration", "tuya", null, result);
     if (created > 0 || updated > 0) void syncAiWorkersSafe();
+    return result;
+  })();
+
+  try {
+    return await tuyaCameraInventoryInFlight;
+  } finally {
+    tuyaCameraInventoryInFlight = null;
+  }
+}
+
+app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) => {
+  try {
+    const result = await syncTuyaCameraInventory();
+    await audit(req, "camera.sync", "integration", "tuya", null, result);
     res.json(result);
   } catch (error) {
-    res.status(502).json({ error: error.code || "TUYA_SYNC_FAILED", message: error.message });
+    res.status(error.code === "TUYA_NOT_CONFIGURED" ? 503 : 502).json({ error: error.code || "TUYA_SYNC_FAILED", message: error.message });
   }
 });
 
@@ -6222,4 +6248,22 @@ server.listen(env.PORT, "0.0.0.0", () => {
   void telegramBot.start();
   setInterval(() => void runTelegramNotifications(), 60_000).unref();
   setTimeout(() => void runTelegramNotifications(), 5_000).unref();
+
+  // Discover Tuya cameras continuously.  A newly added device is written with
+  // ai_enabled=true and is immediately synchronized to ai-service; operators
+  // do not need to press the manual sync button or restart the stack.
+  const discoveryInterval = Math.max(60_000, Number(process.env.TUYA_CAMERA_DISCOVERY_INTERVAL_MS || 300_000));
+  const discoverCameras = async () => {
+    if (!tuya.configured) return;
+    try {
+      const result = await syncTuyaCameraInventory();
+      if (result.created || result.updated) {
+        console.info(`[Tuya discovery] cameras created=${result.created} updated=${result.updated}`);
+      }
+    } catch (error) {
+      console.warn("[Tuya discovery] failed:", error.message);
+    }
+  };
+  setTimeout(() => void discoverCameras(), 20_000).unref();
+  setInterval(() => void discoverCameras(), discoveryInterval).unref();
 });
