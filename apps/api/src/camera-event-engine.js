@@ -1,12 +1,20 @@
 import crypto from "node:crypto";
 
 export class CameraEventEngine {
-  constructor({ db, io, onNotification, zeroHysteresisFrames = 3, zeroHysteresisMs = 3000 } = {}) {
+  constructor({
+    db,
+    io,
+    onNotification,
+    zeroHysteresisFrames = 3,
+    zeroHysteresisMs = 3000,
+    cameraOfflineNotificationCooldownMs = 0,
+  } = {}) {
     this.db = db;
     this.io = io;
     this.onNotification = onNotification || null;
     this.zeroHysteresisFrames = zeroHysteresisFrames;
     this.zeroHysteresisMs = zeroHysteresisMs;
+    this.cameraOfflineNotificationCooldownMs = Math.max(0, Number(cameraOfflineNotificationCooldownMs) || 0);
     /** @type {Map<string, any>} */
     this.states = new Map();
     /** @type {Map<string, { x: number, y: number, trackId?: number }[]>} */
@@ -25,6 +33,8 @@ export class CameraEventEngine {
     this.zeroFrameCounts = new Map();
     /** @type {Map<string, number>} Timestamp when zero was first seen */
     this.zeroFirstSeen = new Map();
+    /** @type {Map<string, number>} Last offline-alert timestamp by camera */
+    this.lastOfflineNotificationTimes = new Map();
   }
 
   async loadStatesFromDb() {
@@ -384,7 +394,17 @@ export class CameraEventEngine {
     this.persistState(nextState).catch(() => {});
 
     if (status === "OFFLINE") {
-      if (wasOccupied) {
+      // A failed HLS/WebRTC retry can briefly flip ONLINE → OFFLINE several
+      // times. Keep the event timeline intact, but never turn that transport
+      // flap into a Telegram storm. A real sustained outage still produces
+      // the first notification immediately and another only after cooldown.
+      const nowMs = Date.now();
+      const lastAlertAt = this.lastOfflineNotificationTimes.get(cameraId) || 0;
+      const shouldNotify = !this.cameraOfflineNotificationCooldownMs ||
+        nowMs - lastAlertAt >= this.cameraOfflineNotificationCooldownMs;
+      if (shouldNotify) this.lastOfflineNotificationTimes.set(cameraId, nowMs);
+
+      if (wasOccupied && shouldNotify) {
         const roomEmptyEv = {
           id: crypto.randomUUID(),
           cameraId,
@@ -412,7 +432,7 @@ export class CameraEventEngine {
         }
       }
 
-      if (this.onNotification) {
+      if (this.onNotification && shouldNotify) {
         this.onNotification("CAMERA_OFFLINE", {
           cameraId,
           roomId: roomId || prev.roomId,

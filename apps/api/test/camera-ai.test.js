@@ -361,6 +361,22 @@ test("CameraEventEngine handleCameraStatus emits CAMERA_OFFLINE and CAMERA_ONLIN
   assert.equal(engine.getState("cam-status-test").status, "ONLINE");
 });
 
+test("CameraEventEngine rate-limits offline notifications during transport flapping", async () => {
+  const notices = [];
+  const engine = new CameraEventEngine({
+    db: { query: async () => ({ rows: [] }) },
+    io: null,
+    cameraOfflineNotificationCooldownMs: 60_000,
+    onNotification: (type) => notices.push(type),
+  });
+
+  await engine.handleCameraStatus({ cameraId: "cam-flap", status: "OFFLINE" });
+  await engine.handleCameraStatus({ cameraId: "cam-flap", status: "ONLINE" });
+  await engine.handleCameraStatus({ cameraId: "cam-flap", status: "OFFLINE" });
+
+  assert.deepEqual(notices, ["CAMERA_OFFLINE"]);
+});
+
 test("runMigrations creates schema_migrations and applies pending SQL files", async () => {
   const executedSql = [];
   const mockDb = {

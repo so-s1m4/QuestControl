@@ -158,6 +158,9 @@ async function syncAiWorkersSafe() {
 const cameraEventEngine = new CameraEventEngine({
   db,
   io,
+  // Camera transport retries must not repeatedly notify the operator while a
+  // Tuya stream is reconnecting. The first sustained outage is still sent.
+  cameraOfflineNotificationCooldownMs: 30 * 60 * 1000,
   onNotification: async (type, data) => {
     try {
       let photoBuffer = null;
