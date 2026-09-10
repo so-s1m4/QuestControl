@@ -4991,7 +4991,7 @@ app.get("/internal/cameras", requireInternalSecret, async (_req, res) => {
 });
 
 app.post("/internal/tuya-webrtc/session", requireInternalSecret, async (req, res) => {
-  const { cameraId } = req.body || {};
+  const { cameraId, streamType } = req.body || {};
   const camera = (await db.query("SELECT * FROM cameras WHERE id=$1", [cameraId])).rows[0];
   if (!camera || camera.provider !== "TUYA" || !camera.external_id) {
     return res.status(404).json({ error: "TUYA_CAMERA_NOT_FOUND" });
@@ -5006,7 +5006,11 @@ app.post("/internal/tuya-webrtc/session", requireInternalSecret, async (req, res
       pendingSignals.push(sig);
     });
 
-    const result = await tuyaWebRTC.startSession({ deviceId: camera.external_id, socket: dummySocket });
+    const result = await tuyaWebRTC.startSession({
+      deviceId: camera.external_id,
+      socket: dummySocket,
+      streamType: Number.isInteger(Number(streamType)) && Number(streamType) > 0 ? Number(streamType) : 1,
+    });
     internalSessions.set(result.sessionId, { dummySocket, deviceId: camera.external_id, pendingSignals });
     res.json(result);
   } catch (error) {

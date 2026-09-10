@@ -138,6 +138,13 @@ class CameraStreamSession:
         # browser open.
         fallback_setting = config.get("tuya_ai_hls_fallback", os.environ.get("TUYA_AI_HLS_FALLBACK", "true"))
         self.tuya_ai_hls_fallback = str(fallback_setting).strip().lower() not in ("0", "false", "no", "off")
+        # Tuya uses stream type 1 for its low/sub stream. Prefer the main
+        # camera stream for server-side vision; browser playback still asks
+        # for its legacy default independently.
+        try:
+            self.tuya_stream_type = max(1, int(config.get("tuya_stream_type", os.environ.get("TUYA_AI_STREAM_TYPE", "2"))))
+        except (TypeError, ValueError):
+            self.tuya_stream_type = 2
         # Once Tuya has rejected this worker's direct P2P media session, keep
         # this worker on HLS until it is restarted. Re-negotiating WebRTC after
         # every short HLS session needlessly hits Tuya's allocation limit and
@@ -288,7 +295,12 @@ class CameraStreamSession:
 
         async def run() -> bool:
             sess_url = f"{self.api_url}/internal/tuya-webrtc/session"
-            sess_resp = requests.post(sess_url, json={"cameraId": self.camera_id}, headers=self._headers(), timeout=10)
+            sess_resp = requests.post(
+                sess_url,
+                json={"cameraId": self.camera_id, "streamType": self.tuya_stream_type},
+                headers=self._headers(),
+                timeout=10,
+            )
             if sess_resp.status_code != 200:
                 logger.warning("Failed to allocate Tuya WebRTC session for %s: %s", self.camera_id, sess_resp.text)
                 self.last_error = f"SESSION_ALLOCATION_HTTP_{sess_resp.status_code}"

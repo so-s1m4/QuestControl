@@ -15,7 +15,7 @@ export class TuyaWebRTCManager {
     this.sessions = new Map();
   }
 
-  async startSession({ deviceId, socket }) {
+  async startSession({ deviceId, socket, streamType = 1 }) {
     const [device, config] = await Promise.all([
       this.tuya.deviceInfo(deviceId),
       this.tuya.webrtcConfigs(deviceId),
@@ -35,6 +35,10 @@ export class TuyaWebRTCManager {
       deviceId,
       motoId: config.moto_id,
       auth: config.auth,
+      // Tuya's default (1) is a sub-stream. Server-side vision needs the
+      // camera's main stream when it is explicitly requested, while browser
+      // playback keeps its existing default.
+      streamType: Number.isInteger(Number(streamType)) && Number(streamType) > 0 ? Number(streamType) : 1,
       hub,
       publishTopic: topicFor(hub.sinkTopic, config.moto_id, deviceId),
     });
@@ -141,7 +145,7 @@ export class TuyaWebRTCManager {
       if (!payload.startsWith("a=")) payload = `a=${payload}`;
     }
     const message = type === "offer"
-      ? { mode: "webrtc", sdp: payload, stream_type: 1, auth: session.auth }
+      ? { mode: "webrtc", sdp: payload, stream_type: session.streamType, auth: session.auth }
       : type === "candidate"
         ? { mode: "webrtc", candidate: payload }
         : { mode: "webrtc" };
