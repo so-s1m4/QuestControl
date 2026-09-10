@@ -30,6 +30,7 @@ logger = logging.getLogger("questcontrol.ai.server")
 from model_validator import (
     prevent_ultralytics_network_downloads,
     load_general_yolo_model,
+    load_yolo_world_model,
     validate_and_load_headset_model,
     ValidationResult,
 )
@@ -78,6 +79,11 @@ HEADSET_MODEL_ERROR = None
 HEADSET_MODEL_METRICS = None
 HEADSET_MODEL_METADATA = None
 HEADSET_CLASSES: List[int] = []
+HEADSET_MODEL_SOURCE = "custom"
+YOLO_WORLD_MODEL = None
+YOLO_WORLD_AVAILABLE = False
+YOLO_WORLD_ERROR = None
+YOLO_WORLD_CLASSES = ["VR headset", "Meta Quest headset", "Oculus headset"]
 
 raw_headset_classes = os.environ.get("HEADSET_CLASSES", "").strip()
 if raw_headset_classes:
@@ -90,6 +96,13 @@ if raw_headset_classes:
 # 1. Load general YOLO model strictly from local disk (no internet downloads)
 expected_general_sha = os.environ.get("YOLO_MODEL_SHA256")
 YOLO_MODEL, YOLO_AVAILABLE, YOLO_ERROR = load_general_yolo_model(expected_sha256=expected_general_sha)
+
+# YOLO-World is the primary headset detector. The smaller custom model remains
+# available for continued training and evaluation, but does not replace the
+# open-vocabulary detector until we explicitly choose to change that policy.
+YOLO_WORLD_MODEL, YOLO_WORLD_AVAILABLE, YOLO_WORLD_ERROR = load_yolo_world_model(
+    classes=YOLO_WORLD_CLASSES,
+)
 
 # Reconcile model symlinks from activation journal if needed after container restart / crash
 try:
@@ -118,6 +131,21 @@ if HEADSET_MODEL_STATUS not in ("JOURNAL_CORRUPT", "ACTIVATION_STATE_UNCERTAIN")
     HEADSET_MODEL_ERROR = val_res.error
     HEADSET_MODEL_METRICS = val_res.metrics
     HEADSET_MODEL_METADATA = val_res.metadata
+
+
+def set_primary_headset_model() -> None:
+    """Keep YOLO-World as the live detector after model lifecycle operations."""
+    global HEADSET_MODEL, HEADSET_MODEL_STATUS, HEADSET_MODEL_ERROR, HEADSET_MODEL_METRICS, HEADSET_MODEL_METADATA, HEADSET_MODEL_SOURCE
+    if YOLO_WORLD_AVAILABLE and YOLO_WORLD_MODEL is not None:
+        HEADSET_MODEL = YOLO_WORLD_MODEL
+        HEADSET_MODEL_STATUS = "READY"
+        HEADSET_MODEL_ERROR = None
+        HEADSET_MODEL_METRICS = {"source": "YOLO-World", "classes": YOLO_WORLD_CLASSES}
+        HEADSET_MODEL_METADATA = {"modelName": "yolov8s-worldv2", "source": "YOLO-World"}
+        HEADSET_MODEL_SOURCE = "yolo-world"
+
+
+set_primary_headset_model()
 
 # Reconcile stale background daemon jobs on startup
 reconcile_daemon_job_status(DATA_DIR)
@@ -281,6 +309,7 @@ def run_headset_detection(
         "status": "READY",
         "headsetCount": len(headsets),
         "headsets": headsets,
+        "modelSource": "override" if model_override is not None else HEADSET_MODEL_SOURCE,
     }
 
 
@@ -528,6 +557,7 @@ class AIServiceHandler(BaseHTTPRequestHandler):
                 "headsetModelStatus": HEADSET_MODEL_STATUS,
                 "headsetModelError": HEADSET_MODEL_ERROR,
                 "headsetValidationMetrics": HEADSET_MODEL_METRICS,
+                "headsetModelSource": HEADSET_MODEL_SOURCE,
                 "webrtcAvailable": AIORTC_AVAILABLE,
                 "tuyaTransport": "WEBRTC_REQUIRED",
                 "vlm": True,
@@ -543,7 +573,16 @@ class AIServiceHandler(BaseHTTPRequestHandler):
         if path == "/worker/status":
             self._send_json(200, worker_manager.get_statuses())
         elif path == "/pipeline/status":
-            self._send_json(200, get_pipeline_status(data_root=DATA_DIR, models_dir=MODELS_DIR))
+            pipeline_status = get_pipeline_status(data_root=DATA_DIR, models_dir=MODELS_DIR)
+            if YOLO_WORLD_AVAILABLE:
+                pipeline_status.update({
+                    "modelStatus": "READY",
+                    "modelError": "YOLO-World активна для поиска VR-шлемов.",
+                    "hasWeights": True,
+                    "modelName": "yolov8s-worldv2",
+                    "modelSource": "YOLO-World",
+                })
+            self._send_json(200, pipeline_status)
         elif path == "/pipeline/job-status":
             self._send_json(200, get_job_status(data_root=DATA_DIR))
         elif path == "/pipeline/queue":
@@ -1108,11 +1147,13 @@ class AIServiceHandler(BaseHTTPRequestHandler):
                     # Hot reload headset model in runtime
                     try:
                         reval = validate_and_load_headset_model()
-                        HEADSET_MODEL = reval.model
-                        HEADSET_MODEL_STATUS = reval.status
-                        HEADSET_MODEL_ERROR = reval.error
-                        HEADSET_MODEL_METRICS = reval.metrics
-                        HEADSET_MODEL_METADATA = reval.metadata
+                        if not YOLO_WORLD_AVAILABLE:
+                            HEADSET_MODEL = reval.model
+                            HEADSET_MODEL_STATUS = reval.status
+                            HEADSET_MODEL_ERROR = reval.error
+                            HEADSET_MODEL_METRICS = reval.metrics
+                            HEADSET_MODEL_METADATA = reval.metadata
+                        set_primary_headset_model()
                     except Exception as reload_err:
                         logger.warning("Post-activation runtime reload warning: %s", reload_err, exc_info=True)
 
@@ -1214,11 +1255,13 @@ class AIServiceHandler(BaseHTTPRequestHandler):
 
                     try:
                         reval = validate_and_load_headset_model()
-                        HEADSET_MODEL = reval.model
-                        HEADSET_MODEL_STATUS = reval.status
-                        HEADSET_MODEL_ERROR = reval.error
-                        HEADSET_MODEL_METRICS = reval.metrics
-                        HEADSET_MODEL_METADATA = reval.metadata
+                        if not YOLO_WORLD_AVAILABLE:
+                            HEADSET_MODEL = reval.model
+                            HEADSET_MODEL_STATUS = reval.status
+                            HEADSET_MODEL_ERROR = reval.error
+                            HEADSET_MODEL_METRICS = reval.metrics
+                            HEADSET_MODEL_METADATA = reval.metadata
+                        set_primary_headset_model()
                     except Exception as reload_err:
                         logger.warning("Post-rollback runtime reload warning: %s", reload_err, exc_info=True)
 

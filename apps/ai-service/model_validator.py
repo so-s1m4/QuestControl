@@ -189,6 +189,52 @@ def load_general_yolo_model(
         return None, False, err_msg
 
 
+def load_yolo_world_model(
+    model_path: Optional[str] = None,
+    classes: Optional[List[str]] = None,
+) -> Tuple[Optional[Any], bool, Optional[str]]:
+    """Load the baked YOLO-World detector and lock its vocabulary to VR headsets.
+
+    YOLO-World needs both its detector checkpoint and the local CLIP text encoder
+    weights to turn the vocabulary into embeddings.  Both are baked by the
+    Dockerfile; this loader deliberately never permits a runtime download.
+    """
+    target_path = model_path or os.environ.get("YOLO_WORLD_MODEL", "models/yolov8s-worldv2.pt")
+    target_file = Path(target_path).resolve()
+    if not target_file.is_file():
+        alt_root = Path(__file__).resolve().parent / target_path
+        if alt_root.is_file():
+            target_file = alt_root
+    if not target_file.is_file():
+        baked_base = Path("/opt/models/base/yolov8s-worldv2.pt")
+        if baked_base.is_file():
+            target_file = baked_base
+
+    if not target_file.is_file():
+        err_msg = (
+            f"MODEL_UNAVAILABLE: YOLO-World weights not found at '{target_file}'. "
+            "Air-gapped mode active: skipping remote download."
+        )
+        logger.warning(err_msg)
+        return None, False, err_msg
+
+    vocabulary = classes or ["VR headset", "Meta Quest headset", "Oculus headset"]
+    try:
+        from ultralytics import YOLOWorld
+
+        model = YOLOWorld(str(target_file))
+        # This call is intentionally made at startup. It fails fast when the
+        # locally baked CLIP encoder is missing instead of trying to fetch it
+        # during live camera processing.
+        model.set_classes(list(vocabulary))
+        logger.info("YOLO-World loaded from local file with VR vocabulary: %s", vocabulary)
+        return model, True, None
+    except Exception as exc:
+        err_msg = f"MODEL_UNAVAILABLE: Failed to initialize local YOLO-World model: {exc}"
+        logger.warning(err_msg)
+        return None, False, err_msg
+
+
 def resolve_active_model_release(
     models_dir: Optional[Union[str, Path]] = None,
 ) -> Tuple[Optional[Path], Optional[Path]]:
