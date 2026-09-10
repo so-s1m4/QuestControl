@@ -366,6 +366,14 @@ class CameraStreamSession:
             pc.addTrack(AudioStreamTrack())
             pc.addTransceiver("video", direction="recvonly")
 
+            # Tuya can finish ICE before it has supplied the final relay
+            # candidate for video.  Keep consuming trickle candidates after
+            # `connected` and give that late media path a bounded chance to
+            # produce a first frame.
+            first_video_frame = asyncio.Event()
+            video_track_ended = asyncio.Event()
+            media_deadline = time.monotonic() + 30.0
+
             # Register before applying the remote SDP. aiortc emits `track`
             # from setRemoteDescription(), so registering later loses Tuya's
             # one and only video track even though DTLS reaches connected.
@@ -387,11 +395,18 @@ class CameraStreamSession:
                             buf = io.BytesIO()
                             img.save(buf, format="JPEG", quality=80)
                             self._process_frame_bytes(buf.getvalue())
+                            first_video_frame.set()
                     except asyncio.TimeoutError:
                         logger.warning("WebRTC frame timeout on camera %s", self.camera_id)
-                        break
+                        # Do not abandon a just-negotiated Tuya stream after
+                        # one silent eight-second interval.  Its video relay
+                        # can be supplied by a later trickle ICE candidate.
+                        if first_video_frame.is_set() or time.monotonic() >= media_deadline:
+                            video_track_ended.set()
+                            break
                     except Exception as e:
                         logger.warning("WebRTC frame read error on %s: %s", self.camera_id, e)
+                        video_track_ended.set()
                         break
 
             @pc.on("connectionstatechange")
@@ -501,10 +516,12 @@ class CameraStreamSession:
             camera_disconnected = asyncio.Event()
 
             async def poll_remote_candidates():
-                poll_count = 0
-                while self.running and pc.connectionState not in ("connected", "failed", "closed") and poll_count < 25:
+                # Do not stop at ICE "connected": a late relay candidate can
+                # carry the video route even when the audio/BUNDLE path has
+                # already connected.  The task is explicitly cancelled when
+                # this session closes.
+                while self.running and not camera_disconnected.is_set() and pc.connectionState not in ("failed", "closed"):
                     await asyncio.sleep(0.6)
-                    poll_count += 1
                     try:
                         resp = requests.get(
                             f"{self.api_url}/internal/tuya-webrtc/signals",
@@ -528,18 +545,36 @@ class CameraStreamSession:
                     except Exception:
                         pass
 
-            asyncio.create_task(poll_remote_candidates())
+            candidate_poll_task = asyncio.create_task(poll_remote_candidates())
 
             connected_once = False
             connect_deadline = time.monotonic() + 20.0
-            while self.running and not camera_disconnected.is_set() and pc.connectionState not in ("failed", "closed"):
+            while self.running and not camera_disconnected.is_set() and not video_track_ended.is_set() and pc.connectionState not in ("failed", "closed"):
                 connected_once = connected_once or pc.connectionState == "connected"
                 if not connected_once and time.monotonic() >= connect_deadline:
                     self.last_error = "WEBRTC_CONNECTION_TIMEOUT"
                     logger.warning("WebRTC connection timed out on %s", self.camera_id)
                     break
+                if connected_once and not first_video_frame.is_set() and time.monotonic() >= media_deadline:
+                    self.last_error = "WEBRTC_MEDIA_TIMEOUT"
+                    logger.warning("WebRTC video media timed out on %s", self.camera_id)
+                    break
                 await asyncio.sleep(1.0)
 
+            # Release Tuya's P2P slot before dropping the peer.  Leaving the
+            # internal session open made foreground browser playback compete
+            # with stale AI sessions after a failed media attempt.
+            try:
+                requests.post(
+                    sig_url,
+                    json={"sessionId": session_id, "type": "disconnect", "payload": ""},
+                    headers=self._headers(),
+                    timeout=3,
+                )
+            except Exception:
+                pass
+            candidate_poll_task.cancel()
+            await asyncio.gather(candidate_poll_task, return_exceptions=True)
             await pc.close()
             received_video_frame = self.last_frame_time > frame_time_before_webrtc
             if not connected_once:
