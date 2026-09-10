@@ -125,6 +125,23 @@ class TestTuyaDtlsCompatibility(unittest.TestCase):
 
 
 class TestWorkerManagerAndBackpressure(unittest.TestCase):
+    def test_hls_loading_placeholder_never_enters_worker_frame_buffer(self):
+        session = CameraStreamSession(
+            camera_id="cam-hls-placeholder",
+            provider="TUYA",
+            config={},
+            api_url="http://api:3000",
+        )
+        session.transport = "HLS_FALLBACK"
+        black = io.BytesIO()
+        Image.new("RGB", (1920, 1080), color=(0, 0, 0)).save(black, format="JPEG")
+
+        session._process_frame_bytes(black.getvalue())
+
+        self.assertEqual(session.last_error, "FRAME_NOT_READY")
+        self.assertEqual(len(session.frame_buffer), 0)
+        self.assertEqual(session.last_frame_time, 0.0)
+
     def test_frame_buffer_and_caching(self):
         session = CameraStreamSession(
             camera_id="cam-test",

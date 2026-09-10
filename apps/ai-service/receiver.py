@@ -128,6 +128,7 @@ class CameraStreamSession:
         # Status & metrics
         self.last_frame_time: float = 0.0
         self.is_online: bool = False
+        self.invalid_frame_count: int = 0
         self.transport: str = "WEBRTC" if self.provider == "TUYA" else "SOURCE"
         self.last_error: Optional[str] = None
         self.is_moving: bool = False
@@ -621,6 +622,21 @@ class CameraStreamSession:
             cap.release()
 
     def _process_frame_bytes(self, image_bytes: bytes):
+        # Tuya's HLS endpoint can answer with its black in-player loading
+        # placeholder (the spinner is only a few pixels, so the whole image is
+        # almost black). It is not camera footage. Do not let it refresh the
+        # frame timestamp or replace the useful buffer: that made Dataset
+        # capture appear to succeed while saving blank images.
+        if self.provider == "TUYA" and self.transport == "HLS_FALLBACK" and self._is_tuya_loading_placeholder(image_bytes):
+            self.invalid_frame_count += 1
+            self.last_error = "FRAME_NOT_READY"
+            if self.is_online:
+                self._notify_camera_status(False)
+            if self.invalid_frame_count == 1:
+                logger.warning("Ignoring Tuya HLS loading placeholder for camera %s", self.camera_id)
+            return
+
+        self.invalid_frame_count = 0
         now = time.time()
         self.last_frame_time = now
 
@@ -744,6 +760,32 @@ class CameraStreamSession:
         finally:
             if self.activity_semaphore and activity_acquired:
                 self.activity_semaphore.release()
+
+    @staticmethod
+    def _is_tuya_loading_placeholder(image_bytes: bytes) -> bool:
+        """Recognise Tuya's near-black player placeholder without ML inference.
+
+        This deliberately only rejects a frame when its average luma is below
+        5/255. IR footage and genuinely dark rooms retain enough detail to sit
+        well above that threshold; a black player surface with a tiny spinner
+        measured about 0.4/255 in production.
+        """
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as image:
+                image = image.convert("L")
+                if image.width < 64 or image.height < 64:
+                    return True
+                # Sampling keeps the check effectively free for 1080p frames.
+                image.thumbnail((160, 90))
+                histogram = image.histogram()
+                pixels = sum(histogram)
+                if not pixels:
+                    return True
+                mean_luma = sum(level * count for level, count in enumerate(histogram)) / pixels
+                return mean_luma < 5.0
+        except Exception:
+            # Broken image bytes are also never valid camera evidence.
+            return True
 
     def _maybe_auto_capture(self, image_bytes: bytes, now: float) -> None:
         """Sparsely collect model-suggested frames during an operator session."""
