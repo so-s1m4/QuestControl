@@ -136,6 +136,7 @@ services:
       VLM_ENDPOINT: http://vlm:11434
       API_INTERNAL_URL: http://api:3000
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      TUYA_AI_HLS_FALLBACK: ${TUYA_AI_HLS_FALLBACK:-true}
     volumes:
       - ai_data:/app/data
       - ai_dataset:/app/dataset

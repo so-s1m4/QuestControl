@@ -76,6 +76,12 @@ class CameraStreamSession:
         self.last_auto_capture_at: float = 0.0
         self.previous_boxes: List[Dict[str, Any]] = []
         self.last_motion_time: float = 0.0
+        # Browser playback remains WebRTC. This fallback applies only to the
+        # isolated server-side AI worker after Tuya has rejected its P2P media
+        # session, so capture and Telegram integrations keep working with no
+        # browser open.
+        fallback_setting = config.get("tuya_ai_hls_fallback", os.environ.get("TUYA_AI_HLS_FALLBACK", "true"))
+        self.tuya_ai_hls_fallback = str(fallback_setting).strip().lower() not in ("0", "false", "no", "off")
         self.internal_secret = os.environ.get("INTERNAL_API_SECRET", "").strip()
         if (not self.internal_secret or self.internal_secret in ("internal-ai-service-secret", DEV_SECRET_FALLBACK)) and not IS_PRODUCTION:
             self.internal_secret = DEV_SECRET_FALLBACK
@@ -164,6 +170,20 @@ class CameraStreamSession:
                         time.sleep(15.0)
                         continue
                     completed = self._run_webrtc_stream()
+                    if not completed and self.tuya_ai_hls_fallback and self.running:
+                        # Some Tuya firmware accepts browser WebRTC but closes
+                        # aiortc's server P2P session after ICE. HLS is the
+                        # documented cloud transport fallback and preserves
+                        # browser-independent processing.
+                        logger.warning(
+                            "Tuya WebRTC worker failed for %s (%s); switching AI worker to HLS fallback",
+                            self.camera_id,
+                            self.last_error or "unknown error",
+                        )
+                        self.transport = "HLS_FALLBACK"
+                        frame_time_before_hls = self.last_frame_time
+                        self._run_capture_stream()
+                        completed = self.last_frame_time > frame_time_before_hls
                     # A failed allocation, invalid ICE configuration or a
                     # dropped session must count as a failure. Previously a
                     # normal return reset the cadence to two seconds and

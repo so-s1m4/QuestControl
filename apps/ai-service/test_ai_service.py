@@ -148,6 +148,28 @@ class TestWorkerManagerAndBackpressure(unittest.TestCase):
         semaphore.release()
         session.stop()
 
+    @patch("receiver.AIORTC_AVAILABLE", True)
+    def test_tuya_worker_uses_hls_after_background_webrtc_failure(self):
+        session = CameraStreamSession(
+            camera_id="cam-tuya-fallback",
+            provider="TUYA",
+            config={"tuya_ai_hls_fallback": True},
+            api_url="http://api:3000",
+        )
+        session.running = True
+
+        def stop_after_hls():
+            session.last_frame_time = time.time()
+            session.running = False
+
+        with patch.object(session, "_run_webrtc_stream", return_value=False) as webrtc, \
+             patch.object(session, "_run_capture_stream", side_effect=stop_after_hls) as hls:
+            session._worker_loop()
+
+        webrtc.assert_called_once()
+        hls.assert_called_once()
+        self.assertEqual(session.transport, "HLS_FALLBACK")
+
     def test_get_recent_clip_generates_valid_gif(self):
         from PIL import Image
         session = CameraStreamSession(
