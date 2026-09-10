@@ -137,6 +137,7 @@ class CameraStreamSession:
         self.activity_detection_fn: Optional[Callable[[bytes, str, str, float, List[str]], Dict[str, Any]]] = None
         self.dataset_capture_fn: Optional[Callable[[bytes, str, str, float, Dict[str, Any], List[Dict[str, Any]]], None]] = None
         self.last_activity_inference_at: float = 0.0
+        self.last_headset_inference_at: float = 0.0
         self.last_auto_capture_at: float = 0.0
         self.previous_boxes: List[Dict[str, Any]] = []
         self.last_motion_time: float = 0.0
@@ -722,9 +723,14 @@ class CameraStreamSession:
                 timeout=3.0,
             )
 
-            # Headset tracking if enabled
-            if self.config.get("headset_tracking_enabled") and self.headset_detection_fn:
+            # VR control is part of AI Vision for every AI-enabled camera.
+            # Run it on a bounded cadence so one busy stream cannot starve the
+            # other cameras; three stable observations are still sufficient
+            # for the misplaced-headset alert debounce.
+            headset_interval = max(1.0, float(os.environ.get("HEADSET_INFERENCE_INTERVAL_SECONDS", "3")))
+            if self.headset_detection_fn and now - self.last_headset_inference_at >= headset_interval:
                 try:
+                    self.last_headset_inference_at = now
                     headsets_res = self.headset_detection_fn(image_bytes, self.camera_id, 0.4)
                     h_status = headsets_res.get("status", "READY")
                     requests.post(

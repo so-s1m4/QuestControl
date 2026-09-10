@@ -382,6 +382,31 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
       }
     }
 
+    // Show every raw headset candidate, not only boxes already matched to a
+    // manually configured charging/work zone. This makes AI Vision useful on
+    // the first frame and makes it clear why a "not on base" alert fired.
+    if(Array.isArray(hs?.detectedHeadsets)){
+      ctx.lineWidth=2.5;
+      ctx.font="bold 11px Poppins, sans-serif";
+      for(const headset of hs.detectedHeadsets){
+        const box=headset?.bbox;
+        if(!box)continue;
+        const bx=offsetX+(box.x*renderW);
+        const by=offsetY+(box.y*renderH);
+        const bw=box.width*renderW;
+        const bh=box.height*renderH;
+        ctx.strokeStyle="#f97316";
+        ctx.setLineDash([]);
+        ctx.strokeRect(bx,by,bw,bh);
+        const label=`VR ${(Number(headset.confidence||0)*100).toFixed(0)}%`;
+        const tw=ctx.measureText(label).width;
+        ctx.fillStyle="#ea580ce6";
+        ctx.fillRect(bx,Math.max(0,by-18),tw+8,18);
+        ctx.fillStyle="#fff";
+        ctx.fillText(label,bx+4,Math.max(12,by-4));
+      }
+    }
+
     // 2. Draw People Detection Boxes
     if(!this.latestPeople?.length)return;
 

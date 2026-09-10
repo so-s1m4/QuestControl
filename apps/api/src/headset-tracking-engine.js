@@ -1042,6 +1042,10 @@ export class HeadsetTrackingEngine {
       unlocatedCount,
       storageStatus,
       totalDetected: detectedHeadsets.length,
+      // Keep the raw AI boxes in the realtime state: the browser overlay uses
+      // them to show what the detector actually found, even before a zone is
+      // configured for that particular headset.
+      detectedHeadsets,
       assignedZonesState,
       emptyAssignedZones,
       notVisibleZones: inactiveZones.map((z) => ({

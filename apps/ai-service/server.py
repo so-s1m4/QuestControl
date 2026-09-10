@@ -83,7 +83,15 @@ HEADSET_MODEL_SOURCE = "custom"
 YOLO_WORLD_MODEL = None
 YOLO_WORLD_AVAILABLE = False
 YOLO_WORLD_ERROR = None
-YOLO_WORLD_CLASSES = ["VR headset", "Meta Quest headset", "Oculus headset"]
+# "Helmet" is deliberately included: on the venue cameras Quest headsets are
+# often side-on, and YOLO-World consistently scores that silhouette under this
+# broader visual term. The detector still returns it only as a VR candidate.
+YOLO_WORLD_CLASSES = ["VR headset", "Meta Quest headset", "Oculus headset", "helmet"]
+try:
+    YOLO_WORLD_CONFIDENCE = float(os.environ.get("YOLO_WORLD_CONFIDENCE", "0.01"))
+except ValueError:
+    YOLO_WORLD_CONFIDENCE = 0.01
+YOLO_WORLD_CONFIDENCE = max(0.001, min(0.5, YOLO_WORLD_CONFIDENCE))
 
 raw_headset_classes = os.environ.get("HEADSET_CLASSES", "").strip()
 if raw_headset_classes:
@@ -268,7 +276,12 @@ def run_headset_detection(
     if active_model is not None and image_bytes:
         try:
             img = Image.open(io.BytesIO(image_bytes))
-            results = active_model(img, conf=conf_threshold, verbose=False)
+            effective_confidence = (
+                YOLO_WORLD_CONFIDENCE
+                if model_override is None and HEADSET_MODEL_SOURCE == "yolo-world"
+                else conf_threshold
+            )
+            results = active_model(img, conf=effective_confidence, verbose=False)
             width, height = img.size
             for r in results:
                 names = getattr(r, "names", {})
@@ -302,6 +315,24 @@ def run_headset_detection(
                     })
         except Exception as e:
             logger.warning("Headset YOLO inference error: %s", e)
+
+    # YOLO-World uses several equivalent prompts for the same object. Its
+    # built-in NMS is class-aware, so collapse overlapping prompt hits before
+    # they reach the inventory counter or the visual overlay.
+    def _iou(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+        a, b = left["bbox"], right["bbox"]
+        ax2, ay2 = a["x"] + a["width"], a["y"] + a["height"]
+        bx2, by2 = b["x"] + b["width"], b["y"] + b["height"]
+        iw, ih = max(0.0, min(ax2, bx2) - max(a["x"], b["x"])), max(0.0, min(ay2, by2) - max(a["y"], b["y"]))
+        intersection = iw * ih
+        union = a["width"] * a["height"] + b["width"] * b["height"] - intersection
+        return intersection / union if union > 0 else 0.0
+
+    unique_headsets: List[Dict[str, Any]] = []
+    for candidate in sorted(headsets, key=lambda item: item["confidence"], reverse=True):
+        if all(_iou(candidate, accepted) < 0.55 for accepted in unique_headsets):
+            unique_headsets.append(candidate)
+    headsets = unique_headsets
 
     return {
         "cameraId": camera_id,
