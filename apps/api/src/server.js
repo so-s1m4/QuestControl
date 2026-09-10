@@ -5020,12 +5020,14 @@ app.post("/internal/tuya-webrtc/session", requireInternalSecret, async (req, res
     const pendingSignals = [];
     dummySocket.on("signal", (sig) => {
       pendingSignals.push(sig);
+      if (sig?.type === "disconnect") internalSessions.delete(sig.sessionId);
     });
 
     const result = await tuyaWebRTC.startSession({
       deviceId: camera.external_id,
       socket: dummySocket,
       streamType: Number.isInteger(Number(streamType)) && Number(streamType) > 0 ? Number(streamType) : 1,
+      purpose: "ai",
     });
     internalSessions.set(result.sessionId, { dummySocket, deviceId: camera.external_id, pendingSignals });
     res.json(result);
@@ -5060,6 +5062,7 @@ app.post("/internal/tuya-webrtc/signal", requireInternalSecret, async (req, res)
     }
 
     await tuyaWebRTC.signal({ sessionId, socket: sess.dummySocket, type, payload: payload || "" });
+    if (type === "disconnect") internalSessions.delete(sessionId);
     // A real browser signals the offer, then immediately trickles its ICE
     // candidates while the camera is preparing the answer. The AI worker needs
     // that same sequence. Keep the old wait-by-default behaviour for callers
@@ -5861,7 +5864,7 @@ cameraNs.on("connection",socket=>{
       `,[input.cameraId])).rows[0];
       if(!camera||camera.provider!=="TUYA"||!camera.external_id) return ack({success:false,error:"CAMERA_NOT_AVAILABLE"});
       if(!(await cameraAllowed({user:socket.data.user},camera.id))) return ack({success:false,error:"CAMERA_FORBIDDEN"});
-      const result=await tuyaWebRTC.startSession({deviceId:camera.external_id,socket});
+      const result=await tuyaWebRTC.startSession({deviceId:camera.external_id,socket,purpose:"browser"});
       ack({success:true,...result});
     } catch(error) {
       console.error("Tuya WebRTC session failed",error.code||"",error.message);

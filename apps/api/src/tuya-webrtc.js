@@ -15,7 +15,16 @@ export class TuyaWebRTCManager {
     this.sessions = new Map();
   }
 
-  async startSession({ deviceId, socket, streamType = 1 }) {
+  async startSession({ deviceId, socket, streamType = 1, purpose = "browser" }) {
+    // A Tuya camera may accept only one useful P2P media path at a time.  The
+    // operator's live player is the foreground path, so it must never compete
+    // with the background AI worker for that limited camera-side resource.
+    if (purpose === "browser") {
+      await this.closeAiSessionsForDevice(deviceId);
+    } else if (purpose === "ai" && this.hasBrowserSession(deviceId)) {
+      throw Object.assign(new Error("Camera is being viewed in the browser"), { code: "TUYA_WEBRTC_IN_USE" });
+    }
+
     const [device, config] = await Promise.all([
       this.tuya.deviceInfo(deviceId),
       this.tuya.webrtcConfigs(deviceId),
@@ -35,6 +44,7 @@ export class TuyaWebRTCManager {
       deviceId,
       motoId: config.moto_id,
       auth: config.auth,
+      purpose: purpose === "ai" ? "ai" : "browser",
       // Tuya's default (1) is a sub-stream. Server-side vision needs the
       // camera's main stream when it is explicitly requested, while browser
       // playback keeps its existing default.
@@ -53,6 +63,40 @@ export class TuyaWebRTCManager {
       }))
       .filter((entry) => entry.urls);
     return { sessionId, iceServers };
+  }
+
+  hasBrowserSession(deviceId) {
+    return [...this.sessions.values()].some((session) =>
+      session.deviceId === deviceId && session.purpose === "browser"
+    );
+  }
+
+  async closeAiSessionsForDevice(deviceId) {
+    const sessions = [...this.sessions.values()].filter((session) =>
+      session.deviceId === deviceId && session.purpose === "ai"
+    );
+    if (!sessions.length) return;
+
+    console.info("Tuya WebRTC giving browser priority", deviceId, sessions.length);
+    await Promise.allSettled(sessions.map(async (session) => {
+      try {
+        await this.signal({
+          sessionId: session.sessionId,
+          socket: session.socket,
+          type: "disconnect",
+          payload: "",
+        });
+      } finally {
+        // The internal worker has no Socket.IO connection to receive a
+        // disconnect itself.  Mirror it locally so its bridge can release the
+        // associated bookkeeping immediately.
+        session.socket.emit?.("signal", {
+          sessionId: session.sessionId,
+          type: "disconnect",
+          payload: "",
+        });
+      }
+    }));
   }
 
   async ensureHub(uid) {
