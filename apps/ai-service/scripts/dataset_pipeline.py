@@ -1198,6 +1198,9 @@ def train_headset_model(
             exist_ok=True,
             save=True,
             verbose=True,
+            # Plot generation makes Ultralytics fetch optional fonts on a fresh
+            # container.  Training must remain fully air-gapped.
+            plots=False,
         )
 
         # Locate best.pt
