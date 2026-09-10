@@ -31,7 +31,7 @@ except ImportError:
     logger.warning("OpenCV (cv2) not available. VideoCapture fallbacks will be simulated.")
 
 try:
-    from aiortc import RTCIceServer, RTCPeerConnection, RTCConfiguration, MediaStreamTrack
+    from aiortc import AudioStreamTrack, RTCIceServer, RTCPeerConnection, RTCConfiguration, MediaStreamTrack
     import av
     AIORTC_AVAILABLE = True
 except ImportError:
@@ -237,6 +237,12 @@ class CameraStreamSession:
                     )
 
             pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
+            # Tuya's camera-side WebRTC implementation expects the same offer
+            # shape as its Smart Life browser player: a silent audio sender and
+            # a video receiver. Sending only a recvonly video m-line lets the
+            # SDP exchange complete but then closes the ICE session before any
+            # media frame arrives.
+            pc.addTrack(AudioStreamTrack())
             pc.addTransceiver("video", direction="recvonly")
 
             @pc.on("connectionstatechange")
