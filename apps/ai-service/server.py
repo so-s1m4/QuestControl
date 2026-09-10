@@ -428,11 +428,41 @@ worker_manager.set_activity_detection_fn(
     )
 )
 
+
+def dataset_frame_rejection_reason(image_bytes: bytes) -> Optional[str]:
+    """Reject placeholders and unusably dark frames before they enter a dataset.
+
+    Tuya's cloud HLS endpoint can yield its own black loading screen while a
+    camera session is being established. That is a syntactically valid JPEG,
+    but it is never a useful training example. A genuinely dark IR frame still
+    has appreciable scene luminance; the observed loader frames have a mean
+    luminance below 1 on a 0..255 scale.
+    """
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            gray = image.convert("L")
+            if gray.width < 32 or gray.height < 32:
+                return "FRAME_INVALID: image dimensions are too small"
+            histogram = gray.histogram()
+            pixel_count = gray.width * gray.height
+            mean_luminance = sum(level * count for level, count in enumerate(histogram)) / pixel_count
+    except Exception:
+        return "FRAME_INVALID: image cannot be decoded"
+
+    if mean_luminance < 5.0:
+        return "FRAME_NOT_READY: camera stream is still showing a black loading screen"
+    return None
+
+
 def _collect_background_dataset_frame(image_bytes, camera_id, preset, timestamp, camera_config, initial_bboxes):
     """Save a worker-selected frame for human review; never self-approve it."""
     room_id = str(camera_config.get("room_id") or "")
     session_id = str(camera_config.get("capture_session_id") or "")
     if not room_id or not session_id:
+        return
+    rejected_reason = dataset_frame_rejection_reason(image_bytes)
+    if rejected_reason:
+        logger.warning("Skipping unusable automatic dataset frame from %s: %s", camera_id, rejected_reason)
         return
     iso_timestamp = datetime.fromtimestamp(float(timestamp), tz=timezone.utc).isoformat()
     raw_path = collect_ptz_frame(
@@ -876,6 +906,13 @@ class AIServiceHandler(BaseHTTPRequestHandler):
             if not raw_img:
                 return self._send_json(400, {"error": "MISSING_IMAGE_DATA"})
             image_bytes = base64.b64decode(raw_img)
+            rejected_reason = dataset_frame_rejection_reason(image_bytes)
+            if rejected_reason:
+                return self._send_json(422, {
+                    "error": "FRAME_NOT_READY",
+                    "message": "Camera has not produced a usable video frame yet. Please wait for live video and retry.",
+                    "detail": rejected_reason,
+                })
 
             saved_path = collect_ptz_frame(
                 camera_id=camera_id,

@@ -11,6 +11,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from PIL import Image
 
 _AI_SERVICE_DIR = str(Path(__file__).resolve().parent)
 if _AI_SERVICE_DIR not in sys.path:
@@ -21,7 +22,7 @@ os.environ["INTERNAL_API_SECRET"] = "test-internal-secret-1234567890123456"
 os.environ["MAX_PARALLEL_INFERENCE"] = "2"
 
 from receiver import CameraStreamSession, StreamWorkerManager
-from server import AIServiceHandler
+from server import AIServiceHandler, dataset_frame_rejection_reason
 from vlm import resolve_and_pin_local_url
 
 
@@ -75,6 +76,23 @@ class TestAIServiceAuth(unittest.TestCase):
         result = AIServiceHandler._check_auth(handler)
         self.assertTrue(result)
         handler._send_json.assert_not_called()
+
+
+class TestDatasetFrameQualityGate(unittest.TestCase):
+    def test_rejects_black_loading_placeholder(self):
+        buf = io.BytesIO()
+        Image.new("RGB", (1920, 1080), color=(0, 0, 0)).save(buf, format="JPEG")
+        reason = dataset_frame_rejection_reason(buf.getvalue())
+        self.assertIn("FRAME_NOT_READY", reason)
+
+    def test_accepts_usable_camera_frame(self):
+        image = Image.new("L", (320, 240), color=28)
+        for x in range(80, 240):
+            for y in range(60, 180):
+                image.putpixel((x, y), 180)
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="JPEG")
+        self.assertIsNone(dataset_frame_rejection_reason(buf.getvalue()))
 
     def test_check_auth_accepts_valid_query_param(self):
         handler = MagicMock()
