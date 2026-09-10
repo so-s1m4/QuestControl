@@ -42,7 +42,7 @@ ARG BAKE_GENERAL_YOLO=true
 ARG YOLO11N_SHA256="0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1"
 RUN set -e; \
     if [ "$BAKE_GENERAL_YOLO" = "true" ]; then \
-      curl -fSL https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt -o /opt/models/base/yolo11n.pt && \
+      curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 120 https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt -o /opt/models/base/yolo11n.pt && \
       echo "${YOLO11N_SHA256}  /opt/models/base/yolo11n.pt" | sha256sum -c - && \
       cp /opt/models/base/yolo11n.pt /app/models/yolo11n.pt; \
     fi
