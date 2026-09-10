@@ -68,23 +68,6 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
                     <p>{{aiDescriptions()[camera.id]}}</p>
                   </div>
                 }
-                <div class="ai-actions" (click)="$event.stopPropagation()">
-                  <button class="ai-btn" [disabled]="analyzing()[camera.id]" (click)="analyzeNow(camera)">
-                    {{analyzing()[camera.id]?'Анализ…':'🔍 Анализ'}}
-                  </button>
-                  @if(camera.room_id){
-                    <button class="ai-btn" [disabled]="inspecting()[camera.id]" (click)="inspectRoom(camera)">
-                      {{inspecting()[camera.id]?'Осмотр…':'🔄 Осмотр'}}
-                    </button>
-                    <button class="ai-btn" [disabled]="inspectingVr()[camera.id] || headsetStates()[camera.id]?.modelStatus === 'MODEL_UNAVAILABLE'" [title]="headsetStates()[camera.id]?.modelStatus === 'MODEL_UNAVAILABLE' ? 'VR модель недоступна' : 'VR осмотр комнаты'" (click)="inspectVr(camera)">
-                      {{inspectingVr()[camera.id]?'VR…':'🥽 VR'}}
-                    </button>
-                  }
-                  <button class="ai-btn" [class.active-tracking]="trackingStates()[camera.id]" (click)="toggleTracking(camera)">
-                    🎯 Трекинг: {{trackingStates()[camera.id]?'ВКЛ':'ВЫКЛ'}}
-                  </button>
-                  <button class="ai-btn" (click)="openEvents(camera)">⏱ События</button>
-                </div>
                 @if(controlErrors()[camera.id]){<p class="control-error">{{controlErrors()[camera.id]}}</p>}
               </article>
             }
