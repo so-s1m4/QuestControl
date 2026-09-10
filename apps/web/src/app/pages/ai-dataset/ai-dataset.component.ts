@@ -246,23 +246,25 @@ interface WorkerCameraStatus {
           <div class="canvas-area">
             @if (selectedSample()) {
               <div class="canvas-wrapper">
-                <div class="image-container" (mousedown)="startDrawing($event)" (mousemove)="keepDrawing($event)" (mouseup)="finishDrawing($event)">
+                <div class="image-container">
                   @if (imageLoading()) {
                     <div class="canvas-loading">Загрузка изображения кадра...</div>
                   }
                   @if (sampleImageUrl()) {
-                    <img [src]="sampleImageUrl()!" alt="Venue capture frame" (load)="onImageLoaded($event)" />
-                    <svg class="bbox-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none">
-                      @for (box of currentBboxes(); track $index) {
-                        <g class="bbox-group" (click)="removeBbox($index, $event)">
-                          <rect [attr.x]="box.x * 1000" [attr.y]="box.y * 1000" [attr.width]="box.width * 1000" [attr.height]="box.height * 1000" class="bbox-rect" />
-                          <text [attr.x]="box.x * 1000 + 4" [attr.y]="box.y * 1000 + 16" class="bbox-label">vr_headset (клик: удалить)</text>
-                        </g>
-                      }
-                      @if (drawingBox()) {
-                        <rect [attr.x]="drawingBox()!.x * 1000" [attr.y]="drawingBox()!.y * 1000" [attr.width]="drawingBox()!.width * 1000" [attr.height]="drawingBox()!.height * 1000" class="drawing-rect" />
-                      }
-                    </svg>
+                    <div class="image-stage" (mousedown)="startDrawing($event)" (mousemove)="keepDrawing($event)" (mouseup)="finishDrawing($event)">
+                      <img [src]="sampleImageUrl()!" alt="Venue capture frame" (load)="onImageLoaded($event)" />
+                      <svg class="bbox-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+                        @for (box of currentBboxes(); track $index) {
+                          <g class="bbox-group" (click)="removeBbox($index, $event)">
+                            <rect [attr.x]="box.x * 1000" [attr.y]="box.y * 1000" [attr.width]="box.width * 1000" [attr.height]="box.height * 1000" class="bbox-rect" />
+                            <text [attr.x]="box.x * 1000 + 4" [attr.y]="box.y * 1000 + 16" class="bbox-label">vr_headset (клик: удалить)</text>
+                          </g>
+                        }
+                        @if (drawingBox()) {
+                          <rect [attr.x]="drawingBox()!.x * 1000" [attr.y]="drawingBox()!.y * 1000" [attr.width]="drawingBox()!.width * 1000" [attr.height]="drawingBox()!.height * 1000" class="drawing-rect" />
+                        }
+                      </svg>
+                    </div>
                   }
                 </div>
 
@@ -382,8 +384,9 @@ interface WorkerCameraStatus {
 
     .canvas-area { min-width: 0; display: flex; flex-direction: column; background: #111a2b; position: relative; }
     .canvas-wrapper { display: flex; flex-direction: column; height: 100%; }
-    .image-container { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; user-select: none; cursor: crosshair; }
-    .image-container img { max-width: 100%; max-height: 560px; object-fit: contain; display: block; }
+    .image-container { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; user-select: none; }
+    .image-stage { position: relative; display: inline-block; max-width: 100%; max-height: 560px; line-height: 0; cursor: crosshair; }
+    .image-stage img { max-width: 100%; max-height: 560px; object-fit: contain; display: block; }
     .bbox-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: auto; }
     .bbox-rect { fill: rgba(37, 99, 235, 0.25); stroke: #3b82f6; stroke-width: 3; cursor: pointer; }
     .bbox-rect:hover { fill: rgba(220, 38, 38, 0.4); stroke: #ef4444; }
