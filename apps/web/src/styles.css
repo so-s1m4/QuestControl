@@ -326,3 +326,95 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
     padding-left: calc(16px + env(safe-area-inset-left, 0px));
   }
 }
+
+/* User-selectable dark theme for the authenticated management workspace. */
+html.dark-theme {
+  color-scheme: dark;
+  --ink: #e8edf6;
+  --muted: #9aa6b8;
+  --line: #2a3547;
+  --surface: #151d2a;
+  --canvas: #0a101a;
+  --primary: #7d83f5;
+  --primary-dark: #a7abff;
+  --success: #52d49a;
+  --danger: #ff8290;
+  background: #0a101a;
+}
+html.dark-theme body {
+  background: radial-gradient(circle at 75% 0, #242958 0, transparent 31%), #0a101a;
+  color: var(--ink);
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section {
+  color: #e8edf6;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(h1,h2,h3,h4,strong,b) {
+  color: #edf2fa;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(input,select,textarea) {
+  border-color: #344156 !important;
+  background: #111927 !important;
+  color: #e6ebf4 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(input,textarea)::placeholder {
+  color: #6f7d91;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
+  article,.panel,.toolbar,.summary article,.inventory-list>article,.new-item,
+  .time-title,.month-summary article,.time-table,.roster,.empty-week,.routine-dialog,
+  .item-modal,.item-settings,.modal-history,.today-panel,.cards article,.rooms article
+) {
+  border-color: #293548 !important;
+  background-color: #151d2a !important;
+  background-image: none !important;
+  box-shadow: 0 8px 28px #00000026 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
+  .stock,.roster-head,.person,.time-head,.page-tabs,.mode-switch,.time-date-card,
+  .time-booking-card,.time-range,.location-pill,.booking-list>div
+) {
+  border-color: #293548 !important;
+  background-color: #101824 !important;
+  background-image: none !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
+  p,small,label,.time-table article time,.time-table article>span,.category-heading span
+) {
+  color: #9aa6b8;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
+  .secondary,.quick,.item-menu,.pdf-button,.cancel,.today,.week-nav button
+) {
+  border-color: #364258 !important;
+  background: #1c2636 !important;
+  color: #d8dfeb !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.time-table article,.booking-list>div,.movement,.roster-row) {
+  border-color: #273245 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .empty {
+  border-color: #344157;
+  background: #121a27;
+}
+html.dark-theme body.management-shell .mobile-menu-sheet {
+  background: #111927;
+  color: #e8edf6;
+}
+html.dark-theme body.management-shell .mobile-menu-links :is(a,.menu-link-button) {
+  border-color: #2c384b;
+  background: #182131;
+  color: #edf2fa;
+}
+html.dark-theme body.management-shell .mobile-menu-links a.active {
+  border-color: #6872e8;
+  background: #252c50;
+}
+html.dark-theme body.management-shell .mobile-menu-sheet header button,
+html.dark-theme body.management-shell .mobile-account-actions .logout {
+  border-color: #344156;
+  background: #1d2737;
+  color: #d9e0ec;
+}
+html.dark-theme body.management-shell .mobile-account-actions {
+  border-color: #2c384a;
+}

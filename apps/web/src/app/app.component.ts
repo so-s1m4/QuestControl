@@ -51,6 +51,7 @@ type InstallPromptEvent = Event & {
             <a routerLink="/documents" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>Документы</a>
           </nav>
           <div class="desktop-account-actions">
+            <button class="theme-toggle" (click)="toggleTheme()"><span>{{darkMode()?'☀':'☾'}}</span>{{darkMode()?'Светлая тема':'Тёмная тема'}}</button>
             <button class="password" (click)="changePassword()">Сменить пароль</button>
             <button class="logout" (click)="logout()">Выйти</button>
           </div>
@@ -112,6 +113,7 @@ type InstallPromptEvent = Event & {
               }
             </div>
             <div class="mobile-account-actions">
+              <button class="theme-toggle" (click)="toggleTheme()"><span>{{darkMode()?'☀':'☾'}}</span>{{darkMode()?'Светлая тема':'Тёмная тема'}}</button>
               <button class="password" (click)="changePassword()">Сменить пароль</button>
               <button class="logout" (click)="logout()">Выйти</button>
             </div>
@@ -124,7 +126,7 @@ type InstallPromptEvent = Event & {
     <router-outlet />
   `,
   styles: [`
-    .desktop-nav{position:fixed;z-index:1000;inset:0 auto 0 0;display:flex;width:280px;flex-direction:column;padding:28px 16px 18px;background:linear-gradient(180deg,#101827 0%,#0e192b 100%);box-shadow:12px 0 35px #15203612;color:#fff;overflow:auto;scrollbar-width:thin;scrollbar-color:#34415a transparent}.desktop-brand{display:flex;align-items:baseline;gap:5px;margin:0 12px 28px;color:#fff;text-decoration:none}.desktop-brand strong{color:#9297ff;font-size:27px;font-weight:800;letter-spacing:-1.2px;text-shadow:0 0 20px #7178ff40}.desktop-brand span{font-size:10px;font-weight:800;letter-spacing:2px}.desktop-nav-links{display:grid;gap:4px}.desktop-nav-links a{position:relative;display:flex;align-items:center;gap:13px;min-height:46px;padding:10px 12px;border:0;border-radius:12px;color:#9ba9c0;font-size:14px;font-weight:700;text-decoration:none;transition:background .18s,color .18s,transform .18s}.desktop-nav-links a:hover{background:#ffffff09;color:#e8ecf7;transform:translateX(2px)}.desktop-nav-links a.active{background:linear-gradient(100deg,#6671e344,#5563ca15);box-shadow:inset 2px 0 #8e96ff;color:#fff}.desktop-nav-links a.active:after{position:absolute;right:12px;width:5px;height:5px;border-radius:50%;background:#aeb5ff;box-shadow:0 0 12px #aeb5ff;content:""}.nav-glyph{display:block;width:22px;height:22px;flex:0 0 22px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:#71819b;transition:color .18s,transform .18s,filter .18s}.desktop-nav-links a:hover .nav-glyph{color:#c7d0e3;transform:scale(1.06)}.desktop-nav-links a.active .nav-glyph{color:#aeb5ff;filter:drop-shadow(0 2px 5px #8791ff70)}.desktop-nav-title{margin:27px 12px 8px;color:#65758f;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.desktop-nav-links.compact{gap:2px}.desktop-nav-links.compact a{min-height:39px;padding:7px 12px;font-size:13px}.desktop-nav-links.compact .nav-glyph{width:20px;height:20px;flex-basis:20px}.desktop-tools{margin-top:22px;border:1px solid #ffffff0d;border-radius:12px;background:#ffffff04}.desktop-tools summary{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;color:#8391a8;font-size:11px;font-weight:800;cursor:pointer;list-style:none}.desktop-tools summary::-webkit-details-marker{display:none}.desktop-tools summary i{font-size:16px;font-style:normal;transition:transform .18s}.desktop-tools[open] summary{color:#c9d1df}.desktop-tools[open] summary i{transform:rotate(180deg)}.desktop-tools nav{padding:0 5px 6px}.desktop-account-actions{display:grid;gap:7px;margin-top:auto;padding:18px 6px 2px;border-top:1px solid #ffffff12}.desktop-account-actions button{width:100%;padding:9px 11px;border-radius:9px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}.camera-account-actions{position:fixed;z-index:1000;right:18px;bottom:18px}.camera-account-actions button{box-shadow:none}
+    .desktop-nav{position:fixed;z-index:1000;inset:0 auto 0 0;display:flex;width:280px;flex-direction:column;padding:28px 16px 18px;background:linear-gradient(180deg,#101827 0%,#0e192b 100%);box-shadow:12px 0 35px #15203612;color:#fff;overflow:auto;scrollbar-width:thin;scrollbar-color:#34415a transparent}.desktop-brand{display:flex;align-items:baseline;gap:5px;margin:0 12px 28px;color:#fff;text-decoration:none}.desktop-brand strong{color:#9297ff;font-size:27px;font-weight:800;letter-spacing:-1.2px;text-shadow:0 0 20px #7178ff40}.desktop-brand span{font-size:10px;font-weight:800;letter-spacing:2px}.desktop-nav-links{display:grid;gap:4px}.desktop-nav-links a{position:relative;display:flex;align-items:center;gap:13px;min-height:46px;padding:10px 12px;border:0;border-radius:12px;color:#9ba9c0;font-size:14px;font-weight:700;text-decoration:none;transition:background .18s,color .18s,transform .18s}.desktop-nav-links a:hover{background:#ffffff09;color:#e8ecf7;transform:translateX(2px)}.desktop-nav-links a.active{background:linear-gradient(100deg,#6671e344,#5563ca15);box-shadow:inset 2px 0 #8e96ff;color:#fff}.desktop-nav-links a.active:after{position:absolute;right:12px;width:5px;height:5px;border-radius:50%;background:#aeb5ff;box-shadow:0 0 12px #aeb5ff;content:""}.nav-glyph{display:block;width:22px;height:22px;flex:0 0 22px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:#71819b;transition:color .18s,transform .18s,filter .18s}.desktop-nav-links a:hover .nav-glyph{color:#c7d0e3;transform:scale(1.06)}.desktop-nav-links a.active .nav-glyph{color:#aeb5ff;filter:drop-shadow(0 2px 5px #8791ff70)}.desktop-nav-title{margin:27px 12px 8px;color:#65758f;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.desktop-nav-links.compact{gap:2px}.desktop-nav-links.compact a{min-height:39px;padding:7px 12px;font-size:13px}.desktop-nav-links.compact .nav-glyph{width:20px;height:20px;flex-basis:20px}.desktop-tools{margin-top:22px;border:1px solid #ffffff0d;border-radius:12px;background:#ffffff04}.desktop-tools summary{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;color:#8391a8;font-size:11px;font-weight:800;cursor:pointer;list-style:none}.desktop-tools summary::-webkit-details-marker{display:none}.desktop-tools summary i{font-size:16px;font-style:normal;transition:transform .18s}.desktop-tools[open] summary{color:#c9d1df}.desktop-tools[open] summary i{transform:rotate(180deg)}.desktop-tools nav{padding:0 5px 6px}.desktop-account-actions{display:grid;gap:7px;margin-top:auto;padding:18px 6px 2px;border-top:1px solid #ffffff12}.desktop-account-actions button{width:100%;padding:9px 11px;border-radius:9px;box-shadow:none}.theme-toggle{display:flex;align-items:center;justify-content:center;gap:7px;border:1px solid #344054;background:#151f31;color:#d7deea}.theme-toggle span{font-size:16px}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}.camera-account-actions{position:fixed;z-index:1000;right:18px;bottom:18px}.camera-account-actions button{box-shadow:none}
     .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .desktop-nav{display:none}.camera-account-actions{right:12px;bottom:12px}
@@ -152,7 +154,7 @@ type InstallPromptEvent = Event & {
       .mobile-menu-sheet>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
       .mobile-menu-sheet header small{color:#667085;font-size:9px;font-weight:800;letter-spacing:.13em}.mobile-menu-sheet h2{margin:3px 0 0;font-size:26px}.mobile-menu-sheet header button{display:grid;width:42px;height:42px;padding:0;place-items:center;border-radius:50%;background:#e9ecf2;box-shadow:none;color:#344054;font-size:24px}
       .mobile-menu-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mobile-menu-group{grid-column:1/-1;margin:8px 1px -2px;color:#667085;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}.mobile-menu-links a,.mobile-menu-links .menu-link-button{display:grid;align-content:start;min-height:88px;padding:15px;border:1px solid #e0e4eb;border-radius:14px;background:#fff;box-shadow:none;color:#111827;text-align:left;text-decoration:none}.mobile-menu-links a.active{border-color:#9ba8f7;background:#f0f2ff}.mobile-menu-links .install-app{border-color:#c9d0ff;background:linear-gradient(145deg,#f2f3ff,#fff)}.mobile-menu-links a:hover,.mobile-menu-links .menu-link-button:hover{transform:none;box-shadow:none}.mobile-menu-links b{font-size:14px}.mobile-menu-links span{margin-top:6px;color:#7a8495;font-size:10px;line-height:1.35}
-      .mobile-account-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:16px;padding-top:16px;border-top:1px solid #dfe3e9}.mobile-account-actions button{width:100%;min-height:46px;box-shadow:none}.mobile-account-actions .password{background:#243047}.mobile-account-actions .logout{background:#fff;border-color:#e5b8be;color:#b42336}
+      .mobile-account-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:16px;padding-top:16px;border-top:1px solid #dfe3e9}.mobile-account-actions button{width:100%;min-height:46px;box-shadow:none}.mobile-account-actions .theme-toggle{grid-column:1/-1}.mobile-account-actions .password{background:#243047}.mobile-account-actions .logout{background:#fff;border-color:#e5b8be;color:#b42336}
       @keyframes sheet-in{from{transform:translateY(24px);opacity:.5}}
     }
     @media(min-width:761px) and (max-width:1000px){.desktop-nav{width:228px;padding-inline:12px}.desktop-brand{margin-inline:7px}.desktop-brand strong{font-size:23px}.desktop-nav-links a{padding-inline:8px}.desktop-nav-title{margin-inline:8px}.desktop-account-actions{padding-inline:2px}}
@@ -166,6 +168,7 @@ export class AppComponent {
   mobileMenuOpen = signal(false);
   currentUrl = signal(this.router.url);
   managementOpen = signal(this.managementPath(this.router.url));
+  darkMode = signal(localStorage.getItem("questcontrol.theme") === "dark" || (!localStorage.getItem("questcontrol.theme") && window.matchMedia("(prefers-color-scheme: dark)").matches));
   isAdmin = signal(false);
   canUseWorkTime = signal(false);
   isCameraViewer = signal(false);
@@ -173,6 +176,7 @@ export class AppComponent {
   installPrompt = signal<InstallPromptEvent | null>(null);
 
   constructor() {
+    this.applyTheme();
     this.updateManagementClass();
     this.router.events.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd)).subscribe((event) => {
       this.showLogout.set(this.managementRoute(event.urlAfterRedirects));
@@ -206,6 +210,16 @@ export class AppComponent {
   private managementPath(url: string) {
     const path = url.split("?")[0];
     return ["/sessions", "/inventory", "/users", "/camera-settings", "/ai-dataset", "/integrations"].includes(path);
+  }
+
+  toggleTheme() {
+    this.darkMode.update(value=>!value);
+    localStorage.setItem("questcontrol.theme",this.darkMode()?"dark":"light");
+    this.applyTheme();
+  }
+
+  private applyTheme() {
+    document.documentElement.classList.toggle("dark-theme",this.darkMode());
   }
 
   logout() {
