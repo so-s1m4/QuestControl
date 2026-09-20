@@ -3151,14 +3151,15 @@ async function syncTuyaCameraInventory() {
       const status = (device.isOnline ?? device.online) ? "ONLINE" : "OFFLINE";
       const autoRoomId = /(lsc|ptz)/i.test(name) ? krampusRoomId : null;
       const existing = await db.query(
-        "SELECT id,name,status,room_id FROM cameras WHERE provider='TUYA' AND external_id=$1 LIMIT 1",
+        "SELECT id,name,status,room_id,config FROM cameras WHERE provider='TUYA' AND external_id=$1 LIMIT 1",
         [externalId]
       );
       if (existing.rowCount) {
         const row = existing.rows[0];
+        const nextName = row.config?.customName ? row.name : name;
         const nextRoomId = row.room_id || autoRoomId;
-        if (row.name !== name || row.status !== status || row.room_id !== nextRoomId) {
-          await db.query("UPDATE cameras SET name=$1,status=$2,room_id=$3 WHERE id=$4", [name, status, nextRoomId, row.id]);
+        if (row.name !== nextName || row.status !== status || row.room_id !== nextRoomId) {
+          await db.query("UPDATE cameras SET name=$1,status=$2,room_id=$3 WHERE id=$4", [nextName, status, nextRoomId, row.id]);
           updated += 1;
         }
       } else {
@@ -3234,14 +3235,15 @@ async function syncTuyaBridgeInventory() {
           bridgeApiUrl:account.apiUrl, rtspSource:source,
         };
         const existing = (await db.query(
-          "SELECT id,name,status,stream_key FROM cameras WHERE provider='RTSP' AND external_id=$1 LIMIT 1",
+          "SELECT id,name,status,stream_key,config FROM cameras WHERE provider='RTSP' AND external_id=$1 LIMIT 1",
           [externalId]
         )).rows[0];
         if (existing) {
-          if (existing.name!==name || existing.status!==status || existing.stream_key!==streamKey) updated += 1;
+          const nextName=existing.config?.customName ? existing.name : name;
+          if (existing.name!==nextName || existing.status!==status || existing.stream_key!==streamKey) updated += 1;
           await db.query(
             "UPDATE cameras SET name=$1,status=$2,stream_key=$3,config=COALESCE(config,'{}'::jsonb)||$4::jsonb WHERE id=$5",
-            [name,status,streamKey,JSON.stringify(config),existing.id]
+            [nextName,status,streamKey,JSON.stringify(config),existing.id]
           );
         } else {
           await db.query(
@@ -3351,8 +3353,12 @@ app.patch("/cameras/:id/name", auth, permit("cameras:manage"), async (req,res) =
     [req.params.id]
   )).rows[0];
   if(!before) return res.status(404).json({error:"CAMERA_NOT_FOUND"});
-  if(!before.effective_location_id || !(await locationAllowed(req,before.effective_location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
-  const { rows }=await db.query("UPDATE cameras SET name=$1 WHERE id=$2 RETURNING *",[name,req.params.id]);
+  if(!isOwner(req) && (!before.effective_location_id || !(await locationAllowed(req,before.effective_location_id)))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const { rows }=await db.query(
+    `UPDATE cameras SET name=$1,config=COALESCE(config,'{}'::jsonb)||'{"customName":true}'::jsonb
+     WHERE id=$2 RETURNING *`,
+    [name,req.params.id]
+  );
   await audit(req,"camera.name.update","camera",req.params.id,{name:before.name},{name});
   res.json(rows[0]);
 });
@@ -3511,6 +3517,40 @@ app.delete("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
   await audit(req, "camera.archive", "camera", rows[0].id, null, { archivedAt:rows[0].archived_at });
   void syncAiWorkersSafe();
   res.status(204).end();
+});
+
+app.get("/cameras-archived", auth, async (req,res) => {
+  if(!canConfigureCameras(req)) return res.status(403).json({error:"CAMERA_SETTINGS_FORBIDDEN"});
+  const scoped=isOwner(req)
+    ? {clause:"TRUE",values:[]}
+    : {clause:"COALESCE(c.location_id,r.location_id) IS NULL OR COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)",values:[req.user.sub]};
+  const { rows }=await db.query(`
+    SELECT c.id,c.name,c.provider,c.external_id,c.status,c.config,c.archived_at,
+           COALESCE(c.location_id,r.location_id) AS location_id,l.name AS location_name,r.name AS room_name
+    FROM cameras c
+    LEFT JOIN rooms r ON r.id=c.room_id
+    LEFT JOIN locations l ON l.id=COALESCE(c.location_id,r.location_id)
+    WHERE (${scoped.clause}) AND c.archived_at IS NOT NULL
+    ORDER BY c.archived_at DESC,c.name
+  `,scoped.values);
+  res.json(rows);
+});
+
+app.post("/cameras/:id/restore", auth, permit("cameras:manage"), async (req,res) => {
+  const before=(await db.query(
+    `SELECT c.*,COALESCE(c.location_id,r.location_id) AS effective_location_id
+     FROM cameras c LEFT JOIN rooms r ON r.id=c.room_id WHERE c.id=$1 AND c.archived_at IS NOT NULL`,
+    [req.params.id]
+  )).rows[0];
+  if(!before) return res.status(404).json({error:"CAMERA_NOT_FOUND"});
+  if(!isOwner(req) && before.effective_location_id && !(await locationAllowed(req,before.effective_location_id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
+  const { rows }=await db.query(
+    "UPDATE cameras SET archived_at=NULL,status='OFFLINE' WHERE id=$1 RETURNING *",
+    [req.params.id]
+  );
+  await audit(req,"camera.restore","camera",req.params.id,{archivedAt:before.archived_at},{archivedAt:null});
+  void syncAiWorkersSafe();
+  res.json(rows[0]);
 });
 
 for (const resource of ["integrations","local_sites","bookings","sessions"]) {
