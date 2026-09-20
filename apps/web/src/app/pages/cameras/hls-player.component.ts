@@ -5,7 +5,7 @@ import Hls from "hls.js";
   selector: "app-hls-player",
   standalone: true,
   template: `
-    <video #video controls autoplay muted playsinline></video>
+    <video #video [controls]="controls" autoplay muted playsinline></video>
     @if(error()){<p class="stream-error">{{error()}}</p>}
   `,
   styles: [`
@@ -16,6 +16,7 @@ import Hls from "hls.js";
 })
 export class HlsPlayerComponent implements AfterViewInit, OnDestroy {
   @Input({ required: true }) url!: string;
+  @Input() controls = true;
   @ViewChild("video", { static: true }) video!: ElementRef<HTMLVideoElement>;
   private hls?: Hls;
   error = signal("");

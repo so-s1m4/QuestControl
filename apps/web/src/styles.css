@@ -41,9 +41,9 @@ main > aside {
   color: #fff;
   overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #34415a transparent;
+  scrollbar-width: none;
 }
+main > aside::-webkit-scrollbar { display: none; }
 main > aside > h1 {
   margin: 0 10px;
   color: #8b91ff;

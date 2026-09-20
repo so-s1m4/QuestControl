@@ -13,7 +13,7 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
   selector:"app-webrtc-player",
   standalone:true,
   template:`
-    <video #video controls autoplay muted playsinline (loadedmetadata)="onResize()" (resize)="onResize()"></video>
+    <video #video [controls]="controls" autoplay muted playsinline (loadedmetadata)="onResize()" (resize)="onResize()"></video>
     @if(!minimal && showAiOverlay()){
       <canvas #canvas class="ai-canvas"></canvas>
       <div class="ai-badge" [class.detected]="peopleCount()>0">
@@ -57,6 +57,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private readonly http=inject(HttpClient);
   @Input({required:true}) cameraId!:string;
   @Input() minimal=false;
+  @Input() controls=true;
   /** HLS is only a deliberate compatibility choice, never a silent WebRTC fallback. */
   @Input() allowHlsFallback=false;
   @Output() fallbackRequested=new EventEmitter<void>();

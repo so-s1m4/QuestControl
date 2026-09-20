@@ -1436,7 +1436,7 @@ const documentDate=z.preprocess((value)=>{
   const match=/^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
   return match?`${match[3]}-${match[2]}-${match[1]}`:text;
 },z.string().date());
-const documentGenerationInput=z.object({userId:z.string().uuid(),from:documentDate,to:documentDate,maxHours:z.coerce.number().min(.25).max(744),outputFormat:z.enum(documentOutputFormats).default("docx"),saveToLibrary:z.boolean().default(false),libraryName:z.string().trim().min(1).max(180).optional(),libraryCategory:z.enum(documentCategories).default("REPORT"),libraryLocationId:z.string().uuid().nullable().default(null)});
+const documentGenerationInput=z.object({userId:z.string().uuid(),from:documentDate,to:documentDate,maxHours:z.coerce.number().min(.25).max(744),outputFormat:z.enum(documentOutputFormats).default("docx"),saveToLibrary:z.boolean().default(false),libraryName:z.preprocess(value=>String(value??"").trim()||undefined,z.string().min(1).max(180).optional()),libraryCategory:z.enum(documentCategories).default("REPORT"),libraryLocationId:z.preprocess(value=>value===""||value==null?null:value,z.string().uuid().nullable().default(null))});
 async function documentContext(req,input){
   const employee=(await db.query("SELECT id,display_name,email FROM users WHERE id=$1 AND is_active=true",[input.userId])).rows[0];
   if(!employee){const error=new Error("USER_NOT_FOUND");error.status=404;throw error;}

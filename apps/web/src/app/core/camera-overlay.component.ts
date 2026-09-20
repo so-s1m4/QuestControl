@@ -25,50 +25,14 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
               <article [class.active-camera]="activeCameraId()===camera.id" (click)="selectCamera(camera)">
                 <div class="video">
                   @if(players()[camera.id];as player){
-                    @if(player.mode==="webrtc"){<app-webrtc-player [cameraId]="camera.id" (fallbackRequested)="fallback(camera)"/>}
-                    @else if(player.mode==="hls"){<app-hls-player [url]="player.endpoint!"/>}
-                    @else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen"></iframe>}
+                    @if(player.mode==="webrtc"){<app-webrtc-player [cameraId]="camera.id" [minimal]="true" [controls]="false" (fallbackRequested)="fallback(camera)"/>}
+                    @else if(player.mode==="hls"){<app-hls-player [url]="player.endpoint!" [controls]="false"/>}
+                    @else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" scrolling="no" allow="autoplay; fullscreen"></iframe>}
                   }@else{<button (click)="open(camera)">▶ Открыть</button>}
                   @if(camera.provider==="TUYA"){
                     <button class="night-toggle" [class.on]="nightModes()[camera.id]==='on'" [title]="nightModes()[camera.id]==='on'?'Выключить ночное видение':'Включить ночное видение'" (click)="toggleNightVision($event,camera)">☾</button>
                   }
                 </div>
-                <footer>
-                  <div>
-                    <b>{{camera.name}}</b>
-                    <small>{{camera.room_name||"Без комнаты"}}</small>
-                  </div>
-                  <div class="ai-chips">
-                    <span class="chip people" [class.active]="(aiStates()[camera.id]?.peopleCount||0)>0">
-                      👥 {{aiStates()[camera.id]?.peopleCount||0}}
-                    </span>
-                    <span class="chip" [class.occupied]="aiStates()[camera.id]?.occupied">
-                      {{aiStates()[camera.id]?.occupied?'Занято':'Свободно'}}
-                    </span>
-                    @if(aiStates()[camera.id]?.motion){
-                      <span class="chip motion">Движение</span>
-                    }
-                    @if(headsetStates()[camera.id]; as hs){
-                      @if(hs.modelStatus === 'MODEL_UNAVAILABLE' || hs.status === 'MODEL_UNAVAILABLE'){
-                        <span class="chip vr-error" title="VR модель недоступна">
-                          ⚠️ VR недоступна
-                        </span>
-                      } @else {
-                        <span class="chip vr" [class.warn]="(hs.notOnBaseCount ?? hs.outsideZoneCount) > 0" [title]="'На базе: ' + (hs.onChargingBaseCount ?? hs.chargingBaseCount) + ', не на базе: ' + (hs.notOnBaseCount ?? hs.outsideZoneCount) + (hs.notOnBaseHeadsets?.length ? ' (в квадратах: ' + hs.notOnBaseHeadsets.join(', ') + ')' : '')">
-                          🥽 {{hs.totalDetected}}
-                        </span>
-                      }
-                    }
-                  </div>
-                  @if(ptzEnabled(camera)&&activeCameraId()===camera.id){<em>⌨ Стрелки</em>}
-                </footer>
-                @if(aiDescriptions()[camera.id]){
-                  <div class="ai-summary">
-                    <small>AI VLM:</small>
-                    <p>{{aiDescriptions()[camera.id]}}</p>
-                  </div>
-                }
-                @if(controlErrors()[camera.id]){<p class="control-error">{{controlErrors()[camera.id]}}</p>}
               </article>
             }
           </div>
