@@ -4490,8 +4490,13 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
 // single-page app's bearer header. Tickets are random, scoped to one stream,
 // and expire after fifteen minutes.
 app.get("/camera-stream/authorize", async (req,res) => {
-  const ticket=typeof req.query.ticket==="string"?req.query.ticket:"";
-  const streamKey=typeof req.query.src==="string"?req.query.src:"";
+  // auth_request invokes an internal nginx location. It forwards the original
+  // player/WebSocket URI in this header because subrequest query strings are
+  // not retained by nginx.
+  const originalUri=typeof req.get("x-original-uri")==="string"?req.get("x-original-uri"):"";
+  const originalParams=originalUri ? new URL(originalUri,"http://gateway").searchParams : null;
+  const ticket=typeof req.query.ticket==="string"?req.query.ticket:(originalParams?.get("ticket")||"");
+  const streamKey=typeof req.query.src==="string"?req.query.src:(originalParams?.get("src")||"");
   if(!/^[A-Za-z0-9_-]{32,128}$/.test(ticket)||!streamKey) return res.status(401).end();
   const raw=await redis.get(`camera-stream:${ticket}`);
   if(!raw) return res.status(401).end();
