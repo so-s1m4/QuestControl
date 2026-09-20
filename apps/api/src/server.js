@@ -58,6 +58,7 @@ const env = z.object({
   TUYA_BRIDGE_ACCOUNT_1_RTSP_URL: z.string().url().optional(),
   TUYA_BRIDGE_ACCOUNT_2_API_URL: z.string().url().optional(),
   TUYA_BRIDGE_ACCOUNT_2_RTSP_URL: z.string().url().optional(),
+  TUYA_BRIDGE_ACCOUNT_2_ENABLED: z.enum(["true","false"]).default("false").transform(value=>value==="true"),
   GO2RTC_BASE_URL: z.string().url().default("http://127.0.0.1:1984"),
   AI_SERVICE_URL: z.string().url().default("http://127.0.0.1:8088"),
   TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
@@ -3185,12 +3186,14 @@ async function syncTuyaCameraInventory() {
 }
 
 const tuyaBridgeAccounts = [
-  { id:"account-1", apiUrl:env.TUYA_BRIDGE_ACCOUNT_1_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_1_RTSP_URL },
-  { id:"account-2", apiUrl:env.TUYA_BRIDGE_ACCOUNT_2_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_2_RTSP_URL },
-].filter(account => account.apiUrl && account.rtspUrl);
+  { id:"account-1", enabled:true, apiUrl:env.TUYA_BRIDGE_ACCOUNT_1_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_1_RTSP_URL },
+  { id:"account-2", enabled:env.TUYA_BRIDGE_ACCOUNT_2_ENABLED, apiUrl:env.TUYA_BRIDGE_ACCOUNT_2_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_2_RTSP_URL },
+].filter(account => account.enabled && account.apiUrl && account.rtspUrl);
 
 const bridgeStreamKey = (accountId, camera) => {
-  const raw = `${accountId}_${camera.frigateId || camera.deviceName || camera.deviceId || "camera"}`
+  const identity=camera.deviceId ? `${camera.frigateId || camera.deviceName || "camera"}_${camera.deviceId}`
+    : camera.frigateId || camera.deviceName || "camera";
+  const raw = `${accountId}_${identity}`
     .normalize("NFKD").replace(/[^A-Za-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"");
   return `tuya_bridge_${raw}`.slice(0,80);
 };
