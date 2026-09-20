@@ -54,6 +54,11 @@ const env = z.object({
   TUYA_CLIENT_ID: z.string().optional(),
   TUYA_CLIENT_SECRET: z.string().optional(),
   TUYA_MESSAGE_URL: z.string().url().default("wss://mqe.tuyaeu.com:8285/"),
+  TUYA_BRIDGE_ACCOUNT_1_API_URL: z.string().url().optional(),
+  TUYA_BRIDGE_ACCOUNT_1_RTSP_URL: z.string().url().optional(),
+  TUYA_BRIDGE_ACCOUNT_2_API_URL: z.string().url().optional(),
+  TUYA_BRIDGE_ACCOUNT_2_RTSP_URL: z.string().url().optional(),
+  GO2RTC_BASE_URL: z.string().url().default("http://127.0.0.1:1984"),
   AI_SERVICE_URL: z.string().url().default("http://127.0.0.1:8088"),
   TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
   TIME_TO_GROW_CLUB_ID: z.string().optional(),
@@ -3112,7 +3117,7 @@ app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
            c.plan_x,c.plan_y,COALESCE(c.location_id,r.location_id) AS location_id,r.name AS room_name
     FROM cameras c
     LEFT JOIN rooms r ON r.id=c.room_id
-    WHERE ${scoped.clause}
+    WHERE (${scoped.clause}) AND c.archived_at IS NULL
     ORDER BY c.name
   `,scoped.values);
   res.json(rows);
@@ -3178,6 +3183,85 @@ async function syncTuyaCameraInventory() {
   }
 }
 
+const tuyaBridgeAccounts = [
+  { id:"account-1", apiUrl:env.TUYA_BRIDGE_ACCOUNT_1_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_1_RTSP_URL },
+  { id:"account-2", apiUrl:env.TUYA_BRIDGE_ACCOUNT_2_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_2_RTSP_URL },
+].filter(account => account.apiUrl && account.rtspUrl);
+
+const bridgeStreamKey = (accountId, camera) => {
+  const raw = `${accountId}_${camera.frigateId || camera.deviceName || camera.deviceId || "camera"}`
+    .normalize("NFKD").replace(/[^A-Za-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"");
+  return `tuya_bridge_${raw}`.slice(0,80);
+};
+
+async function bridgeJson(url, timeoutMs=8_000) {
+  const response = await fetch(url, { signal:AbortSignal.timeout(timeoutMs), headers:{ accept:"application/json" } });
+  if (!response.ok) throw new Error(`Bridge returned HTTP ${response.status}`);
+  return response.json();
+}
+
+async function registerGo2RtcStream(name, source) {
+  const endpoint = new URL("/api/streams", env.GO2RTC_BASE_URL);
+  endpoint.searchParams.set("name", name);
+  endpoint.searchParams.set("src", source);
+  const response = await fetch(endpoint, { method:"PATCH", signal:AbortSignal.timeout(8_000) });
+  if (!response.ok) throw new Error(`go2rtc rejected ${name}: HTTP ${response.status}`);
+}
+
+async function syncTuyaBridgeInventory() {
+  if (!tuyaBridgeAccounts.length) {
+    throw Object.assign(new Error("Tuya LAN Bridge is not configured"), { code:"TUYA_BRIDGE_NOT_CONFIGURED" });
+  }
+  let discovered=0, created=0, updated=0;
+  const accounts=[];
+  for (const account of tuyaBridgeAccounts) {
+    try {
+      const state = await bridgeJson(new URL("/api/state", account.apiUrl));
+      const cameras = Array.isArray(state.cameras) ? state.cameras : [];
+      for (const camera of cameras) {
+        const deviceId = String(camera.deviceId || camera.id || camera.frigateId || "");
+        if (!deviceId) continue;
+        const hdPath = camera.rtspHd ? new URL(camera.rtspHd).pathname
+          : `${camera.rtspPath || `/${deviceId}`}/hd`.replace(/\/+/g,"/");
+        const source = new URL(hdPath, account.rtspUrl).toString();
+        const streamKey = bridgeStreamKey(account.id,camera);
+        await registerGo2RtcStream(streamKey,source);
+        const externalId = `bridge:${account.id}:${deviceId}`.slice(0,160);
+        const name = String(camera.deviceName || camera.name || `Tuya Bridge ${deviceId.slice(-6)}`).slice(0,120);
+        const status = state.loggedIn && (camera.online ?? camera.isOnline ?? true) ? "ONLINE" : "OFFLINE";
+        const config = {
+          source:"TUYA_LAN_BRIDGE", bridgeAccount:account.id, bridgeDeviceId:deviceId,
+          bridgeApiUrl:account.apiUrl, rtspSource:source,
+        };
+        const existing = (await db.query(
+          "SELECT id,name,status,stream_key FROM cameras WHERE provider='RTSP' AND external_id=$1 LIMIT 1",
+          [externalId]
+        )).rows[0];
+        if (existing) {
+          if (existing.name!==name || existing.status!==status || existing.stream_key!==streamKey) updated += 1;
+          await db.query(
+            "UPDATE cameras SET name=$1,status=$2,stream_key=$3,config=COALESCE(config,'{}'::jsonb)||$4::jsonb WHERE id=$5",
+            [name,status,streamKey,JSON.stringify(config),existing.id]
+          );
+        } else {
+          await db.query(
+            `INSERT INTO cameras(name,provider,external_id,stream_key,status,config,ai_enabled)
+             VALUES($1,'RTSP',$2,$3,$4,$5,true)`,
+            [name,externalId,streamKey,status,JSON.stringify(config)]
+          );
+          created += 1;
+        }
+        discovered += 1;
+      }
+      accounts.push({ id:account.id, online:true, loggedIn:Boolean(state.loggedIn), cameras:cameras.length });
+    } catch(error) {
+      accounts.push({ id:account.id, online:false, error:error.message, cameras:0 });
+    }
+  }
+  if (created || updated) void syncAiWorkersSafe();
+  return { discovered,created,updated,accounts };
+}
+
 app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) => {
   try {
     const result = await syncTuyaCameraInventory();
@@ -3185,6 +3269,16 @@ app.post("/cameras/sync/tuya", auth, permit("cameras:manage"), async (req, res) 
     res.json(result);
   } catch (error) {
     res.status(error.code === "TUYA_NOT_CONFIGURED" ? 503 : 502).json({ error: error.code || "TUYA_SYNC_FAILED", message: error.message });
+  }
+});
+
+app.post("/cameras/sync/bridge", auth, permit("cameras:manage"), async (req,res) => {
+  try {
+    const result=await syncTuyaBridgeInventory();
+    await audit(req,"camera.sync","integration","tuya-lan-bridge",null,result);
+    res.json(result);
+  } catch(error) {
+    res.status(error.code==="TUYA_BRIDGE_NOT_CONFIGURED"?503:502).json({error:error.code||"TUYA_BRIDGE_SYNC_FAILED",message:error.message});
   }
 });
 
@@ -3269,13 +3363,14 @@ app.get("/camera-settings", auth, async (req,res) => {
     ? {clause:"TRUE",values:[]}
     : {clause:"COALESCE(c.location_id,r.location_id) IS NULL OR COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)",values:[req.user.sub]};
   const { rows }=await db.query(`
-    SELECT c.id,c.name,c.provider,c.external_id,c.status,c.location_id,c.room_id,c.plan_zone_id,
+    SELECT c.id,c.name,c.provider,c.external_id,c.stream_key,c.status,c.config,c.ai_enabled,c.tracking_enabled,
+           c.analysis_enabled,c.headset_tracking_enabled,c.location_id,c.room_id,c.plan_zone_id,
            l.name AS location_name,r.name AS room_name,z.name AS zone_name
     FROM cameras c
     LEFT JOIN locations l ON l.id=c.location_id
     LEFT JOIN rooms r ON r.id=c.room_id
     LEFT JOIN plan_zones z ON z.id=c.plan_zone_id
-    WHERE ${scoped.clause}
+    WHERE (${scoped.clause}) AND c.archived_at IS NULL
     ORDER BY c.name
   `,scoped.values);
   res.json(rows);
@@ -3405,9 +3500,15 @@ app.put("/locations/:id/plan", auth, async (req,res) => {
 });
 
 app.delete("/cameras/:id", auth, permit("cameras:manage"), async (req, res) => {
-  const { rows } = await db.query("DELETE FROM cameras WHERE id=$1 RETURNING *", [req.params.id]);
+  const { rows } = await db.query(
+    `UPDATE cameras SET archived_at=now(),status='OFFLINE',ai_enabled=false,tracking_enabled=false,
+       analysis_enabled=false,headset_tracking_enabled=false
+     WHERE id=$1 AND archived_at IS NULL RETURNING *`,
+    [req.params.id]
+  );
   if (!rows[0]) return res.status(404).json({ error: "CAMERA_NOT_FOUND" });
-  await audit(req, "camera.delete", "camera", rows[0].id, rows[0], null);
+  cameraVisionController.setTracking(req.params.id,false);
+  await audit(req, "camera.archive", "camera", rows[0].id, null, { archivedAt:rows[0].archived_at });
   void syncAiWorkersSafe();
   res.status(204).end();
 });
@@ -6020,6 +6121,7 @@ await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS plan_zone_id uuid R
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS ai_enabled boolean NOT NULL DEFAULT true");
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS tracking_enabled boolean NOT NULL DEFAULT false");
 await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS analysis_enabled boolean NOT NULL DEFAULT true");
+await db.query("ALTER TABLE cameras ADD COLUMN IF NOT EXISTS archived_at timestamptz");
 await db.query("CREATE TABLE IF NOT EXISTS camera_ai_states (camera_id uuid PRIMARY KEY REFERENCES cameras(id) ON DELETE CASCADE, room_id uuid REFERENCES rooms(id) ON DELETE SET NULL, people_count integer NOT NULL DEFAULT 0, occupied boolean NOT NULL DEFAULT false, motion boolean NOT NULL DEFAULT false, last_person_entered timestamptz, last_person_left timestamptz, last_activity timestamptz NOT NULL DEFAULT now(), last_updated timestamptz NOT NULL DEFAULT now())");
 await db.query("CREATE TABLE IF NOT EXISTS camera_ai_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), camera_id uuid NOT NULL REFERENCES cameras(id) ON DELETE CASCADE, room_id uuid REFERENCES rooms(id) ON DELETE SET NULL, type text NOT NULL, timestamp timestamptz NOT NULL DEFAULT now(), people_count integer NOT NULL DEFAULT 0, confidence numeric(5,4) NOT NULL DEFAULT 1.0, description text, metadata jsonb NOT NULL DEFAULT '{}')");
 await db.query("CREATE INDEX IF NOT EXISTS camera_ai_events_camera_idx ON camera_ai_events(camera_id, timestamp DESC)");
@@ -6289,4 +6391,15 @@ server.listen(env.PORT, "0.0.0.0", () => {
   };
   setTimeout(() => void discoverCameras(), 20_000).unref();
   setInterval(() => void discoverCameras(), discoveryInterval).unref();
+  const discoverBridgeCameras = async () => {
+    if (!tuyaBridgeAccounts.length) return;
+    try {
+      const result=await syncTuyaBridgeInventory();
+      if(result.created||result.updated) console.info(`[Tuya bridge] cameras created=${result.created} updated=${result.updated}`);
+    } catch(error) {
+      console.warn("[Tuya bridge] discovery failed:",error.message);
+    }
+  };
+  setTimeout(() => void discoverBridgeCameras(), 30_000).unref();
+  setInterval(() => void discoverBridgeCameras(), discoveryInterval).unref();
 });

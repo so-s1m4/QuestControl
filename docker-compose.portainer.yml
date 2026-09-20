@@ -67,6 +67,11 @@ services:
       TUYA_MESSAGE_URL: ${TUYA_MESSAGE_URL:-wss://mqe.tuyaeu.com:8285/}
       TUYA_CLIENT_ID: ${TUYA_CLIENT_ID}
       TUYA_CLIENT_SECRET: ${TUYA_CLIENT_SECRET}
+      TUYA_BRIDGE_ACCOUNT_1_API_URL: ${TUYA_BRIDGE_ACCOUNT_1_API_URL:-http://10.12.0.103:8787}
+      TUYA_BRIDGE_ACCOUNT_1_RTSP_URL: ${TUYA_BRIDGE_ACCOUNT_1_RTSP_URL:-rtsp://10.12.0.103:8554}
+      TUYA_BRIDGE_ACCOUNT_2_API_URL: ${TUYA_BRIDGE_ACCOUNT_2_API_URL:-http://10.12.0.103:8788}
+      TUYA_BRIDGE_ACCOUNT_2_RTSP_URL: ${TUYA_BRIDGE_ACCOUNT_2_RTSP_URL:-rtsp://10.12.0.103:8556}
+      GO2RTC_BASE_URL: http://host.docker.internal:1984
       TIME_TO_GROW_BASE_URL: ${TIME_TO_GROW_BASE_URL:-https://api.time-to-grow.com}
       TIME_TO_GROW_CLUB_ID: ${TIME_TO_GROW_CLUB_ID}
       TIME_TO_GROW_VIENNA_CLUB_ID: ${TIME_TO_GROW_VIENNA_CLUB_ID:-01js42s5vwvwrx3fme9zvgdj1v}
@@ -122,6 +127,13 @@ services:
       default:
         aliases:
           - quest-control-web
+    restart: unless-stopped
+
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    network_mode: host
+    volumes:
+      - go2rtc_config:/config
     restart: unless-stopped
 
   ai-service:
@@ -208,6 +220,7 @@ volumes:
   ai_data:
   ai_dataset:
   ai_models:
+  go2rtc_config:
 
 networks:
   document-sandbox:

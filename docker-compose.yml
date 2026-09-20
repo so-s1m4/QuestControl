@@ -22,6 +22,7 @@ services:
     env_file: .env
     environment:
       AI_SERVICE_URL: http://ai-service:8088
+      GO2RTC_BASE_URL: http://host.docker.internal:1984
     volumes:
       - ./infra/postgres/migrations:/app/migrations:ro
     extra_hosts: ["host.docker.internal:host-gateway"]
