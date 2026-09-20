@@ -4475,9 +4475,31 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
     }
   }
   if(!camera.stream_key) return res.status(409).json({error:"CAMERA_STREAM_NOT_CONFIGURED"});
-  const endpoint=`/go2rtc/stream.html?src=${encodeURIComponent(camera.stream_key)}&mode=webrtc,mse`;
+  // The browser iframe cannot forward the application's Authorization header.
+  // Give it a stream-specific, short-lived bearer that the nginx gateway checks
+  // before it serves the player page or upgrades the media WebSocket.
+  const ticket=crypto.randomBytes(32).toString("base64url");
+  await redis.setex(`camera-stream:${ticket}`,15*60,JSON.stringify({cameraId:camera.id,streamKey:camera.stream_key,userId:req.user.sub}));
+  const endpoint=`/go2rtc/stream.html?src=${encodeURIComponent(camera.stream_key)}&mode=webrtc,mse&ticket=${ticket}`;
   await audit(req,"camera.stream.open","camera",camera.id,null,{provider:camera.provider});
   res.json({provider:camera.provider,mode:"player",endpoint});
+});
+
+// nginx calls this as an auth_request subrequest for the go2rtc player and
+// WebSocket. It is deliberately ticket-only: iframe requests cannot carry the
+// single-page app's bearer header. Tickets are random, scoped to one stream,
+// and expire after fifteen minutes.
+app.get("/camera-stream/authorize", async (req,res) => {
+  const ticket=typeof req.query.ticket==="string"?req.query.ticket:"";
+  const streamKey=typeof req.query.src==="string"?req.query.src:"";
+  if(!/^[A-Za-z0-9_-]{32,128}$/.test(ticket)||!streamKey) return res.status(401).end();
+  const raw=await redis.get(`camera-stream:${ticket}`);
+  if(!raw) return res.status(401).end();
+  try {
+    const grant=JSON.parse(raw);
+    if(grant.streamKey!==streamKey) return res.status(403).end();
+    res.status(204).end();
+  } catch { res.status(401).end(); }
 });
 
 const cameraControlInput=z.discriminatedUnion("action",[
