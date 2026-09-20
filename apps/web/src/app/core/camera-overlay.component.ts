@@ -99,8 +99,8 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
     }
   `,
   styles:[`
-    .watch{position:fixed;z-index:900;right:20px;bottom:20px;width:min(860px,calc(100vw - 40px));max-width:calc(100vw - 40px);max-height:calc(100vh - 40px);overflow:auto;border:1px solid #d5dae5;border-radius:16px;background:#fff;box-shadow:0 20px 60px #10182845}
-    .watch.single:not(.collapsed){width:min(600px,calc(100vw - 40px))}
+    .watch{position:fixed;z-index:900;right:14px;bottom:14px;width:min(620px,calc(100vw - 28px));max-width:calc(100vw - 28px);max-height:calc(100vh - 28px);overflow:auto;border:1px solid #d5dae5;border-radius:14px;background:#fff;box-shadow:0 18px 48px #10182845}
+    .watch.single:not(.collapsed){width:min(390px,calc(100vw - 28px))}
     .watch button{padding:7px 9px;background:#29344a;color:#fff;box-shadow:none;white-space:nowrap}
     .collapse-arrow{position:absolute;z-index:8;top:6px;right:6px;display:grid;place-items:center;width:26px;height:26px;padding:0!important;border:1px solid #d0d5dd!important;border-radius:7px!important;background:#fffffff0!important;box-shadow:0 2px 8px #10182824!important}
     .collapse-arrow:hover{background:#fff!important}
@@ -152,6 +152,23 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
     .event-item p{grid-column:1/-1;margin:2px 0 0;color:#1e293b}
     .event-item b{grid-column:1/-1;color:#027a48;font-size:10px}
     .empty-events{padding:20px;text-align:center;color:#64748b}
+    :host-context(.dark-theme) .watch,:host-context(.dark-theme) .watch.collapsed{border-color:#344156;background:#111927;box-shadow:0 20px 60px #0008}
+    :host-context(.dark-theme) .collapsed-bar{background:#111927!important;color:#edf2fa!important}
+    :host-context(.dark-theme) .collapsed-bar:hover{background:#182131!important}
+    :host-context(.dark-theme) .collapsed-bar strong{color:#edf2fa}
+    :host-context(.dark-theme) .grid{background:#344156}
+    :host-context(.dark-theme) .grid article,:host-context(.dark-theme) .ai-actions{background:#111927}
+    :host-context(.dark-theme) .grid footer{border-color:#293548;color:#edf2fa}
+    :host-context(.dark-theme) .grid footer small{color:#93a0b3}
+    :host-context(.dark-theme) .chip{background:#202b3d;color:#cbd5e1}
+    :host-context(.dark-theme) .ai-summary{border-color:#293548;background:#151f2e}
+    :host-context(.dark-theme) .ai-summary small{color:#9aa6b8}
+    :host-context(.dark-theme) .ai-summary p{color:#e4eaf3}
+    :host-context(.dark-theme) .ai-btn{border-color:#3b475b!important;background:#1c2636!important;color:#d8dfeb!important}
+    :host-context(.dark-theme) .ai-modal{background:#111927;color:#edf2fa}
+    :host-context(.dark-theme) .ai-modal header,:host-context(.dark-theme) .event-item{border-color:#293548;background:#151f2e}
+    :host-context(.dark-theme) .event-item p{color:#dce4ef}
+    @media(max-width:760px){.watch{right:8px;bottom:78px;width:min(520px,calc(100vw - 16px));max-width:calc(100vw - 16px)}.watch.single:not(.collapsed){width:min(390px,calc(100vw - 16px))}}
   `]
 })
 export class CameraOverlayComponent{

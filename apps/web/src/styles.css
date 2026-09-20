@@ -362,7 +362,12 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(inpu
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   article,.panel,.toolbar,.summary article,.inventory-list>article,.new-item,
   .time-title,.month-summary article,.time-table,.roster,.empty-week,.routine-dialog,
-  .item-modal,.item-settings,.modal-history,.today-panel,.cards article,.rooms article
+  .item-modal,.item-settings,.modal-history,.today-panel,.cards article,.rooms article,
+  .archive-import,.calendar-card,.day-page-head,.schedule article,.editor,.filters,
+  .metric-grid article,.breakdowns article,.session-list article,.headset-base-settings,
+  .camera-table,.archived,.stat-card,.panel-section,.editor-panel,.sample-actions-bar,
+  .card,.source,.event,.dialog,.room-grid>article,.workspace-bar,.camera-list,.my-shift,
+  .editor-bar,.zone-editor,.tabs button,.signature-pad,.generator-side,.generator-heading
 ) {
   border-color: #293548 !important;
   background-color: #151d2a !important;
@@ -371,7 +376,10 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .stock,.roster-head,.person,.time-head,.page-tabs,.mode-switch,.time-date-card,
-  .time-booking-card,.time-range,.location-pill,.booking-list>div
+  .time-booking-card,.time-range,.location-pill,.booking-list>div,.games,.devices>div,
+  .game-list>span,.table-head,.weekdays,.queue-toolbar,.sample-list,.sample-card,
+  .view-switch,.calendar-day,.calendar-loading,.camera-row,.camera-list-head,
+  .tools-menu summary,.tools-menu>div,.contract label,.generator-format
 ) {
   border-color: #293548 !important;
   background-color: #101824 !important;
@@ -383,7 +391,8 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   color: #9aa6b8;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
-  .secondary,.quick,.item-menu,.pdf-button,.cancel,.today,.week-nav button
+  .secondary,.quick,.item-menu,.pdf-button,.cancel,.today,.week-nav button,
+  .access-button,.edit,.name-edit,.name-save,.tabs button,.upload
 ) {
   border-color: #364258 !important;
   background: #1c2636 !important;
@@ -391,6 +400,54 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.time-table article,.booking-list>div,.movement,.roster-row) {
   border-color: #273245 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
+  .quick-adjust,.calendar-head,.calendar-grid,.calendar-day,.weekdays,.queue-toolbar,
+  .sample-list,.sample-card,.sample-actions-bar,.camera-table article,.archived article,
+  .dialog>header,.event,details
+) {
+  border-color: #2b374a !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .quick-adjust {
+  background: #111927 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .quick-adjust span {
+  background: #111927 !important;
+  color: #8996a9 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
+  .calendar-day:hover,.calendar-day.selected,.calendar-day.outside,.roster-cell.today
+) {
+  background: #182131 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.mini-booking,.page-tabs button.active,.view-switch button.active) {
+  background: #252c50 !important;
+  color: #dce2ff !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.mini-booking b,.day-count) {
+  color: #aeb3ff !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.month-arrow,.today-button,.card-chevron,.queue-tabs button) {
+  border-color: #364258 !important;
+  background: #1c2636 !important;
+  color: #d8dfeb !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.stat-num,.panel-section h3,.sample-id,.checkbox-label) {
+  color: #edf2fa !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.queue-toolbar,.stat-card:first-child,.important-card,.day-page-head,.time-range) {
+  background-image: none !important;
+  background-color: #151d2a !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.camera-row:hover,.camera-row.selected,.tools-menu button:hover,.tools-menu a:hover) {
+  background: #202a3c !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.tools-menu button,.tools-menu a,.form-grid label,.generator-side>label,.save-library,.generator-note b) {
+  color: #d8dfeb !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.signature-pad canvas,.qr-image) {
+  border-color: #3a465a !important;
+  background: #eef1f6 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .empty {
   border-color: #344157;
@@ -417,4 +474,32 @@ html.dark-theme body.management-shell .mobile-account-actions .logout {
 }
 html.dark-theme body.management-shell .mobile-account-actions {
   border-color: #2c384a;
+}
+
+/* AI dataset has its own full-width workspace instead of the usual section wrapper. */
+html.dark-theme body.management-shell .ai-page {
+  color: #e8edf6 !important;
+}
+html.dark-theme body.management-shell .ai-page :is(.page-header h2,.stat-num,.panel-section h3,.sample-id,.checkbox-label) {
+  color: #edf2fa !important;
+}
+html.dark-theme body.management-shell .ai-page :is(.stat-card,.panel-section,.editor-panel,.sample-actions-bar) {
+  border-color: #293548 !important;
+  background-color: #151d2a !important;
+  background-image: none !important;
+  box-shadow: 0 8px 28px #00000026 !important;
+}
+html.dark-theme body.management-shell .ai-page :is(.queue-toolbar,.sample-list,.sample-card,.queue-tabs button) {
+  border-color: #2b374a !important;
+  background-color: #101824 !important;
+  background-image: none !important;
+  color: #cbd5e1 !important;
+}
+html.dark-theme body.management-shell .ai-page :is(.sample-card:hover,.sample-card.selected) {
+  background: #202a3c !important;
+}
+html.dark-theme body.management-shell .ai-page :is(input,select,textarea) {
+  border-color: #344156 !important;
+  background: #111927 !important;
+  color: #e6ebf4 !important;
 }
