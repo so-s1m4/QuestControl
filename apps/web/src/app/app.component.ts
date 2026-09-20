@@ -24,7 +24,6 @@ type InstallPromptEvent = Event & {
             <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"/><path d="M9 21v-7h6v7"/></svg>Обзор</a>
             <a routerLink="/bookings" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>Брони</a>
             @if (canUseWorkTime()) {<a routerLink="/work-schedules" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>Смены</a>}
-            <a routerLink="/documents" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>Документы</a>
           </nav>
 
           <p class="desktop-nav-title">Площадки</p>
@@ -35,16 +34,22 @@ type InstallPromptEvent = Event & {
           </nav>
 
           @if (isAdmin()) {
-            <p class="desktop-nav-title">Управление</p>
-            <nav class="desktop-nav-links compact">
-              <a routerLink="/sessions" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></svg>Сессии</a>
-              <a routerLink="/inventory" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m21 8-9 5-9-5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>Инвентарь</a>
-              <a routerLink="/users" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M18 20a5.5 5.5 0 0 0-2.5-4.6"/></svg>Пользователи</a>
-              <a routerLink="/camera-settings" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.55 2.55-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55v.09h-3.6v-.09a1.7 1.7 0 0 0-1.03-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.55-2.55.06-.06A1.7 1.7 0 0 0 5.6 15a1.7 1.7 0 0 0-1.55-1.03H4v-3.6h.05A1.7 1.7 0 0 0 5.6 9.34a1.7 1.7 0 0 0-.34-1.88L5.2 7.4l2.55-2.55.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.55v-.09h3.6v.09a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.55 2.55-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.03h.09v3.6h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>Камеры: настройки</a>
-              <a routerLink="/ai-dataset" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>AI Датасет и Модель</a>
-              <a routerLink="/integrations" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 3-3a4 4 0 0 1 6 5l-3 3M16 16l-3 3a4 4 0 0 1-6-5l3-3M9 15l6-6"/></svg>Интеграции API</a>
-            </nav>
+            <details class="desktop-tools" [open]="managementOpen()">
+              <summary (click)="$event.preventDefault();managementOpen.update(value=>!value)"><span>Управление и настройки</span><i>⌄</i></summary>
+              <nav class="desktop-nav-links compact">
+                <a routerLink="/sessions" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></svg>Сессии</a>
+                <a routerLink="/inventory" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m21 8-9 5-9-5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>Инвентарь</a>
+                <a routerLink="/users" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M18 20a5.5 5.5 0 0 0-2.5-4.6"/></svg>Пользователи</a>
+                <a routerLink="/camera-settings" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.55 2.55-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55v.09h-3.6v-.09a1.7 1.7 0 0 0-1.03-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.55-2.55.06-.06A1.7 1.7 0 0 0 5.6 15a1.7 1.7 0 0 0-1.55-1.03H4v-3.6h.05A1.7 1.7 0 0 0 5.6 9.34a1.7 1.7 0 0 0-.34-1.88L5.2 7.4l2.55-2.55.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.55v-.09h3.6v.09a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.55 2.55-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.03h.09v3.6h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>Настройки камер</a>
+                <a routerLink="/ai-dataset" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>AI и датасет</a>
+                <a routerLink="/integrations" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 3-3a4 4 0 0 1 6 5l-3 3M16 16l-3 3a4 4 0 0 1-6-5l3-3M9 15l6-6"/></svg>Интеграции</a>
+              </nav>
+            </details>
           }
+          <p class="desktop-nav-title">Дополнительно</p>
+          <nav class="desktop-nav-links compact">
+            <a routerLink="/documents" routerLinkActive="active"><svg class="nav-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>Документы</a>
+          </nav>
           <div class="desktop-account-actions">
             <button class="password" (click)="changePassword()">Сменить пароль</button>
             <button class="logout" (click)="logout()">Выйти</button>
@@ -85,8 +90,6 @@ type InstallPromptEvent = Event & {
               <button type="button" aria-label="Закрыть меню" (click)="mobileMenuOpen.set(false)">×</button>
             </header>
             <div class="mobile-menu-links">
-              <p class="mobile-menu-group">Профиль</p>
-              <a routerLink="/documents" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Документы</b><span>Подпись, шаблоны и отчёты</span></a>
               <p class="mobile-menu-group">Площадки</p>
               <a routerLink="/locations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Локации</b><span>Площадки и контакты</span></a>
               <a routerLink="/rooms" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Комнаты</b><span>Зоны, игры и устройства</span></a>
@@ -102,6 +105,8 @@ type InstallPromptEvent = Event & {
                 <a routerLink="/integrations" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Интеграции API</b><span>Источники и форматы бронирований</span></a>
                 <a routerLink="/bookings" [queryParams]="{ history: '1' }" (click)="mobileMenuOpen.set(false)"><b>Импорт истории</b><span>Служебная загрузка старых броней</span></a>
               }
+              <p class="mobile-menu-group">Дополнительно</p>
+              <a routerLink="/documents" routerLinkActive="active" (click)="mobileMenuOpen.set(false)"><b>Документы</b><span>Подпись, шаблоны и отчёты</span></a>
               @if (!isStandalone()) {
                 <button type="button" class="menu-link-button install-app" (click)="installApp()"><b>Установить приложение</b><span>Добавить QuestControl на главный экран</span></button>
               }
@@ -119,7 +124,7 @@ type InstallPromptEvent = Event & {
     <router-outlet />
   `,
   styles: [`
-    .desktop-nav{position:fixed;z-index:1000;inset:0 auto 0 0;display:flex;width:280px;flex-direction:column;padding:28px 16px 18px;background:linear-gradient(180deg,#101827 0%,#0e192b 100%);box-shadow:12px 0 35px #15203612;color:#fff;overflow:auto;scrollbar-width:thin;scrollbar-color:#34415a transparent}.desktop-brand{display:flex;align-items:baseline;gap:5px;margin:0 12px 28px;color:#fff;text-decoration:none}.desktop-brand strong{color:#9297ff;font-size:27px;font-weight:800;letter-spacing:-1.2px;text-shadow:0 0 20px #7178ff40}.desktop-brand span{font-size:10px;font-weight:800;letter-spacing:2px}.desktop-nav-links{display:grid;gap:4px}.desktop-nav-links a{position:relative;display:flex;align-items:center;gap:13px;min-height:46px;padding:10px 12px;border:0;border-radius:12px;color:#9ba9c0;font-size:14px;font-weight:700;text-decoration:none;transition:background .18s,color .18s,transform .18s}.desktop-nav-links a:hover{background:#ffffff09;color:#e8ecf7;transform:translateX(2px)}.desktop-nav-links a.active{background:linear-gradient(100deg,#6671e344,#5563ca15);box-shadow:inset 2px 0 #8e96ff;color:#fff}.desktop-nav-links a.active:after{position:absolute;right:12px;width:5px;height:5px;border-radius:50%;background:#aeb5ff;box-shadow:0 0 12px #aeb5ff;content:""}.nav-glyph{display:block;width:22px;height:22px;flex:0 0 22px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:#71819b;transition:color .18s,transform .18s,filter .18s}.desktop-nav-links a:hover .nav-glyph{color:#c7d0e3;transform:scale(1.06)}.desktop-nav-links a.active .nav-glyph{color:#aeb5ff;filter:drop-shadow(0 2px 5px #8791ff70)}.desktop-nav-title{margin:27px 12px 8px;color:#65758f;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.desktop-nav-links.compact{gap:2px}.desktop-nav-links.compact a{min-height:39px;padding:7px 12px;font-size:13px}.desktop-nav-links.compact .nav-glyph{width:20px;height:20px;flex-basis:20px}.desktop-account-actions{display:grid;gap:7px;margin-top:auto;padding:18px 6px 2px;border-top:1px solid #ffffff12}.desktop-account-actions button{width:100%;padding:9px 11px;border-radius:9px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}.camera-account-actions{position:fixed;z-index:1000;right:18px;bottom:18px}.camera-account-actions button{box-shadow:none}
+    .desktop-nav{position:fixed;z-index:1000;inset:0 auto 0 0;display:flex;width:280px;flex-direction:column;padding:28px 16px 18px;background:linear-gradient(180deg,#101827 0%,#0e192b 100%);box-shadow:12px 0 35px #15203612;color:#fff;overflow:auto;scrollbar-width:thin;scrollbar-color:#34415a transparent}.desktop-brand{display:flex;align-items:baseline;gap:5px;margin:0 12px 28px;color:#fff;text-decoration:none}.desktop-brand strong{color:#9297ff;font-size:27px;font-weight:800;letter-spacing:-1.2px;text-shadow:0 0 20px #7178ff40}.desktop-brand span{font-size:10px;font-weight:800;letter-spacing:2px}.desktop-nav-links{display:grid;gap:4px}.desktop-nav-links a{position:relative;display:flex;align-items:center;gap:13px;min-height:46px;padding:10px 12px;border:0;border-radius:12px;color:#9ba9c0;font-size:14px;font-weight:700;text-decoration:none;transition:background .18s,color .18s,transform .18s}.desktop-nav-links a:hover{background:#ffffff09;color:#e8ecf7;transform:translateX(2px)}.desktop-nav-links a.active{background:linear-gradient(100deg,#6671e344,#5563ca15);box-shadow:inset 2px 0 #8e96ff;color:#fff}.desktop-nav-links a.active:after{position:absolute;right:12px;width:5px;height:5px;border-radius:50%;background:#aeb5ff;box-shadow:0 0 12px #aeb5ff;content:""}.nav-glyph{display:block;width:22px;height:22px;flex:0 0 22px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:#71819b;transition:color .18s,transform .18s,filter .18s}.desktop-nav-links a:hover .nav-glyph{color:#c7d0e3;transform:scale(1.06)}.desktop-nav-links a.active .nav-glyph{color:#aeb5ff;filter:drop-shadow(0 2px 5px #8791ff70)}.desktop-nav-title{margin:27px 12px 8px;color:#65758f;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.desktop-nav-links.compact{gap:2px}.desktop-nav-links.compact a{min-height:39px;padding:7px 12px;font-size:13px}.desktop-nav-links.compact .nav-glyph{width:20px;height:20px;flex-basis:20px}.desktop-tools{margin-top:22px;border:1px solid #ffffff0d;border-radius:12px;background:#ffffff04}.desktop-tools summary{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;color:#8391a8;font-size:11px;font-weight:800;cursor:pointer;list-style:none}.desktop-tools summary::-webkit-details-marker{display:none}.desktop-tools summary i{font-size:16px;font-style:normal;transition:transform .18s}.desktop-tools[open] summary{color:#c9d1df}.desktop-tools[open] summary i{transform:rotate(180deg)}.desktop-tools nav{padding:0 5px 6px}.desktop-account-actions{display:grid;gap:7px;margin-top:auto;padding:18px 6px 2px;border-top:1px solid #ffffff12}.desktop-account-actions button{width:100%;padding:9px 11px;border-radius:9px;box-shadow:none}.password{border:1px solid #344054;background:#243047;color:#fff}.logout{border:1px solid #344054;background:#182235;color:#fff}.logout:hover{background:#b42318;border-color:#b42318}.camera-account-actions{position:fixed;z-index:1000;right:18px;bottom:18px}.camera-account-actions button{box-shadow:none}
     .mobile-nav-layer,.mobile-menu-backdrop{display:none}
     @media(max-width:760px){
       .desktop-nav{display:none}.camera-account-actions{right:12px;bottom:12px}
@@ -160,6 +165,7 @@ export class AppComponent {
   showLogout = signal(this.managementRoute(this.router.url));
   mobileMenuOpen = signal(false);
   currentUrl = signal(this.router.url);
+  managementOpen = signal(this.managementPath(this.router.url));
   isAdmin = signal(false);
   canUseWorkTime = signal(false);
   isCameraViewer = signal(false);
@@ -171,6 +177,7 @@ export class AppComponent {
     this.router.events.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd)).subscribe((event) => {
       this.showLogout.set(this.managementRoute(event.urlAfterRedirects));
       this.currentUrl.set(event.urlAfterRedirects);
+      if (this.managementPath(event.urlAfterRedirects)) this.managementOpen.set(true);
       this.mobileMenuOpen.set(false);
       this.updateManagementClass();
     });
@@ -194,6 +201,11 @@ export class AppComponent {
   moreActive() {
     const [path, query = ""] = this.currentUrl().split("?");
     return new URLSearchParams(query).get("history") === "1" || !["/", "/bookings", "/work-schedules", "/cameras"].includes(path);
+  }
+
+  private managementPath(url: string) {
+    const path = url.split("?")[0];
+    return ["/sessions", "/inventory", "/users", "/camera-settings", "/ai-dataset", "/integrations"].includes(path);
   }
 
   logout() {

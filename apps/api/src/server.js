@@ -998,18 +998,35 @@ app.patch("/users/:id/password", auth, permit("users:manage"), async (req,res) =
 
 app.get("/dashboard", auth, async (req, res) => {
   const scope = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
-  const [rooms, bookings, devices, myShifts] = await Promise.all([
+  const [rooms, bookings, devices, myShifts, statistics, recentDays] = await Promise.all([
     db.query(`SELECT r.*,l.name location_name,
       COALESCE((SELECT d.status FROM devices d WHERE d.room_id=r.id ORDER BY d.last_seen DESC NULLS LAST LIMIT 1),r.status) live_status
       FROM rooms r JOIN locations l ON l.id=r.location_id WHERE ${scope.clause} ORDER BY r.name`,scope.values),
-    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND b.external_source IS NULL AND ${scope.clause} ORDER BY starts_at`,scope.values),
+    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND ${scope.clause} ORDER BY starts_at`,scope.values),
     db.query(`SELECT d.status,count(*)::int total FROM devices d JOIN rooms r ON r.id=d.room_id WHERE ${scope.clause} GROUP BY d.status`,scope.values),
     db.query(`SELECT w.id,w.starts_at,w.ends_at,w.responsibility,l.name location_name
       FROM work_shifts w JOIN locations l ON l.id=w.location_id
       WHERE w.user_id=$1 AND (w.starts_at AT TIME ZONE l.timezone)::date=(now() AT TIME ZONE l.timezone)::date
-      ORDER BY w.starts_at`,[req.user.sub])
+      ORDER BY w.starts_at`,[req.user.sub]),
+    db.query(`WITH scoped_bookings AS (
+      SELECT b.* FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE ${scope.clause}
+    ) SELECT
+      count(*) FILTER (WHERE b.starts_at>=current_date-interval '29 days' AND b.starts_at<current_date+interval '1 day')::int bookings_30d,
+      COALESCE(sum(b.players) FILTER (WHERE b.starts_at>=current_date-interval '29 days' AND b.starts_at<current_date+interval '1 day'),0)::int customers_30d,
+      COALESCE(sum(b.amount_cents) FILTER (WHERE b.starts_at>=current_date-interval '29 days' AND b.starts_at<current_date+interval '1 day'),0)::bigint revenue_cents_30d,
+      count(*) FILTER (WHERE b.starts_at>=current_date AND b.starts_at<current_date+interval '7 days')::int upcoming_7d,
+      (SELECT count(*)::int FROM sessions s JOIN scoped_bookings sb ON sb.id=s.booking_id
+        WHERE s.started_at>=current_date-interval '29 days' AND s.started_at<current_date+interval '1 day') sessions_30d
+      FROM scoped_bookings b`,scope.values),
+    db.query(`SELECT day::date,
+      count(b.id) FILTER (WHERE ${scope.clause})::int bookings
+      FROM generate_series(current_date-interval '6 days',current_date,interval '1 day') AS days(day)
+      LEFT JOIN bookings b ON b.starts_at::date=day::date
+      LEFT JOIN rooms r ON r.id=b.room_id
+      GROUP BY day ORDER BY day`,scope.values)
   ]);
-  res.json({ rooms: rooms.rows, bookings: bookings.rows, deviceSummary: devices.rows, myShifts: myShifts.rows });
+  res.json({ rooms:rooms.rows, bookings:bookings.rows, deviceSummary:devices.rows, myShifts:myShifts.rows,
+    statistics:statistics.rows[0], recentDays:recentDays.rows });
 });
 
 app.get("/bookings", auth, permit("bookings:read"), async (req, res) => {
