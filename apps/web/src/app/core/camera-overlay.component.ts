@@ -6,7 +6,7 @@ import { io, Socket } from "socket.io-client";
 import { HlsPlayerComponent } from "../pages/cameras/hls-player.component";
 import { WebRtcPlayerComponent } from "../pages/cameras/webrtc-player.component";
 
-type Camera={id:string;room_id?:string|null;name:string;room_name:string|null;provider:string;tracking_enabled?:boolean;ai_enabled?:boolean};
+type Camera={id:string;room_id?:string|null;name:string;room_name:string|null;provider:string;config?:{source?:string};tracking_enabled?:boolean;ai_enabled?:boolean};
 type Player={mode:"hls"|"player"|"webrtc";endpoint?:string;safeEndpoint?:SafeResourceUrl};
 type NightMode="auto"|"on"|"off";
 type AIState={peopleCount:number;occupied:boolean;motion:boolean;description?:string;lastUpdated?:string};
@@ -60,7 +60,7 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
                       }
                     }
                   </div>
-                  @if(camera.provider==="TUYA"&&activeCameraId()===camera.id){<em>⌨ Стрелки</em>}
+                  @if(ptzEnabled(camera)&&activeCameraId()===camera.id){<em>⌨ Стрелки</em>}
                 </footer>
                 @if(aiDescriptions()[camera.id]){
                   <div class="ai-summary">
@@ -245,7 +245,8 @@ export class CameraOverlayComponent{
   fallback(camera:Camera){this.players.update(v=>{const next={...v};delete next[camera.id];return next});this.open(camera,"hls")}
   selectCamera(camera:Camera){if(this.activeCameraId()===camera.id)return;this.stopAllPtz();this.activeCameraId.set(camera.id)}
 
-  @HostListener("document:keydown",["$event"]) keyDown(event:KeyboardEvent){const direction=({ArrowUp:"UP",ArrowRight:"RIGHT",ArrowDown:"DOWN",ArrowLeft:"LEFT"} as const)[event.key as "ArrowUp"|"ArrowRight"|"ArrowDown"|"ArrowLeft"];if(!direction||event.repeat||this.isEditing(event.target))return;const camera=this.selected().find(item=>item.id===this.activeCameraId()&&item.provider==="TUYA");if(!camera)return;event.preventDefault();this.activePtz.add(camera.id);this.control(camera,{action:"ptz",direction})}
+  ptzEnabled(camera:Camera){return camera.provider==="TUYA"||camera.config?.source==="TUYA_LAN_BRIDGE"}
+  @HostListener("document:keydown",["$event"]) keyDown(event:KeyboardEvent){const direction=({ArrowUp:"UP",ArrowRight:"RIGHT",ArrowDown:"DOWN",ArrowLeft:"LEFT"} as const)[event.key as "ArrowUp"|"ArrowRight"|"ArrowDown"|"ArrowLeft"];if(!direction||event.repeat||this.isEditing(event.target))return;const camera=this.selected().find(item=>item.id===this.activeCameraId()&&this.ptzEnabled(item));if(!camera)return;event.preventDefault();this.activePtz.add(camera.id);this.control(camera,{action:"ptz",direction})}
   @HostListener("document:keyup",["$event"]) keyUp(event:KeyboardEvent){if(!event.key.startsWith("Arrow")||this.isEditing(event.target))return;const camera=this.selected().find(item=>item.id===this.activeCameraId());if(camera){event.preventDefault();this.stopPtz(camera)}}
   @HostListener("window:blur") stopAllPtz(){for(const id of [...this.activePtz]){const camera=this.cameras().find(item=>item.id===id);if(camera)this.stopPtz(camera)}}
   private isEditing(target:EventTarget|null){return target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target instanceof HTMLSelectElement||(target instanceof HTMLElement&&target.isContentEditable)}

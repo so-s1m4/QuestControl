@@ -3115,7 +3115,7 @@ app.get("/cameras", auth, permit("cameras:read"), async (req, res) => {
     : { clause:"COALESCE(c.location_id,r.location_id) IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
   const { rows } = await db.query(`
     SELECT c.id,c.room_id,c.integration_id,c.name,c.provider,c.external_id,c.stream_key,c.status,
-           c.plan_x,c.plan_y,COALESCE(c.location_id,r.location_id) AS location_id,r.name AS room_name
+           c.config,c.plan_x,c.plan_y,COALESCE(c.location_id,r.location_id) AS location_id,r.name AS room_name
     FROM cameras c
     LEFT JOIN rooms r ON r.id=c.room_id
     WHERE (${scoped.clause}) AND c.archived_at IS NULL
@@ -4493,9 +4493,24 @@ app.post("/cameras/:id/control",auth,permit("devices:command"),async(req,res)=>{
   `,[req.params.id])).rows[0];
   if(!camera)return res.status(404).json({error:"CAMERA_NOT_FOUND"});
   if(!(await cameraAllowed(req,camera.id)))return res.status(403).json({error:"CAMERA_FORBIDDEN"});
-  if(camera.provider!=="TUYA"||!camera.external_id)return res.status(409).json({error:"CAMERA_CONTROL_NOT_SUPPORTED"});
-  if(!tuya.configured)return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
+  const bridgeAccount=tuyaBridgeAccounts.find(account=>account.id===camera.config?.bridgeAccount);
+  const isLanBridgeCamera=camera.provider==="RTSP"&&camera.config?.source==="TUYA_LAN_BRIDGE"&&bridgeAccount;
+  if(camera.provider!=="TUYA"&&!isLanBridgeCamera)return res.status(409).json({error:"CAMERA_CONTROL_NOT_SUPPORTED"});
   try{
+    if(isLanBridgeCamera) {
+      if(input.action!=="ptz") return res.status(409).json({error:"CAMERA_CONTROL_NOT_SUPPORTED"});
+      const deviceId=String(camera.config?.bridgeDeviceId||"");
+      if(!deviceId) return res.status(409).json({error:"CAMERA_CONTROL_NOT_CONFIGURED"});
+      const response=await fetch(new URL("/api/ptz/move",bridgeAccount.apiUrl),{
+        method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({deviceId,direction:input.direction.toLowerCase()}),signal:AbortSignal.timeout(8_000)
+      });
+      if(!response.ok) throw new Error(`Tuya bridge PTZ returned HTTP ${response.status}`);
+      cameraVisionController.recordManualPtz(camera.id);
+      await audit(req,"camera.control","camera",camera.id,null,{...input,transport:"TUYA_LAN_BRIDGE"});
+      return res.json({ok:true,...input,transport:"TUYA_LAN_BRIDGE"});
+    }
+    if(!camera.external_id)return res.status(409).json({error:"TUYA_DEVICE_NOT_CONFIGURED"});
+    if(!tuya.configured)return res.status(503).json({error:"TUYA_NOT_CONFIGURED"});
     if(input.action==="ptz") {
       cameraVisionController.recordManualPtz(camera.id);
       await tuya.ptz(camera.external_id,input.direction);
