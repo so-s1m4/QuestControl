@@ -14,7 +14,7 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
   standalone:true,
   template:`
     <video #video controls autoplay muted playsinline (loadedmetadata)="onResize()" (resize)="onResize()"></video>
-    @if(showAiOverlay()){
+    @if(!minimal && showAiOverlay()){
       <canvas #canvas class="ai-canvas"></canvas>
       <div class="ai-badge" [class.detected]="peopleCount()>0">
         <span>PEOPLE: {{peopleCount()}}</span>
@@ -35,8 +35,8 @@ type Person = { trackId?:number; confidence:number; bbox:BBox };
         }
       }
     }
-    <button class="ai-toggle-btn" [class.on]="showAiOverlay()" (click)="toggleOverlay($event)" [title]="showAiOverlay()?'Скрыть AI рамки':'Показать AI рамки'">AI</button>
-    @if(status()){<p class="status">{{status()}}</p>}
+    @if(!minimal){<button class="ai-toggle-btn" [class.on]="showAiOverlay()" (click)="toggleOverlay($event)" [title]="showAiOverlay()?'Hide AI overlay':'Show AI overlay'">AI</button>}
+    @if(!minimal && status()){<p class="status">{{status()}}</p>}
   `,
   styles:[`
     :host{position:relative;display:block;width:100%;height:100%;min-width:0;overflow:hidden;background:#101622}
@@ -56,6 +56,7 @@ export class WebRtcPlayerComponent implements AfterViewInit,OnDestroy{
   private readonly auth=inject(AuthService);
   private readonly http=inject(HttpClient);
   @Input({required:true}) cameraId!:string;
+  @Input() minimal=false;
   /** HLS is only a deliberate compatibility choice, never a silent WebRTC fallback. */
   @Input() allowHlsFallback=false;
   @Output() fallbackRequested=new EventEmitter<void>();
