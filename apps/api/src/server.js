@@ -371,6 +371,38 @@ const telegramImportantLogEvents = [
   "headsetNotOnBase",
   "headsetAllOnBase",
 ];
+const defaultWebhookSettings = {
+  enabled: false,
+  url: "",
+  secret: "",
+  events: Object.fromEntries(telegramImportantLogEvents.map(event => [event, true])),
+};
+let webhookSettingsCache = null;
+async function webhookSettings() {
+  if (webhookSettingsCache) return webhookSettingsCache;
+  const row = (await db.query("SELECT encrypted_value FROM app_settings WHERE key='outbound_webhook'")).rows[0];
+  try {
+    const saved = decryptSetting(row?.encrypted_value) || {};
+    webhookSettingsCache = { ...defaultWebhookSettings, ...saved, events: { ...defaultWebhookSettings.events, ...(saved.events || {}) } };
+  } catch { webhookSettingsCache = structuredClone(defaultWebhookSettings); }
+  return webhookSettingsCache;
+}
+async function sendOutboundWebhook(event, title, rows = []) {
+  const settings = await webhookSettings();
+  if (!settings.enabled || !settings.url || !settings.secret || !settings.events[event]) return;
+  const payload = {
+    event,
+    title,
+    occurredAt: new Date().toISOString(),
+    data: Object.fromEntries(rows.filter(([, value]) => value !== null && value !== undefined && value !== "")),
+  };
+  const body = JSON.stringify(payload);
+  const signature = crypto.createHmac("sha256", settings.secret).update(body).digest("hex");
+  try {
+    const response = await fetch(settings.url, { method: "POST", headers: { "content-type": "application/json", "user-agent": "QuestControl-Webhooks/1.0", "x-questcontrol-event": event, "x-questcontrol-signature": `sha256=${signature}` }, body, signal: AbortSignal.timeout(12_000) });
+    if (!response.ok) console.error("Outbound webhook failed", { event, status: response.status });
+  } catch (error) { console.error("Outbound webhook failed", { event, error: error.message }); }
+}
 const defaultTelegramImportantLogSettings = {
   recipientUserId: null,
   events: {
@@ -402,6 +434,7 @@ async function telegramImportantLogSettings() {
   return telegramImportantLogSettingsCache;
 }
 async function sendTelegramImportantLog(event, title, rows = [], { photoBuffer = null, clipBuffer = null } = {}) {
+  void sendOutboundWebhook(event, title, rows);
   if (!telegramBot?.enabled) return;
   const settings = await telegramImportantLogSettings();
   if (!settings.recipientUserId || !settings.events[event]) return;
@@ -2780,6 +2813,37 @@ app.put("/settings/telegram/important-logs",auth,async(req,res)=>{
   telegramImportantLogSettingsCache=input;
   await audit(req,"settings.telegram.important_logs.update","app_setting","telegram_important_logs",null,{recipientUserId:input.recipientUserId,events:input.events});
   res.json(input);
+});
+const webhookSettingsInput = z.object({
+  enabled: z.boolean().default(false),
+  url: z.union([z.literal(""), z.string().url().refine(value => value.startsWith("https://"))]).default(""),
+  secret: z.string().max(256).optional().default(""),
+  events: z.object(Object.fromEntries(telegramImportantLogEvents.map(event => [event, z.boolean()]))),
+});
+app.get("/settings/webhook",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const settings=await webhookSettings();
+  res.json({...settings,secret:"",hasSecret:Boolean(settings.secret),configured:Boolean(settings.url&&settings.secret)});
+});
+app.put("/settings/webhook",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const input=webhookSettingsInput.parse(req.body),current=await webhookSettings();
+  const secret=input.secret||current.secret;
+  if(input.enabled&&(!input.url||!secret))return res.status(400).json({error:"WEBHOOK_URL_AND_SECRET_REQUIRED"});
+  const saved={...input,secret};
+  await db.query(`INSERT INTO app_settings(key,encrypted_value,updated_by,updated_at) VALUES('outbound_webhook',$1,$2,now()) ON CONFLICT(key) DO UPDATE SET encrypted_value=excluded.encrypted_value,updated_by=excluded.updated_by,updated_at=now()`,[encryptSetting(saved),req.user.sub]);
+  webhookSettingsCache=saved;
+  await audit(req,"settings.webhook.update","app_setting","outbound_webhook",null,{enabled:saved.enabled,url:saved.url,events:saved.events});
+  res.json({ok:true,configured:Boolean(saved.url&&saved.secret)});
+});
+app.post("/settings/webhook/test",auth,async(req,res)=>{
+  if(!isOwner(req))return res.status(403).json({error:"OWNER_REQUIRED"});
+  const settings=await webhookSettings();
+  if(!settings.enabled||!settings.url||!settings.secret)return res.status(409).json({error:"WEBHOOK_NOT_CONFIGURED"});
+  const payload={event:"connection.test",title:"QuestControl webhook test",occurredAt:new Date().toISOString(),data:{source:"QuestControl"}};
+  const body=JSON.stringify(payload),signature=crypto.createHmac("sha256",settings.secret).update(body).digest("hex");
+  try { const response=await fetch(settings.url,{method:"POST",headers:{"content-type":"application/json","user-agent":"QuestControl-Webhooks/1.0","x-questcontrol-event":"connection.test","x-questcontrol-signature":`sha256=${signature}`},body,signal:AbortSignal.timeout(12_000)}); if(!response.ok)return res.status(502).json({error:"WEBHOOK_UNAVAILABLE",status:response.status});res.json({ok:true,status:response.status}); }
+  catch(error){res.status(502).json({error:"WEBHOOK_UNAVAILABLE"});}
 });
 app.get("/telegram/connection",auth,async(req,res)=>{
   const row=(await db.query("SELECT username,first_name,linked_at FROM telegram_connections WHERE user_id=$1",[req.user.sub])).rows[0];
