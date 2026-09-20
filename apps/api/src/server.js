@@ -786,14 +786,20 @@ app.post("/camera-shares",auth,permit("cameras:manage"),async(req,res)=>{
   }catch(error){await client.query("ROLLBACK");throw error}finally{client.release()}
 });
 app.get("/camera-shares",auth,permit("cameras:manage"),async(req,res)=>{
-  const {rows}=await db.query(`SELECT s.id,s.expires_at,s.revoked_at,s.created_at,
-    COALESCE(array_agg(c.name ORDER BY c.name) FILTER(WHERE c.id IS NOT NULL),'{}') camera_names
-    FROM camera_shares s LEFT JOIN camera_share_cameras sc ON sc.share_id=s.id LEFT JOIN cameras c ON c.id=sc.camera_id
-    WHERE s.created_by=$1 GROUP BY s.id ORDER BY s.created_at DESC LIMIT 30`,[req.user.sub]);
+  const {rows}=await db.query(`SELECT s.id,s.expires_at,s.revoked_at,s.created_at,s.created_by,
+    COALESCE(u.display_name,u.email,'Администратор') creator_name,
+    COALESCE(array_agg(c.name ORDER BY c.name) FILTER(WHERE c.id IS NOT NULL),'{}') camera_names,
+    COUNT(c.id)::int camera_count,
+    (s.revoked_at IS NULL AND s.expires_at>now()) active
+    FROM camera_shares s
+    LEFT JOIN users u ON u.id=s.created_by
+    LEFT JOIN camera_share_cameras sc ON sc.share_id=s.id
+    LEFT JOIN cameras c ON c.id=sc.camera_id
+    GROUP BY s.id,u.display_name,u.email ORDER BY s.created_at DESC LIMIT 200`);
   res.json(rows);
 });
 app.delete("/camera-shares/:id",auth,permit("cameras:manage"),async(req,res)=>{
-  const share=(await db.query("UPDATE camera_shares SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 AND created_by=$2 RETURNING id",[req.params.id,req.user.sub])).rows[0];
+  const share=(await db.query("UPDATE camera_shares SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 RETURNING id",[req.params.id])).rows[0];
   if(!share)return res.status(404).json({error:"SHARE_NOT_FOUND"});
   await audit(req,"camera.share.revoke","camera_share",share.id,null,{revoked:true});res.status(204).end();
 });
