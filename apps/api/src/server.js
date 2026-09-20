@@ -4531,7 +4531,12 @@ app.post("/cameras/:id/control",auth,permit("devices:command"),async(req,res)=>{
       const response=await fetch(new URL("/api/ptz/move",bridgeAccount.apiUrl),{
         method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({deviceId,direction:input.direction.toLowerCase()}),signal:AbortSignal.timeout(8_000)
       });
-      if(!response.ok) throw new Error(`Tuya bridge PTZ returned HTTP ${response.status}`);
+      if(!response.ok) {
+        const detail=await response.json().catch(()=>null);
+        // Preserve the bridge diagnostic: it distinguishes a missing LAN route
+        // from a Smart Life cloud session that has not been enabled yet.
+        throw new Error(detail?.error||`Tuya bridge PTZ returned HTTP ${response.status}`);
+      }
       cameraVisionController.recordManualPtz(camera.id);
       await audit(req,"camera.control","camera",camera.id,null,{...input,transport:"TUYA_LAN_BRIDGE"});
       return res.json({ok:true,...input,transport:"TUYA_LAN_BRIDGE"});
