@@ -330,34 +330,34 @@ input:focus, select:focus { border-color: #7c83ff; box-shadow: 0 0 0 3px #7c83ff
 /* User-selectable dark theme for the authenticated management workspace. */
 html.dark-theme {
   color-scheme: dark;
-  --ink: #e8edf6;
-  --muted: #9aa6b8;
-  --line: #2a3547;
-  --surface: #151d2a;
-  --canvas: #0a101a;
-  --primary: #7d83f5;
-  --primary-dark: #a7abff;
-  --success: #52d49a;
-  --danger: #ff8290;
-  background: #0a101a;
+  --ink: #f1f1ef;
+  --muted: #8d8d89;
+  --line: #292929;
+  --surface: #121212;
+  --canvas: #080808;
+  --primary: #e5e5e1;
+  --primary-dark: #bdbdb8;
+  --success: #62c99b;
+  --danger: #db7777;
+  background: #080808;
 }
 html.dark-theme body {
-  background: radial-gradient(circle at 75% 0, #242958 0, transparent 31%), #0a101a;
+  background: radial-gradient(circle at 78% -8%, #ffffff12 0, transparent 32rem), linear-gradient(145deg,#0d0d0d,#080808 52%,#0a0a0a);
   color: var(--ink);
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section {
-  color: #e8edf6;
+  color: #f1f1ef;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(h1,h2,h3,h4,strong,b) {
-  color: #edf2fa;
+  color: #f3f3f0;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(input,select,textarea) {
-  border-color: #344156 !important;
-  background: #111927 !important;
-  color: #e6ebf4 !important;
+  border-color: #343434 !important;
+  background: #0d0d0d !important;
+  color: #ececea !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(input,textarea)::placeholder {
-  color: #6f7d91;
+  color: #696965;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   article,.panel,.toolbar,.summary article,.inventory-list>article,.new-item,
@@ -369,10 +369,10 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .card,.source,.event,.dialog,.room-grid>article,.workspace-bar,.camera-list,.my-shift,
   .editor-bar,.zone-editor,.tabs button,.signature-pad,.generator-side,.generator-heading
 ) {
-  border-color: #293548 !important;
-  background-color: #151d2a !important;
+  border-color: #292929 !important;
+  background-color: #141414 !important;
   background-image: none !important;
-  box-shadow: 0 8px 28px #00000026 !important;
+  box-shadow: inset 0 1px #ffffff08,0 12px 34px #00000038 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .stock,.roster-head,.person,.time-head,.page-tabs,.mode-switch,.time-date-card,
@@ -381,99 +381,100 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .view-switch,.calendar-day,.calendar-loading,.camera-row,.camera-list-head,
   .tools-menu summary,.tools-menu>div,.contract label,.generator-format
 ) {
-  border-color: #293548 !important;
-  background-color: #101824 !important;
+  border-color: #262626 !important;
+  background-color: #0d0d0d !important;
   background-image: none !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   p,small,label,.time-table article time,.time-table article>span,.category-heading span
 ) {
-  color: #9aa6b8;
+  color: #8d8d89;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .secondary,.quick,.item-menu,.pdf-button,.cancel,.today,.week-nav button,
   .access-button,.edit,.name-edit,.name-save,.tabs button,.upload
 ) {
-  border-color: #364258 !important;
-  background: #1c2636 !important;
-  color: #d8dfeb !important;
+  border-color: #363636 !important;
+  background: #1b1b1b !important;
+  color: #c9c9c5 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.time-table article,.booking-list>div,.movement,.roster-row) {
-  border-color: #273245 !important;
+  border-color: #252525 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .quick-adjust,.calendar-head,.calendar-grid,.calendar-day,.weekdays,.queue-toolbar,
   .sample-list,.sample-card,.sample-actions-bar,.camera-table article,.archived article,
   .dialog>header,.event,details
 ) {
-  border-color: #2b374a !important;
+  border-color: #2c2c2c !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .quick-adjust {
-  background: #111927 !important;
+  background: #0d0d0d !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .quick-adjust span {
-  background: #111927 !important;
-  color: #8996a9 !important;
+  background: #0d0d0d !important;
+  color: #858581 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .calendar-day:hover,.calendar-day.selected,.calendar-day.outside,.roster-cell.today
 ) {
-  background: #182131 !important;
+  background: #1a1a1a !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.mini-booking,.page-tabs button.active,.view-switch button.active) {
-  background: #252c50 !important;
-  color: #dce2ff !important;
+  border-color: #424242 !important;
+  background: linear-gradient(145deg,#2a2a2a,#1b1b1b) !important;
+  color: #f2f2ef !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.mini-booking b,.day-count) {
-  color: #aeb3ff !important;
+  color: #e1e1dd !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.month-arrow,.today-button,.card-chevron,.queue-tabs button) {
-  border-color: #364258 !important;
-  background: #1c2636 !important;
-  color: #d8dfeb !important;
+  border-color: #363636 !important;
+  background: #1b1b1b !important;
+  color: #c9c9c5 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.stat-num,.panel-section h3,.sample-id,.checkbox-label) {
-  color: #edf2fa !important;
+  color: #f3f3f0 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.queue-toolbar,.stat-card:first-child,.important-card,.day-page-head,.time-range) {
   background-image: none !important;
-  background-color: #151d2a !important;
+  background-color: #141414 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.camera-row:hover,.camera-row.selected,.tools-menu button:hover,.tools-menu a:hover) {
-  background: #202a3c !important;
+  background: #202020 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.tools-menu button,.tools-menu a,.form-grid label,.generator-side>label,.save-library,.generator-note b) {
-  color: #d8dfeb !important;
+  color: #d1d1cd !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.signature-pad canvas,.qr-image) {
   border-color: #3a465a !important;
   background: #eef1f6 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .empty {
-  border-color: #344157;
-  background: #121a27;
+  border-color: #343434;
+  background: #101010;
 }
 html.dark-theme body.management-shell .mobile-menu-sheet {
-  background: #111927;
-  color: #e8edf6;
+  background: #101010;
+  color: #f0f0ed;
 }
 html.dark-theme body.management-shell .mobile-menu-links :is(a,.menu-link-button) {
-  border-color: #2c384b;
-  background: #182131;
-  color: #edf2fa;
+  border-color: #303030;
+  background: #181818;
+  color: #efefec;
 }
 html.dark-theme body.management-shell .mobile-menu-links a.active {
-  border-color: #6872e8;
-  background: #252c50;
+  border-color: #555;
+  background: #272727;
 }
 html.dark-theme body.management-shell .mobile-menu-sheet header button,
 html.dark-theme body.management-shell .mobile-account-actions .logout {
-  border-color: #344156;
-  background: #1d2737;
-  color: #d9e0ec;
+  border-color: #383838;
+  background: #202020;
+  color: #dededb;
 }
 html.dark-theme body.management-shell .mobile-account-actions {
-  border-color: #2c384a;
+  border-color: #303030;
 }
 
 /* AI dataset has its own full-width workspace instead of the usual section wrapper. */
@@ -502,4 +503,89 @@ html.dark-theme body.management-shell .ai-page :is(input,select,textarea) {
   border-color: #344156 !important;
   background: #111927 !important;
   color: #e6ebf4 !important;
+}
+
+/* Premium graphite skin for the authenticated workspace. */
+html.dark-theme body.management-shell app-root > .desktop-nav {
+  border-right: 1px solid #242424 !important;
+  background: linear-gradient(180deg,#0b0b0b 0%,#050505 100%) !important;
+  box-shadow: 18px 0 54px #00000045 !important;
+}
+html.dark-theme body.management-shell app-root .desktop-brand strong {
+  color: #f0f0ed !important;
+  text-shadow: 0 0 18px #ffffff1f !important;
+}
+html.dark-theme body.management-shell app-root .desktop-brand span { color: #8a8a86 !important; }
+html.dark-theme body.management-shell app-root .desktop-account-menu,
+html.dark-theme body.management-shell app-root .desktop-tools {
+  border-color: #292929 !important;
+  background: #ffffff05 !important;
+}
+html.dark-theme body.management-shell app-root .account-mark {
+  border: 1px solid #505050 !important;
+  background: linear-gradient(145deg,#292929,#111) !important;
+  box-shadow: inset 0 1px #ffffff18,0 7px 18px #0008 !important;
+}
+html.dark-theme body.management-shell app-root .account-copy small,
+html.dark-theme body.management-shell app-root .desktop-nav-title,
+html.dark-theme body.management-shell app-root .desktop-tools summary { color: #696965 !important; }
+html.dark-theme body.management-shell app-root .desktop-nav-links a { color: #797975 !important; }
+html.dark-theme body.management-shell app-root .desktop-nav-links a:hover {
+  background: #ffffff08 !important;
+  color: #cececa !important;
+}
+html.dark-theme body.management-shell app-root .desktop-nav-links a.active {
+  border: 1px solid #303030 !important;
+  background: linear-gradient(100deg,#242424,#151515) !important;
+  box-shadow: inset 2px 0 #ecece8,0 9px 24px #0005 !important;
+  color: #f6f6f3 !important;
+}
+html.dark-theme body.management-shell app-root .desktop-nav-links a.active::after {
+  background: #efefeb !important;
+  box-shadow: 0 0 11px #ffffff66 !important;
+}
+html.dark-theme body.management-shell app-root .nav-glyph { color: #70706c !important; }
+html.dark-theme body.management-shell app-root .desktop-nav-links a:hover .nav-glyph { color: #c5c5c1 !important; }
+html.dark-theme body.management-shell app-root .desktop-nav-links a.active .nav-glyph {
+  color: #efefeb !important;
+  filter: drop-shadow(0 0 5px #ffffff40) !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section > header h2 {
+  color: #f4f4f1 !important;
+  letter-spacing: -.045em;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.new-routine,.save-time) {
+  border: 1px solid #eeeeea !important;
+  background: linear-gradient(180deg,#f4f4f1,#c9c9c5) !important;
+  box-shadow: inset 0 1px #fff,0 9px 24px #0007 !important;
+  color: #0a0a0a !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .page-tabs {
+  border: 1px solid #242424 !important;
+  background: #0c0c0c !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .page-tabs button.active :is(b,small,span) {
+  color: #f2f2ef !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section input:focus,
+html.dark-theme body.management-shell main:not(.checkin-page) > section select:focus,
+html.dark-theme body.management-shell main:not(.checkin-page) > section textarea:focus {
+  border-color: #777 !important;
+  box-shadow: 0 0 0 3px #ffffff12 !important;
+}
+html.dark-theme body.management-shell app-root .mobile-nav-layer { background: #050505 !important; }
+html.dark-theme body.management-shell app-root .mobile-nav {
+  border-color: #303030 !important;
+  background: linear-gradient(145deg,#181818f7,#090909fa) !important;
+  box-shadow: 0 -14px 42px #0009,inset 0 1px #ffffff12 !important;
+}
+html.dark-theme body.management-shell app-root .mobile-nav :is(a,button) { color: #7d7d79 !important; }
+html.dark-theme body.management-shell app-root .mobile-nav :is(a.active,button.active) {
+  background: linear-gradient(145deg,#eeeeea,#bdbdb8) !important;
+  box-shadow: inset 0 1px #fff,0 8px 20px #0008 !important;
+  color: #0a0a0a !important;
+}
+html.dark-theme body.management-shell app-root .mobile-nav :is(a.active,button.active)::after {
+  background: #fff !important;
+  box-shadow: 0 0 8px #fff !important;
 }
