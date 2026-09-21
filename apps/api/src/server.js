@@ -4625,7 +4625,10 @@ app.get("/cameras/:id/stream", auth, permit("cameras:read"), async (req,res) => 
   // before it serves the player page or upgrades the media WebSocket.
   const ticket=crypto.randomBytes(32).toString("base64url");
   await redis.setex(`camera-stream:${ticket}`,15*60,JSON.stringify({cameraId:camera.id,streamKey:camera.stream_key,userId:req.user.sub}));
-  const endpoint=`/go2rtc/stream.html?src=${encodeURIComponent(camera.stream_key)}&mode=webrtc,mse&ticket=${ticket}`;
+  // H.265 camera feeds may show a black MSE surface in Chromium even while
+  // frames are being delivered. WebRTC handles the same feeds reliably, so
+  // keep it as the sole live transport rather than silently selecting MSE.
+  const endpoint=`/go2rtc/stream.html?src=${encodeURIComponent(camera.stream_key)}&mode=webrtc&ticket=${ticket}`;
   await audit(req,"camera.stream.open","camera",camera.id,null,{provider:camera.provider});
   res.json({provider:camera.provider,mode:"player",endpoint});
 });
