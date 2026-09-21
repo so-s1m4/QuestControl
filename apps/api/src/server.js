@@ -1048,8 +1048,8 @@ async function dashboardExternalBookings(locations,localBookings) {
         customer_name:booking.owner?.name||booking.owner?.email||"Бронь",
         room_name:booking.product?.effective_name||location.name,
         players:Number(booking.size)||0,
-        starts_at:`${booking.start.date}T${booking.start.time}`,
-        ends_at:`${booking.start.date}T${booking.end?.time||booking.start.time}`,
+        starts_at:`${booking.start.date}T${booking.start.time.slice(0,5)}:00`,
+        ends_at:`${booking.start.date}T${(booking.end?.time||booking.start.time).slice(0,5)}:00`,
         confirmed:confirmedById.get(booking.id)||false,
       }));
   }));

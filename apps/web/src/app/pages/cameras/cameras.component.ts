@@ -40,7 +40,7 @@ type CameraShare={id:string;expires_at:string;revoked_at:string|null;created_at:
                   <div class="share-icon" [class.revoked]="!!share.revoked_at" [class.expired]="!share.active&&!share.revoked_at">▦</div>
                   <div class="share-main">
                     <div class="share-title"><b>{{share.camera_count}} {{cameraWord(share.camera_count)}}</b><span [class.active]="share.active" [class.revoked]="!!share.revoked_at">{{shareStatus(share)}}</span></div>
-                    <p>{{share.camera_names.join(' · ')||'Камеры удалены'}}</p>
+                    <p>{{shareCameraNames(share)}}</p>
                     <small>Создал: {{share.creator_name}} · {{share.created_at|date:'dd.MM.yyyy, HH:mm'}}</small>
                     <small>{{share.revoked_at?'Отозван':'Действует до'}} {{(share.revoked_at||share.expires_at)|date:'dd.MM.yyyy, HH:mm'}}</small>
                   </div>
@@ -204,9 +204,10 @@ export class CamerasComponent implements OnDestroy{
   selectOnline(){for(const c of this.locationCameras().filter(c=>c.status==="ONLINE"&&!this.isSelected(c.id)))this.selectedIds.update(v=>[...v,c.id]);this.persistSelection()}clearSelection(){this.selectedIds.set([]);this.persistSelection()}
   private persistSelection(){localStorage.setItem("questcontrol.selectedCameras",JSON.stringify(this.selectedIds()));window.dispatchEvent(new Event("questcontrol-camera-selection"))}
   syncTuya(){this.syncing.set(true);this.http.post<any>("/api/cameras/sync/tuya",{}).subscribe({next:r=>{this.syncing.set(false);this.notice.set(`Tuya: камер ${r.cameras}, добавлено ${r.created}.`);this.loadCameras()},error:()=>{this.syncing.set(false);this.error.set("Не удалось синхронизировать Tuya.")}})}
-  loadShares(){this.sharesLoading.set(true);this.http.get<CameraShare[]>("/api/camera-shares").subscribe({next:items=>{this.shares.set(items);this.sharesLoading.set(false)},error:()=>{this.sharesLoading.set(false);this.error.set("Не удалось загрузить список QR-доступов.")}})}
+  loadShares(){this.sharesLoading.set(true);this.http.get<CameraShare[]>("/api/camera-shares").subscribe({next:items=>{this.shares.set((Array.isArray(items)?items:[]).map(share=>({...share,camera_names:Array.isArray(share.camera_names)?share.camera_names.filter(name=>typeof name==="string"):[]})));this.sharesLoading.set(false)},error:()=>{this.sharesLoading.set(false);this.error.set("Не удалось загрузить список QR-доступов.")}})}
   openShares(){this.sharesOpen.set(true);this.loadShares()}
   activeShareCount(){return this.shares().filter(share=>share.active).length}
+  shareCameraNames(share:CameraShare){return share.camera_names.length?share.camera_names.join(" · "):"Камеры удалены"}
   shareStatus(share:CameraShare){return share.revoked_at?"Отозван":share.active?"Активен":"Истёк"}
   cameraWord(count:number){const last=count%10,lastTwo=count%100;return last===1&&lastTwo!==11?"камера":last>=2&&last<=4&&(lastTwo<12||lastTwo>14)?"камеры":"камер"}
   createParentQr(){const allowed=new Set(this.cameras().map(camera=>camera.id));const cameraIds=this.selectedIds().filter(id=>allowed.has(id));if(!cameraIds.length)return;this.http.post<{id:string;token:string}>("/api/camera-shares",{cameraIds,expiresInHours:24}).subscribe({next:async share=>{const url=`${location.origin}/watch/${share.token}`;this.qrShareId.set(share.id);this.qrUrl.set(url);this.qrCameraCount.set(cameraIds.length);this.qrImage.set(await QRCode.toDataURL(url,{width:520,margin:2,errorCorrectionLevel:"M"}));this.loadShares()},error:()=>this.error.set("Не удалось создать QR-код доступа.")})}

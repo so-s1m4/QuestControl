@@ -33,7 +33,7 @@ type DashboardData={
     <article class="panel system-panel"><div class="panel-title"><div><small>СИСТЕМА</small><h3>Состояние площадок</h3></div></div><div class="system-list"><div><span class="system-icon rooms"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v17M2 21h20"/><path d="M8 6h4M8 10h4M8 14h4M16 17h.01"/></svg></span><p><b>{{data.rooms.length}}</b><small>комнат всего</small></p></div><div><span class="system-icon online"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12.5 10.5 15 16.5 9"/></svg></span><p><b>{{deviceCount(data,'ONLINE')}}</b><small>устройств онлайн</small></p></div><div><span class="system-icon offline"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 9 6 6m0-6-6 6"/></svg></span><p><b>{{deviceCount(data,'OFFLINE')}}</b><small>устройств офлайн</small></p></div></div></article>
   </div>
 
-  <article class="panel today-panel"><div class="panel-title"><div><small>СЕГОДНЯ</small><h3>Ближайшие бронирования</h3></div><a routerLink="/bookings">Все брони →</a></div><div class="booking-list">@for(booking of data.bookings.slice(0,6);track booking.id){<div><time>{{booking.starts_at|date:'HH:mm'}}</time><p><b>{{booking.customer_name}}</b><small>{{booking.room_name}} · {{booking.players}} гостей</small></p><span [class.confirmed]="booking.confirmed">{{booking.confirmed?'Подтверждено':'Ожидает'}}</span></div>}@empty{<div class="empty">На сегодня бронирований нет.</div>}</div></article>
+  <article class="panel today-panel"><div class="panel-title"><div><small>СЕГОДНЯ</small><h3>Ближайшие бронирования</h3></div><a routerLink="/bookings">Все брони →</a></div><div class="booking-list">@for(booking of data.bookings.slice(0,6);track booking.id){<div><time>{{bookingTime(booking.starts_at)}}</time><p><b>{{booking.customer_name||'Бронь'}}</b><small>{{booking.room_name||'Локация'}} · {{booking.players||0}} гостей</small></p><span [class.confirmed]="booking.confirmed">{{booking.confirmed?'Подтверждено':'Ожидает'}}</span></div>}@empty{<div class="empty">На сегодня бронирований нет.</div>}</div></article>
 }@else{<p class="loading">Загрузка центра управления…</p>}
 </section></main>`,styles:[`
 .reception-nav{margin-top:10px!important;border:1px solid #ff672755;color:#fff!important}.my-shift{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;margin-top:14px;padding:15px 18px;border:1px solid #e1e5ec;border-radius:13px;background:#fff;color:#344054;text-decoration:none}.my-shift.has-shift{border-color:#a6dfbf;background:linear-gradient(110deg,#f2fbf6,#fff)}.shift-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:11px;background:#eef1f6;color:#788295;font-weight:900}.has-shift .shift-icon{background:#d8f3e4;color:#087443}.my-shift small,.my-shift strong,.my-shift p{display:block}.my-shift small{color:#788295;font-size:9px;font-weight:800;text-transform:uppercase}.my-shift strong{margin-top:3px}.my-shift p{margin:2px 0 0;color:#667085;font-size:10px}.my-shift>b{color:#4f46e5;font-size:10px}
@@ -52,4 +52,11 @@ export class OverviewComponent{
   deviceCount(data:DashboardData,status:string){return Number(data.deviceSummary.find(item=>item.status===status)?.total||0)}
   fullDate(value:Date){return new Intl.DateTimeFormat("ru-RU",{weekday:"long",year:"numeric",month:"long",day:"numeric"}).format(value)}
   dayLabel(value:string){return new Intl.DateTimeFormat("ru-RU",{weekday:"short"}).format(new Date(`${value}T12:00:00`)).replace(".","")}
+  bookingTime(value:unknown){
+    const text=String(value||"");
+    const localTime=text.match(/T(\d{2}:\d{2})/)?.[1];
+    if(localTime)return localTime;
+    const parsed=new Date(text);
+    return Number.isNaN(parsed.getTime())?"—":new Intl.DateTimeFormat("ru-RU",{hour:"2-digit",minute:"2-digit"}).format(parsed);
+  }
 }
