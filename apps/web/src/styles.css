@@ -765,3 +765,104 @@ html.dark-theme body.management-shell :is(.record-dialog,.item-settings,.dialog)
   background: #0b0b0b !important;
   color: #e9e9e6 !important;
 }
+
+html.dark-theme body.management-shell app-camera-overlay .watch,
+html.dark-theme body.management-shell app-camera-overlay .watch.collapsed {
+  border-color: #3a3a3a !important;
+  background: #101010 !important;
+  box-shadow: inset 0 1px #ffffff0a,0 18px 48px #000a !important;
+}
+html.dark-theme body.management-shell app-camera-overlay .collapsed-bar {
+  border: 0 !important;
+  background: #101010 !important;
+  color: #e9e9e6 !important;
+}
+html.dark-theme body.management-shell app-camera-overlay .collapsed-bar:hover {
+  background: #181818 !important;
+}
+html.dark-theme body.management-shell app-camera-overlay .collapsed-bar .camera-icon {
+  border: 1px solid #666 !important;
+  background: linear-gradient(145deg,#303030,#171717) !important;
+  box-shadow: inset 0 1px #ffffff1c,0 6px 16px #0008 !important;
+  color: #efefeb !important;
+}
+html.dark-theme body.management-shell app-camera-overlay .collapsed-bar strong { color: #eeeeeb !important; }
+html.dark-theme body.management-shell app-camera-overlay .expand-arrow { color: #a9a9a5 !important; }
+
+html.dark-theme body.management-shell .ai-page :is(.queue-editor-split,.canvas-area,.no-selection) {
+  border-color: #2c2c2c !important;
+  background: #101010 !important;
+}
+html.dark-theme body.management-shell .ai-page .sample-list { border-color: #2c2c2c !important; }
+html.dark-theme body.management-shell .ai-page .sample-card.selected {
+  border-left-color: #c7c7c2 !important;
+  background: #252525 !important;
+}
+html.dark-theme body.management-shell .ai-page .queue-tabs button.active {
+  border-color: #666 !important;
+  background: #292929 !important;
+  color: #f0f0ed !important;
+}
+
+html.dark-theme body.management-shell main:not(.checkin-page) > section .selection-step.ready > span,
+html.dark-theme body.management-shell main:not(.checkin-page) > section .location-picker > span {
+  border: 1px solid #444 !important;
+  background: #242424 !important;
+  color: #e1e1dd !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .location-tabs button.active {
+  border-color: #666 !important;
+  background: #292929 !important;
+  color: #f0f0ed !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .camera-row.selected { background: #242424 !important; }
+html.dark-theme body.management-shell main:not(.checkin-page) > section .camera-pin.selected { outline-color: #bdbdb866 !important; }
+html.dark-theme body.management-shell main:not(.checkin-page) > section .create-access:not(:disabled) {
+  border-color: #eeeeea !important;
+  background: linear-gradient(180deg,#f4f4f1,#c9c9c5) !important;
+  color: #0b0b0b !important;
+}
+
+html.dark-theme body.management-shell :is(.shares-backdrop,.qr-backdrop) {
+  background: #000000bd !important;
+  backdrop-filter: blur(9px) !important;
+}
+html.dark-theme body.management-shell :is(.shares-panel,.qr-card) {
+  border: 1px solid #343434 !important;
+  background: #101010 !important;
+  color: #ededeb !important;
+}
+html.dark-theme body.management-shell .shares-panel > header {
+  border-color: #2e2e2e !important;
+  background: #141414 !important;
+}
+html.dark-theme body.management-shell .shares-panel :is(.share-summary article,.share-row,.share-list-hint) {
+  border-color: #303030 !important;
+  background: #181818 !important;
+  color: #d8d8d4 !important;
+}
+html.dark-theme body.management-shell .shares-panel :is(.share-main p,.share-main small,.share-list-hint,header p) { color: #92928e !important; }
+html.dark-theme body.management-shell .shares-panel .revoke-button {
+  border-color: #633737 !important;
+  background: #291616 !important;
+  color: #ef9b9b !important;
+}
+html.dark-theme body.management-shell :is(.shares-panel,.qr-card) .modal-close {
+  border-color: #3c3c3c !important;
+  background: #1b1b1b !important;
+  color: #c7c7c3 !important;
+}
+
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-controls .control-group {
+  border-color: #303030 !important;
+  background: #151515 !important;
+  background-image: none !important;
+  box-shadow: inset 0 1px #ffffff08,0 12px 28px #0005 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-controls .control-group > span { color: #999995 !important; }
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-controls :is(.checkin-qr-button,.control-link,.start-session) {
+  border-color: #3b3b3b !important;
+  background: #1a1a1a !important;
+  color: #d6d6d2 !important;
+  box-shadow: none !important;
+}
