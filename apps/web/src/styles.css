@@ -589,3 +589,179 @@ html.dark-theme body.management-shell app-root .mobile-nav :is(a.active,button.a
   background: #fff !important;
   box-shadow: 0 0 8px #fff !important;
 }
+
+/* Remove the remaining legacy indigo surfaces from component-local styles. */
+html.dark-theme body.management-shell button {
+  border: 1px solid #363636 !important;
+  background: #1a1a1a !important;
+  box-shadow: none !important;
+  color: #d0d0cc !important;
+}
+html.dark-theme body.management-shell button:hover:not(:disabled) {
+  border-color: #555 !important;
+  background: #242424 !important;
+  box-shadow: 0 8px 22px #0006 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section > header > button,
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.new-routine,.save-time,.archive-import > button:last-of-type) {
+  border-color: #eeeeea !important;
+  background: linear-gradient(180deg,#f4f4f1,#c9c9c5) !important;
+  box-shadow: inset 0 1px #fff,0 10px 24px #0008 !important;
+  color: #0b0b0b !important;
+}
+html.dark-theme body.management-shell app-root :is(.theme-toggle,.password,.logout) {
+  border-color: #343434 !important;
+  background: #171717 !important;
+  color: #e5e5e1 !important;
+}
+html.dark-theme body.management-shell app-root .logout:hover {
+  border-color: #613838 !important;
+  background: #2b1717 !important;
+  color: #f0c2c2 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.back-calendar,.pdf-button,.today,.month-arrow,.today-button) {
+  border-color: #353535 !important;
+  background: #191919 !important;
+  color: #c7c7c3 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.stats-grid article.accent,.month-summary article.total,.my-shift.has-shift) {
+  border-color: #3c3c3c !important;
+  background: linear-gradient(145deg,#191919,#111) !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.shift-icon,.system-icon) {
+  border: 1px solid #393939 !important;
+  background: #202020 !important;
+  color: #bdbdb8 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .bar-column > i {
+  background: linear-gradient(180deg,#d4d4cf,#73736f) !important;
+  box-shadow: 0 5px 14px #0007 !important;
+}
+
+html.dark-theme body.management-shell .routine-backdrop {
+  background: #000000b8 !important;
+  backdrop-filter: blur(9px) !important;
+}
+html.dark-theme body.management-shell .time-dialog {
+  border-color: #333 !important;
+  background: #111 !important;
+  color: #ededeb !important;
+  box-shadow: 0 32px 100px #000c !important;
+}
+html.dark-theme body.management-shell .time-dialog > header,
+html.dark-theme body.management-shell .time-dialog footer { border-color: #2c2c2c !important; }
+html.dark-theme body.management-shell .time-dialog .time-header-icon {
+  border: 1px solid #3b3b3b !important;
+  background: #202020 !important;
+  color: #dededa !important;
+}
+html.dark-theme body.management-shell .time-dialog :is(.field-kicker,header small) { color: #a5a5a1 !important; }
+html.dark-theme body.management-shell .time-dialog :is(h3,b) { color: #f2f2ef !important; }
+html.dark-theme body.management-shell .time-dialog :is(p,small,label,.time-range-heading > span) { color: #92928e !important; }
+html.dark-theme body.management-shell .time-dialog :is(.time-date-card,.time-booking-card,.time-range) {
+  border-color: #303030 !important;
+  background: #171717 !important;
+  background-image: none !important;
+}
+html.dark-theme body.management-shell .time-dialog :is(input,select) {
+  border-color: #3b3b3b !important;
+  background: #0c0c0c !important;
+  color: #ececea !important;
+}
+html.dark-theme body.management-shell .time-dialog .booking-count {
+  background: #1d3028 !important;
+  color: #78c9a2 !important;
+}
+html.dark-theme body.management-shell .time-dialog .close-time-modal,
+html.dark-theme body.management-shell .time-dialog .cancel {
+  border-color: transparent !important;
+  background: transparent !important;
+  color: #9a9a96 !important;
+}
+
+html.dark-theme body.management-shell .ai-page,
+html.dark-theme body.management-shell .ai-page :is(.sample-list,.editor-panel) { background: #080808 !important; }
+html.dark-theme body.management-shell .ai-page :is(.stat-card,.panel-section,.editor-panel,.sample-actions-bar) {
+  border-color: #303030 !important;
+  background: #151515 !important;
+  box-shadow: inset 0 1px #ffffff07,0 12px 30px #0005 !important;
+}
+html.dark-theme body.management-shell .ai-page :is(.queue-toolbar,.sample-list,.sample-card,.queue-tabs button) {
+  border-color: #2d2d2d !important;
+  background: #0e0e0e !important;
+  color: #c9c9c5 !important;
+}
+html.dark-theme body.management-shell .ai-page :is(input,select,textarea) {
+  border-color: #383838 !important;
+  background: #0c0c0c !important;
+  color: #e7e7e3 !important;
+}
+html.dark-theme body.management-shell .ai-page button:not(:disabled) {
+  border-color: #393939 !important;
+  background: #1b1b1b !important;
+  color: #d5d5d1 !important;
+}
+
+html.dark-theme body.management-shell .modal-backdrop {
+  background: #000000b8 !important;
+  backdrop-filter: blur(9px) !important;
+}
+html.dark-theme body.management-shell .settings-modal {
+  border: 1px solid #343434 !important;
+  background: #111 !important;
+  color: #ededeb !important;
+  box-shadow: 0 30px 100px #000c !important;
+}
+html.dark-theme body.management-shell .settings-modal > header,
+html.dark-theme body.management-shell .settings-form .danger-zone { border-color: #2d2d2d !important; }
+html.dark-theme body.management-shell .settings-modal :is(h3,label,legend) { color: #eeeeeb !important; }
+html.dark-theme body.management-shell .settings-modal :is(header p,label small,.danger-zone small) { color: #8e8e8a !important; }
+html.dark-theme body.management-shell .settings-modal :is(input,select) {
+  border-color: #3a3a3a !important;
+  background: #0b0b0b !important;
+  color: #e9e9e6 !important;
+}
+html.dark-theme body.management-shell .settings-modal .location-picker {
+  border-color: #383838 !important;
+  background: #141414 !important;
+}
+html.dark-theme body.management-shell .settings-modal :is(.location-check,.account-toggle) {
+  border: 1px solid #303030 !important;
+  background: #1b1b1b !important;
+  color: #d2d2ce !important;
+}
+html.dark-theme body.management-shell .settings-modal .close,
+html.dark-theme body.management-shell .settings-modal footer button:first-child {
+  border-color: #333 !important;
+  background: #191919 !important;
+  color: #bdbdb9 !important;
+}
+html.dark-theme body.management-shell .settings-modal footer button:last-child {
+  border-color: #eeeeea !important;
+  background: linear-gradient(180deg,#f4f4f1,#c9c9c5) !important;
+  box-shadow: inset 0 1px #fff,0 9px 22px #0008 !important;
+  color: #0b0b0b !important;
+}
+html.dark-theme body.management-shell .settings-modal .danger-zone .delete {
+  border-color: #633737 !important;
+  background: #291616 !important;
+  color: #ef9b9b !important;
+}
+
+html.dark-theme body.management-shell main:not(.checkin-page) > section .item-actions > button:last-child {
+  border-color: #eeeeea !important;
+  background: linear-gradient(180deg,#f4f4f1,#c9c9c5) !important;
+  box-shadow: inset 0 1px #fff,0 8px 20px #0007 !important;
+  color: #0b0b0b !important;
+}
+html.dark-theme body.management-shell :is(.record-dialog,.item-settings,.dialog) {
+  border: 1px solid #343434 !important;
+  background: #111 !important;
+  color: #ededeb !important;
+  box-shadow: 0 30px 100px #000c !important;
+}
+html.dark-theme body.management-shell :is(.record-dialog,.item-settings,.dialog) :is(input,select,textarea) {
+  border-color: #3a3a3a !important;
+  background: #0b0b0b !important;
+  color: #e9e9e6 !important;
+}
