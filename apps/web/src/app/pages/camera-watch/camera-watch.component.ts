@@ -4,11 +4,12 @@ import { HttpClient } from "@angular/common/http";
 import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 import { WebRtcPlayerComponent } from "../cameras/webrtc-player.component";
 import { HlsPlayerComponent } from "../cameras/hls-player.component";
+import { Go2rtcPlayerComponent } from "../cameras/go2rtc-player.component";
 
 type Camera={id:string;name:string;room_name:string|null;status:string;provider:string};
 type Player={mode:"hls"|"player"|"webrtc";endpoint?:string;safeEndpoint?:SafeResourceUrl};
 
-@Component({selector:"app-camera-watch",standalone:true,imports:[WebRtcPlayerComponent,HlsPlayerComponent],template:`
+@Component({selector:"app-camera-watch",standalone:true,imports:[WebRtcPlayerComponent,HlsPlayerComponent,Go2rtcPlayerComponent],template:`
 <main class="watch-page">
   <header class="watch-header">
     <div class="brand-mark">Q</div>
@@ -23,7 +24,7 @@ type Player={mode:"hls"|"player"|"webrtc";endpoint?:string;safeEndpoint?:SafeRes
         <article>
           <div class="video">
             @if(players()[camera.id];as player){
-              @if(player.mode==='player'){<iframe [src]="player.safeEndpoint!" [title]="camera.name" allow="autoplay; fullscreen; picture-in-picture"></iframe>}
+              @if(player.mode==='player'){<app-go2rtc-player [src]="player.safeEndpoint!" [title]="camera.name"/>}
               @else if(player.mode==='webrtc'){<app-webrtc-player [cameraId]="camera.id" [allowHlsFallback]="true" [minimal]="true" (fallbackRequested)="fallback(camera)"/>}
               @else if(player.endpoint){<app-hls-player [url]="player.endpoint"/>}
             }@else if(streamErrors()[camera.id];as streamError){

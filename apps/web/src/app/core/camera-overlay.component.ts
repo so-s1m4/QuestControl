@@ -5,6 +5,7 @@ import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 import { io, Socket } from "socket.io-client";
 import { HlsPlayerComponent } from "../pages/cameras/hls-player.component";
 import { WebRtcPlayerComponent } from "../pages/cameras/webrtc-player.component";
+import { Go2rtcPlayerComponent } from "../pages/cameras/go2rtc-player.component";
 
 type Camera={id:string;room_id?:string|null;name:string;room_name:string|null;provider:string;config?:{source?:string};tracking_enabled?:boolean;ai_enabled?:boolean};
 type Player={mode:"hls"|"player"|"webrtc";endpoint?:string;safeEndpoint?:SafeResourceUrl};
@@ -13,7 +14,7 @@ type AIState={peopleCount:number;occupied:boolean;motion:boolean;description?:st
 type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confidence:number;description?:string};
 
 @Component({
-  selector:"app-camera-overlay",standalone:true,imports:[DatePipe,HlsPlayerComponent,WebRtcPlayerComponent],
+  selector:"app-camera-overlay",standalone:true,imports:[DatePipe,HlsPlayerComponent,WebRtcPlayerComponent,Go2rtcPlayerComponent],
   template:`
     @if(selected().length){
       <section class="watch" [class.collapsed]="collapsed()" [class.single]="selected().length===1">
@@ -27,7 +28,7 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
                   @if(players()[camera.id];as player){
                     @if(player.mode==="webrtc"){<app-webrtc-player [cameraId]="camera.id" [minimal]="true" [controls]="false" (fallbackRequested)="fallback(camera)"/>}
                     @else if(player.mode==="hls"){<app-hls-player [url]="player.endpoint!" [controls]="false"/>}
-                    @else{<iframe [src]="player.safeEndpoint!" [title]="camera.name" scrolling="no" allow="autoplay; fullscreen"></iframe>}
+                    @else{<app-go2rtc-player [src]="player.safeEndpoint!" [title]="camera.name"/>}
                   }@else{<button (click)="open(camera)">▶ Открыть</button>}
                   @if(camera.provider==="TUYA"){
                     <button class="night-toggle" [class.on]="nightModes()[camera.id]==='on'" [title]="nightModes()[camera.id]==='on'?'Выключить ночное видение':'Включить ночное видение'" (click)="toggleNightVision($event,camera)">☾</button>
@@ -80,7 +81,7 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
     .grid article{width:100%;min-width:0;max-width:100%;overflow:hidden;background:#fff;box-shadow:inset 0 0 0 2px transparent;cursor:pointer}
     .grid article.active-camera{box-shadow:inset 0 0 0 2px #6172f3}
     .video{position:relative;display:grid;place-items:center;width:100%;min-width:0;max-width:100%;overflow:hidden;aspect-ratio:16/9;background:#101622}
-    .video iframe,.video app-hls-player,.video app-webrtc-player{display:block;width:100%;min-width:0;max-width:100%;height:100%;border:0}
+    .video iframe,.video app-hls-player,.video app-webrtc-player,.video app-go2rtc-player{display:block;width:100%;min-width:0;max-width:100%;height:100%;border:0}
     .video>button:not(.night-toggle){background:#29344a}
     .night-toggle{position:absolute;z-index:7;top:7px;right:39px;display:grid!important;place-items:center;width:28px;height:28px;padding:0!important;border:1px solid #d0d5dd!important;border-radius:8px!important;background:#fffffff0!important;color:#344054!important;font-size:17px;line-height:1;box-shadow:0 2px 8px #10182824!important}
     .night-toggle.on{border-color:#8098f9!important;background:#444ce7ed!important;color:#fff!important}
