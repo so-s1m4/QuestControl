@@ -175,7 +175,7 @@ export class AppComponent {
   mobileMenuOpen = signal(false);
   currentUrl = signal(this.router.url);
   managementOpen = signal(this.managementPath(this.router.url));
-  darkMode = signal(localStorage.getItem("questcontrol.theme") === "dark" || (!localStorage.getItem("questcontrol.theme") && window.matchMedia("(prefers-color-scheme: dark)").matches));
+  darkMode = signal(true);
   isAdmin = signal(false);
   canUseWorkTime = signal(false);
   isCameraViewer = signal(false);
@@ -183,6 +183,7 @@ export class AppComponent {
   installPrompt = signal<InstallPromptEvent | null>(null);
 
   constructor() {
+    localStorage.setItem("questcontrol.theme", "dark");
     this.applyTheme();
     this.updateManagementClass();
     this.router.events.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd)).subscribe((event) => {

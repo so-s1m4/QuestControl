@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "quest-control-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}1`;
+const CACHE_NAME = `${CACHE_PREFIX}2`;
 const SHELL = ["/", "/manifest.webmanifest", "/icons/quest-control-192.png", "/icons/quest-control-512.png"];
 
 self.addEventListener("install", (event) => {
