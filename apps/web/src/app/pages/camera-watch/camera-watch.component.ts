@@ -24,7 +24,7 @@ type Player={mode:"hls"|"player"|"webrtc";endpoint?:string;safeEndpoint?:SafeRes
         <article>
           <div class="video">
             @if(players()[camera.id];as player){
-              @if(player.mode==='player'){<app-go2rtc-player [src]="player.safeEndpoint!" [title]="camera.name"/>}
+              @if(player.mode==='player'){<app-go2rtc-player [src]="player.safeEndpoint!" [title]="camera.name" [cameraId]="camera.id"/>}
               @else if(player.mode==='webrtc'){<app-webrtc-player [cameraId]="camera.id" [allowHlsFallback]="true" [minimal]="true" (fallbackRequested)="fallback(camera)"/>}
               @else if(player.endpoint){<app-hls-player [url]="player.endpoint"/>}
             }@else if(streamErrors()[camera.id];as streamError){

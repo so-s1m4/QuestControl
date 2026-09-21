@@ -28,7 +28,7 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
                   @if(players()[camera.id];as player){
                     @if(player.mode==="webrtc"){<app-webrtc-player [cameraId]="camera.id" [minimal]="true" [controls]="false" (fallbackRequested)="fallback(camera)"/>}
                     @else if(player.mode==="hls"){<app-hls-player [url]="player.endpoint!" [controls]="false"/>}
-                    @else{<app-go2rtc-player [src]="player.safeEndpoint!" [title]="camera.name"/>}
+                    @else{<app-go2rtc-player [src]="player.safeEndpoint!" [title]="camera.name" [cameraId]="camera.id"/>}
                   }@else{<button (click)="open(camera)">▶ Открыть</button>}
                   @if(camera.provider==="TUYA"){
                     <button class="night-toggle" [class.on]="nightModes()[camera.id]==='on'" [title]="nightModes()[camera.id]==='on'?'Выключить ночное видение':'Включить ночное видение'" (click)="toggleNightVision($event,camera)">☾</button>
