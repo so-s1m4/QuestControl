@@ -17,9 +17,9 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
   template:`
     @if(selected().length){
       <section class="watch" [class.collapsed]="collapsed()" [class.single]="selected().length===1">
-        @if(collapsed()){<button class="collapsed-bar" (click)="collapsed.set(false)"><span class="camera-icon">●</span><strong>Развернуть</strong><i class="expand-arrow">⌃</i></button>}
+        @if(collapsed()){<button class="collapsed-bar" (click)="expand()"><span class="camera-icon">●</span><strong>Камеры · {{selected().length}}</strong><i class="expand-arrow">⌃</i></button>}
         @else{
-          <button class="collapse-arrow" title="Свернуть" (click)="collapsed.set(true)"><span></span></button>
+          <button class="collapse-arrow" title="Свернуть" (click)="collapse()"><span></span></button>
           <div class="grid">
             @for(camera of selected();track camera.id){
               <article [class.active-camera]="activeCameraId()===camera.id" (click)="selectCamera(camera)">
@@ -137,7 +137,7 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
 })
 export class CameraOverlayComponent{
   private http=inject(HttpClient);private sanitizer=inject(DomSanitizer);
-  cameras=signal<Camera[]>([]);selectedIds=signal<string[]>([]);players=signal<Record<string,Player>>({});collapsed=signal(false);
+  cameras=signal<Camera[]>([]);selectedIds=signal<string[]>([]);players=signal<Record<string,Player>>({});collapsed=signal(true);
   nightModes=signal<Record<string,NightMode>>({});controlErrors=signal<Record<string,string>>({});activeCameraId=signal<string|null>(null);
   aiStates=signal<Record<string,AIState>>({});
   headsetStates=signal<Record<string,any>>({});
@@ -201,7 +201,7 @@ export class CameraOverlayComponent{
       const selected=this.selected();
       if(!selected.some(camera=>camera.id===this.activeCameraId()))this.activeCameraId.set(selected.find(camera=>camera.provider==="TUYA")?.id||selected[0]?.id||null);
       for(const camera of selected){
-        if(!this.players()[camera.id])this.open(camera);
+        if(!this.collapsed()&&!this.players()[camera.id])this.open(camera);
         this.fetchAiState(camera.id);
       }
     }catch{this.selectedIds.set([])}
@@ -217,6 +217,8 @@ export class CameraOverlayComponent{
   }
 
   selected(){const ids=new Set(this.selectedIds());return this.cameras().filter(c=>ids.has(c.id))}
+  expand(){this.collapsed.set(false);for(const camera of this.selected())if(!this.players()[camera.id])this.open(camera)}
+  collapse(){this.stopAllPtz();this.collapsed.set(true)}
   open(camera:Camera,transport:"webrtc"|"hls"="webrtc"){
     const query=transport==="hls"?"?transport=hls":"";
     this.http.get<{endpoint?:string;mode:"hls"|"player"|"webrtc"}>(`/api/cameras/${camera.id}/stream${query}`).subscribe({
