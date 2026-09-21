@@ -307,16 +307,27 @@ type VrStatus = {
         margin-top: 9px;
       }
       .game-list > span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
         padding: 6px 8px;
         background: #fff;
         border-radius: 8px;
       }
       .game-list button {
-        padding: 0 0 0 6px;
+        display: inline-grid;
+        width: 25px;
+        height: 25px;
+        padding: 0;
+        place-items: center;
+        border: 1px solid #d8dce3;
+        border-radius: 50%;
         background: transparent;
         color: #667085;
         box-shadow: none;
+        line-height: 1;
       }
+      .game-list button:first-of-type { margin-left: 6px; }
       .game-list small {
         color: var(--muted);
       }
