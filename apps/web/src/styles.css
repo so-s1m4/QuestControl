@@ -845,10 +845,12 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section .locatio
 html.dark-theme body.management-shell main:not(.checkin-page) > section .camera-row.selected { background: #242424 !important; }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .camera-pin.selected { outline-color: #bdbdb866 !important; }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .create-access:not(:disabled) {
-  border-color: #eeeeea !important;
-  background: linear-gradient(180deg,#f4f4f1,#c9c9c5) !important;
-  color: #0b0b0b !important;
+  border-color: #6572ff !important;
+  background: linear-gradient(135deg,#343fab,#5967e8) !important;
+  box-shadow: inset 0 1px #ffffff20,0 10px 26px #2636b84d !important;
+  color: #fff !important;
 }
+html.dark-theme body.management-shell main:not(.checkin-page) > section .create-access:not(:disabled) :is(small,b) { color: #fff !important; }
 
 html.dark-theme body.management-shell :is(.shares-backdrop,.qr-backdrop) {
   background: #000000bd !important;
@@ -868,6 +870,7 @@ html.dark-theme body.management-shell .shares-panel :is(.share-summary article,.
   background: #181818 !important;
   color: #d8d8d4 !important;
 }
+html.dark-theme body.management-shell .shares-panel .share-list { scrollbar-color: #4a4a4a #151515; }
 html.dark-theme body.management-shell .shares-panel :is(.share-main p,.share-main small,.share-list-hint,header p) { color: #92928e !important; }
 html.dark-theme body.management-shell .shares-panel .revoke-button {
   border-color: #633737 !important;
