@@ -1029,13 +1029,46 @@ app.patch("/users/:id/password", auth, permit("users:manage"), async (req,res) =
   res.status(204).end();
 });
 
+async function dashboardExternalBookings(locations,localBookings) {
+  const localExternalIds=new Set(localBookings.map(booking=>booking.external_id).filter(Boolean).map(String));
+  const batches=await Promise.allSettled(locations.map(async location=>{
+    const bookings=await fetchTimeToGrowBookings(location.external_id,location.today);
+    const ids=bookings.map(booking=>booking.id);
+    const confirmations=ids.length ? (await db.query(
+      "SELECT external_booking_id,confirmed FROM external_booking_confirmations WHERE club_id=$1 AND external_booking_id=ANY($2::text[])",
+      [location.external_id,ids]
+    )).rows : [];
+    const confirmedById=new Map(confirmations.map(row=>[row.external_booking_id,row.confirmed]));
+    return bookings
+      .filter(booking=>!localExternalIds.has(String(booking.id)))
+      .map(booking=>({
+        id:`ttg:${booking.id}`,
+        external_id:booking.id,
+        external_source:"TIME_TO_GROW",
+        customer_name:booking.owner?.name||booking.owner?.email||"Бронь",
+        room_name:booking.product?.effective_name||location.name,
+        players:Number(booking.size)||0,
+        starts_at:`${booking.start.date}T${booking.start.time}`,
+        ends_at:`${booking.start.date}T${booking.end?.time||booking.start.time}`,
+        confirmed:confirmedById.get(booking.id)||false,
+      }));
+  }));
+  for(const batch of batches){
+    if(batch.status==="rejected") console.error("dashboard external bookings",batch.reason);
+  }
+  return batches.flatMap(batch=>batch.status==="fulfilled"?batch.value:[]);
+}
+
 app.get("/dashboard", auth, async (req, res) => {
   const scope = isOwner(req) ? { clause:"TRUE", values:[] } : { clause:"r.location_id IN (SELECT location_id FROM user_locations WHERE user_id=$1)", values:[req.user.sub] };
-  const [rooms, bookings, devices, myShifts, statistics, recentDays] = await Promise.all([
+  const locationScope=isOwner(req)?{clause:"TRUE",values:[]}:{clause:"l.id IN (SELECT location_id FROM user_locations WHERE user_id=$1)",values:[req.user.sub]};
+  const [rooms, bookings, devices, myShifts, statistics, recentDays,externalLocations] = await Promise.all([
     db.query(`SELECT r.*,l.name location_name,
       COALESCE((SELECT d.status FROM devices d WHERE d.room_id=r.id ORDER BY d.last_seen DESC NULLS LAST LIMIT 1),r.status) live_status
       FROM rooms r JOIN locations l ON l.id=r.location_id WHERE ${scope.clause} ORDER BY r.name`,scope.values),
-    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id WHERE starts_at::date=current_date AND ${scope.clause} ORDER BY starts_at`,scope.values),
+    db.query(`SELECT b.*,r.name room_name FROM bookings b JOIN rooms r ON r.id=b.room_id JOIN locations l ON l.id=r.location_id
+      WHERE (b.starts_at AT TIME ZONE l.timezone)::date=(now() AT TIME ZONE l.timezone)::date
+      AND ${scope.clause} ORDER BY starts_at`,scope.values),
     db.query(`SELECT d.status,count(*)::int total FROM devices d JOIN rooms r ON r.id=d.room_id WHERE ${scope.clause} GROUP BY d.status`,scope.values),
     db.query(`SELECT w.id,w.starts_at,w.ends_at,w.responsibility,l.name location_name
       FROM work_shifts w JOIN locations l ON l.id=w.location_id
@@ -1056,9 +1089,16 @@ app.get("/dashboard", auth, async (req, res) => {
       FROM generate_series(current_date-interval '6 days',current_date,interval '1 day') AS days(day)
       LEFT JOIN bookings b ON b.starts_at::date=day::date
       LEFT JOIN rooms r ON r.id=b.room_id
-      GROUP BY day ORDER BY day`,scope.values)
+      GROUP BY day ORDER BY day`,scope.values),
+    db.query(`SELECT l.id,l.name,l.timezone,l.external_id,
+      to_char(now() AT TIME ZONE l.timezone,'YYYY-MM-DD') today
+      FROM locations l WHERE l.external_id IS NOT NULL AND ${locationScope.clause}`,
+      locationScope.values)
   ]);
-  res.json({ rooms:rooms.rows, bookings:bookings.rows, deviceSummary:devices.rows, myShifts:myShifts.rows,
+  const externalBookings=await dashboardExternalBookings(externalLocations.rows,bookings.rows);
+  const dashboardBookings=[...bookings.rows,...externalBookings]
+    .sort((left,right)=>new Date(left.starts_at)-new Date(right.starts_at));
+  res.json({ rooms:rooms.rows, bookings:dashboardBookings, deviceSummary:devices.rows, myShifts:myShifts.rows,
     statistics:statistics.rows[0], recentDays:recentDays.rows });
 });
 

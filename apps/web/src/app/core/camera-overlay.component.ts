@@ -116,22 +116,24 @@ type AIEvent={id:string;type:string;timestamp:string;peopleCount:number;confiden
     .event-item p{grid-column:1/-1;margin:2px 0 0;color:#1e293b}
     .event-item b{grid-column:1/-1;color:#027a48;font-size:10px}
     .empty-events{padding:20px;text-align:center;color:#64748b}
-    :host-context(.dark-theme) .watch,:host-context(.dark-theme) .watch.collapsed{border-color:#344156;background:#111927;box-shadow:0 20px 60px #0008}
-    :host-context(.dark-theme) .collapsed-bar{background:#111927!important;color:#edf2fa!important}
-    :host-context(.dark-theme) .collapsed-bar:hover{background:#182131!important}
-    :host-context(.dark-theme) .collapsed-bar strong{color:#edf2fa}
-    :host-context(.dark-theme) .grid{background:#344156}
-    :host-context(.dark-theme) .grid article,:host-context(.dark-theme) .ai-actions{background:#111927}
-    :host-context(.dark-theme) .grid footer{border-color:#293548;color:#edf2fa}
-    :host-context(.dark-theme) .grid footer small{color:#93a0b3}
-    :host-context(.dark-theme) .chip{background:#202b3d;color:#cbd5e1}
-    :host-context(.dark-theme) .ai-summary{border-color:#293548;background:#151f2e}
-    :host-context(.dark-theme) .ai-summary small{color:#9aa6b8}
-    :host-context(.dark-theme) .ai-summary p{color:#e4eaf3}
-    :host-context(.dark-theme) .ai-btn{border-color:#3b475b!important;background:#1c2636!important;color:#d8dfeb!important}
-    :host-context(.dark-theme) .ai-modal{background:#111927;color:#edf2fa}
-    :host-context(.dark-theme) .ai-modal header,:host-context(.dark-theme) .event-item{border-color:#293548;background:#151f2e}
-    :host-context(.dark-theme) .event-item p{color:#dce4ef}
+    :host-context(.dark-theme) .watch,:host-context(.dark-theme) .watch.collapsed{border-color:#3a3a3a;background:#101010;box-shadow:inset 0 1px #ffffff0a,0 20px 60px #000a}
+    :host-context(.dark-theme) .collapsed-bar{background:#101010!important;color:#ededeb!important}
+    :host-context(.dark-theme) .collapsed-bar:hover{background:#181818!important}
+    :host-context(.dark-theme) .collapsed-bar .camera-icon{border:1px solid #666;background:linear-gradient(145deg,#303030,#171717);box-shadow:inset 0 1px #ffffff1c,0 6px 16px #0008;color:#efefeb}
+    :host-context(.dark-theme) .collapsed-bar strong{color:#ededeb}
+    :host-context(.dark-theme) .expand-arrow{color:#a9a9a5}
+    :host-context(.dark-theme) .grid{background:#333}
+    :host-context(.dark-theme) .grid article,:host-context(.dark-theme) .ai-actions{background:#111}
+    :host-context(.dark-theme) .grid footer{border-color:#292929;color:#ededeb}
+    :host-context(.dark-theme) .grid footer small{color:#92928e}
+    :host-context(.dark-theme) .chip{background:#242424;color:#cececa}
+    :host-context(.dark-theme) .ai-summary{border-color:#292929;background:#171717}
+    :host-context(.dark-theme) .ai-summary small{color:#92928e}
+    :host-context(.dark-theme) .ai-summary p{color:#e4e4e1}
+    :host-context(.dark-theme) .ai-btn{border-color:#3b3b3b!important;background:#1c1c1c!important;color:#d8d8d4!important}
+    :host-context(.dark-theme) .ai-modal{background:#111;color:#ededeb}
+    :host-context(.dark-theme) .ai-modal header,:host-context(.dark-theme) .event-item{border-color:#292929;background:#171717}
+    :host-context(.dark-theme) .event-item p{color:#dcdcd8}
     @media(max-width:760px){.watch{right:8px;bottom:78px;width:min(520px,calc(100vw - 16px));max-width:calc(100vw - 16px)}.watch.single:not(.collapsed){width:min(390px,calc(100vw - 16px))}}
   `]
 })
