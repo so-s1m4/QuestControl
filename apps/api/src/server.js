@@ -3371,9 +3371,7 @@ async function syncTuyaBridgeInventory() {
         // source for the browser.
         const streamPath = camera.rtspSd ? new URL(camera.rtspSd).pathname
           : `${camera.rtspPath || `/${deviceId}`}/sd`.replace(/\/+/g,"/");
-        // Request video only. The Tuya bridge's PCM audio is unreliable and
-        // can make the browser player stall even when H.264 is healthy.
-        const source = `${new URL(streamPath, account.rtspUrl).toString()}?video`;
+        const source = new URL(streamPath, account.rtspUrl).toString();
         const streamKey = bridgeStreamKey(account.id,camera);
         const audioTranscoded=false;
         // Tuya's RTSP relay accepts only one stable reader. A second FFmpeg
