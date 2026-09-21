@@ -3373,14 +3373,10 @@ async function syncTuyaBridgeInventory() {
           : `${camera.rtspPath || `/${deviceId}`}/sd`.replace(/\/+/g,"/");
         const source = new URL(streamPath, account.rtspUrl).toString();
         const streamKey = bridgeStreamKey(account.id,camera);
-        const audioTranscoded=bridgeCameraNeedsAudioTranscode(camera);
-        // Keep video on the direct H264 source. For Tuya's raw PCM (codec 101),
-        // add an Opus-only source that reads the already registered go2rtc
-        // stream, so FFmpeg never opens a second connection to the Windows
-        // bridge and cannot disturb the video reader.
-        const sources=audioTranscoded
-          ? [source,`ffmpeg:${streamKey}#audio=opus`]
-          : [source];
+        const audioTranscoded=false;
+        // The bridge now exposes the camera's negotiated Opus track directly.
+        // Keep one RTSP reader and avoid lossy/delayed re-encoding in FFmpeg.
+        const sources=[source];
         await registerGo2RtcStream(streamKey,sources);
         const externalId = `bridge:${account.id}:${deviceId}`.slice(0,160);
         const name = String(camera.deviceName || camera.name || `Tuya Bridge ${deviceId.slice(-6)}`).slice(0,120);
