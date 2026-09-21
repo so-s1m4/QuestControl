@@ -3334,11 +3334,21 @@ async function bridgeJson(url, timeoutMs=8_000) {
   return response.json();
 }
 
-async function registerGo2RtcStream(name, source) {
+function bridgeCameraNeedsAudioTranscode(camera) {
+  let skill=camera.skill;
+  if (typeof skill === "string") {
+    try { skill=JSON.parse(skill); } catch { return false; }
+  }
+  return Array.isArray(skill?.audios) && skill.audios.some(audio => Number(audio?.codecType) === 101);
+}
+
+async function registerGo2RtcStream(name, sources) {
   const endpoint = new URL("/api/streams", env.GO2RTC_BASE_URL);
   endpoint.searchParams.set("name", name);
-  endpoint.searchParams.set("src", source);
-  const response = await fetch(endpoint, { method:"PATCH", signal:AbortSignal.timeout(8_000) });
+  for (const source of Array.isArray(sources) ? sources : [sources]) endpoint.searchParams.append("src", source);
+  // PUT replaces the complete source set. It keeps the direct RTSP video and,
+  // where necessary, adds a second source that converts raw PCM audio to Opus.
+  const response = await fetch(endpoint, { method:"PUT", signal:AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`go2rtc rejected ${name}: HTTP ${response.status}`);
 }
 
@@ -3359,13 +3369,15 @@ async function syncTuyaBridgeInventory() {
           : `${camera.rtspPath || `/${deviceId}`}/hd`.replace(/\/+/g,"/");
         const source = new URL(hdPath, account.rtspUrl).toString();
         const streamKey = bridgeStreamKey(account.id,camera);
-        await registerGo2RtcStream(streamKey,source);
+        const audioTranscoded=bridgeCameraNeedsAudioTranscode(camera);
+        const sources=audioTranscoded ? [source,`ffmpeg:${source}#audio=opus`] : [source];
+        await registerGo2RtcStream(streamKey,sources);
         const externalId = `bridge:${account.id}:${deviceId}`.slice(0,160);
         const name = String(camera.deviceName || camera.name || `Tuya Bridge ${deviceId.slice(-6)}`).slice(0,120);
         const status = state.loggedIn && (camera.online ?? camera.isOnline ?? true) ? "ONLINE" : "OFFLINE";
         const config = {
           source:"TUYA_LAN_BRIDGE", bridgeAccount:account.id, bridgeDeviceId:deviceId,
-          bridgeApiUrl:account.apiUrl, rtspSource:source,
+          bridgeApiUrl:account.apiUrl, rtspSource:source, audioTranscoded,
         };
         const existing = (await db.query(
           "SELECT id,name,status,stream_key,config FROM cameras WHERE provider='RTSP' AND external_id=$1 LIMIT 1",
