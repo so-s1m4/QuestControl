@@ -655,6 +655,12 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.shi
   color: #bdbdb8 !important;
 }
 html.dark-theme body.management-shell main:not(.checkin-page) > section .bar-column > i {
+  min-height: 3px !important;
+  background: #353535 !important;
+  box-shadow: none !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .bar-column.has-value > i {
+  min-height: 10px !important;
   background: linear-gradient(180deg,#d4d4cf,#73736f) !important;
   box-shadow: 0 5px 14px #0007 !important;
 }

@@ -1150,6 +1150,19 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
         font-weight: 800;
         white-space: nowrap;
       }
+      :host-context(.dark-theme) .player {
+        border: 1px solid #303030;
+        background: linear-gradient(145deg,#1a1a1a,#141414);
+        box-shadow: inset 0 1px #ffffff08;
+      }
+      :host-context(.dark-theme) .player strong { color: #f1f1ee; }
+      :host-context(.dark-theme) .player > span { color: #c2c2bd; }
+      :host-context(.dark-theme) .player > small { color: #92928e; }
+      :host-context(.dark-theme) .player-title .birthday {
+        border: 1px solid #675020;
+        background: #302714;
+        color: #efc574;
+      }
       .checkin-errors {
         display: grid;
         gap: 7px;
@@ -1358,6 +1371,21 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
       }
       .record-backdrop{position:fixed;z-index:2200;inset:0;display:grid;place-items:center;padding:18px;background:#101828aa;backdrop-filter:blur(5px)}.record-dialog{width:min(650px,100%);max-height:calc(100vh - 36px);overflow:auto;border-radius:20px;background:#fff;box-shadow:0 30px 90px #10182855}.record-dialog>header{display:flex;justify-content:space-between;padding:24px 26px 18px;border-bottom:1px solid #eaecf0}.record-dialog>header small{color:#4f46e5;font-weight:800;text-transform:uppercase}.record-dialog h3{margin:4px 0;font-size:23px}.record-dialog header p{margin:0;color:#667085}.record-dialog>header button{padding:0;width:36px;height:36px;background:#f2f4f7;color:#475467;box-shadow:none;font-size:23px}.record-form{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:22px 26px}.record-form label{display:grid;gap:6px;font-weight:700}.record-form .player-count{grid-column:1/-1;width:180px}.record-duration{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:11px;background:#f5f7fa}.payment-fields{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px;border:1px solid #e4e7ec;border-radius:12px;background:#fafbff}.payment-fields label{font-size:12px}.payment-total{display:flex;align-items:end;justify-content:space-between;padding:9px 11px;border-radius:9px;background:#eef2ff;color:#3448a5}.payment-total span{font-size:11px;font-weight:700}.payment-total b{font-size:18px}.magnet-title{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;margin-top:5px}.magnet-title h4,.magnet-title p{margin:0}.magnet-title p{margin-top:3px;color:#667085;font-size:11px}.magnet-title>b{padding:7px 10px;border-radius:9px;background:#fff1f2;color:#b42318}.magnet-title>b.complete{background:#ecfdf3;color:#067647}.magnet-list{grid-column:1/-1;display:grid;gap:7px}.magnet-list>label{display:grid;grid-template-columns:1fr 90px;align-items:center;padding:11px 13px;border:1px solid #e4e7ec;border-radius:11px}.magnet-list>label.recommended{border-color:#a7c8ff;background:#f5f8ff}.magnet-list span b,.magnet-list span small{display:block}.magnet-list span small{margin-top:3px;color:#667085;font-weight:400}.record-error{grid-column:1/-1;margin:0;color:#b42318}.record-form footer{grid-column:1/-1;display:flex;justify-content:flex-end;gap:9px;padding-top:8px}@media(max-width:650px){.record-form{grid-template-columns:1fr;padding:18px}.record-form>*{grid-column:1/-1}.record-form .player-count{width:100%}.payment-fields{grid-template-columns:1fr}.record-dialog>header{padding:20px 18px}}
       .game-picker{grid-column:1/-1}.picker-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.picker-title>span{padding:5px 8px;border-radius:8px;background:#ecfdf3;color:#067647;font-size:10px;font-weight:800}.game-options{display:flex;max-height:146px;flex-wrap:wrap;gap:7px;overflow:auto;margin-top:8px;padding:2px}.game-options button{padding:8px 11px;border:1px solid #e1e5ec;background:#fff;box-shadow:none;color:#475467}.game-options button.selected{border-color:#5d63dc;background:#eef0ff;color:#3f43b5;box-shadow:0 0 0 2px #6c72e51c}.magnet-suggestion{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #dfe4ec;border-radius:12px;background:#f8fafc}.chosen-magnets{display:flex;flex-wrap:wrap;gap:6px}.chosen-magnets span{padding:6px 9px;border-radius:8px;background:#eef0ff;color:#3f4784;font-size:11px}.magnet-list>div{display:grid;grid-template-columns:1fr auto;align-items:center;padding:10px 12px;border:1px solid #e4e7ec;border-radius:11px}.magnet-list>div.recommended{border-color:#a7c8ff;background:#f5f8ff}.stepper{display:grid;grid-template-columns:34px 34px 34px;align-items:center;text-align:center}.stepper button{width:34px;height:34px;padding:0;background:#eef1f6;box-shadow:none;color:#344054}.stepper b{font-size:14px}.no-deduction{justify-self:start;background:transparent;box-shadow:none;color:#b42318}
+      :host-context(.dark-theme) .record-backdrop{background:#000000c4;backdrop-filter:blur(9px)}
+      :host-context(.dark-theme) .record-dialog{border:1px solid #363636;background:#101010;color:#ededeb;box-shadow:0 34px 110px #000d}
+      :host-context(.dark-theme) .record-dialog>header{border-color:#2d2d2d;background:#141414}
+      :host-context(.dark-theme) .record-dialog>header small{color:#9da4ff}
+      :host-context(.dark-theme) .record-dialog header p{color:#999995}
+      :host-context(.dark-theme) .record-dialog>header button{border:1px solid #3a3a3a;background:#1d1d1d;color:#d7d7d2}
+      :host-context(.dark-theme) .record-form label{color:#d8d8d4}
+      :host-context(.dark-theme) .record-duration,:host-context(.dark-theme) .payment-fields,:host-context(.dark-theme) .magnet-suggestion{border:1px solid #333;background:linear-gradient(145deg,#191919,#141414);color:#d8d8d4}
+      :host-context(.dark-theme) .record-duration span,:host-context(.dark-theme) .payment-source{color:#9b9b96}
+      :host-context(.dark-theme) .payment-total{border:1px solid #3d4260;background:#202235;color:#c8ccff}
+      :host-context(.dark-theme) .magnet-title p,:host-context(.dark-theme) .magnet-list span small{color:#999995}
+      :host-context(.dark-theme) .game-options button,:host-context(.dark-theme) .magnet-list>div{border-color:#353535;background:#181818;color:#d4d4d0}
+      :host-context(.dark-theme) .game-options button.selected,:host-context(.dark-theme) .magnet-list>div.recommended{border-color:#626aa0;background:#22253a;color:#e3e5ff}
+      :host-context(.dark-theme) .chosen-magnets span{border:1px solid #454b76;background:#25283d;color:#d5d8ff}
+      :host-context(.dark-theme) .stepper button{border:1px solid #3a3a3a;background:#222;color:#ededeb}
     `,
   ],
 })
