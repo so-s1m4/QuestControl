@@ -2904,7 +2904,10 @@ app.post("/time-to-grow/sessions/record",auth,permit("sessions:create"),async(re
     clubId:z.string().regex(/^[a-z0-9]{26}$/),date:z.string().date(),bookingId:z.string(),gameId:z.string().uuid(),
     startedAt:z.string().datetime({offset:true}),endedAt:z.string().datetime({offset:true}),playerCount:z.number().int().min(0).max(1000),
     deductions:z.array(z.object({itemId:z.string().uuid(),quantity:z.number().int().positive().max(1000)})).max(20)
-  }).refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"}).parse(req.body);
+  })
+    .refine(value=>new Date(value.endedAt)>new Date(value.startedAt),{path:["endedAt"],message:"Invalid session time"})
+    .refine(value=>new Date(value.endedAt)-new Date(value.startedAt)<=2*60*60_000,{path:["endedAt"],message:"Session recording interval cannot exceed 2 hours"})
+    .parse(req.body);
   const location=(await db.query("SELECT id,name,timezone FROM locations WHERE external_id=$1",[input.clubId])).rows[0];
   if(!location) return res.status(404).json({error:"LOCATION_NOT_SYNCED"});
   if(!(await locationAllowed(req,location.id))) return res.status(403).json({error:"LOCATION_FORBIDDEN"});
