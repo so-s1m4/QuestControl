@@ -1097,6 +1097,19 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
         color: #fff;
         box-shadow: none;
       }
+      :host-context(.dark-theme) .booking-controls { border-left-color: #293548; }
+      :host-context(.dark-theme) .booking-controls h4 { color: #edf2fa; }
+      :host-context(.dark-theme) .control-group { border-color: #293548; background: linear-gradient(145deg,#151f2e,#101824); box-shadow: inset 0 1px #ffffff08,0 12px 28px #00000020; }
+      :host-context(.dark-theme) .control-group > span { color: #95a4bc; }
+      :host-context(.dark-theme) .control-group p { color: #9aa6b8; }
+      :host-context(.dark-theme) .checkin-qr-button { background: #202c42; border: 1px solid #3a4b68; color: #eef3fb; }
+      :host-context(.dark-theme) .checkin-link-button { background: #2b211b; border: 1px solid #69412e; color: #f5b783; }
+      :host-context(.dark-theme) .control-link { border-color: #344156; background: #111927; color: #cbd5e1; }
+      :host-context(.dark-theme) .extra-guests-control { border-color: #4e4030; background: linear-gradient(145deg,#211c18,#151b25); }
+      :host-context(.dark-theme) .extra-guests-control p,:host-context(.dark-theme) .extra-guests-control label { color: #c6a982; }
+      :host-context(.dark-theme) .extra-guests-control input { border-color: #4a566a; background: #0d1521; color: #edf2fa; }
+      :host-context(.dark-theme) .extra-guests-button { background: #b74d0b; border: 1px solid #dd6a1b; color: #fff; box-shadow: 0 7px 18px #7c310833; }
+      :host-context(.dark-theme) .start-session { background: linear-gradient(135deg,#6975f5,#4e5de3); border: 1px solid #8590ff; box-shadow: 0 8px 20px #4f5de34a; }
       .session-state {
         display: flex;
       }
