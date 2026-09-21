@@ -3365,9 +3365,13 @@ async function syncTuyaBridgeInventory() {
       for (const camera of cameras) {
         const deviceId = String(camera.deviceId || camera.id || camera.frigateId || "");
         if (!deviceId) continue;
-        const hdPath = camera.rtspHd ? new URL(camera.rtspHd).pathname
-          : `${camera.rtspPath || `/${deviceId}`}/hd`.replace(/\/+/g,"/");
-        const source = new URL(hdPath, account.rtspUrl).toString();
+        // Tuya's HD relay often starts mid-GOP without SPS/PPS, which makes
+        // WebRTC decode hang indefinitely. Its SD relay is H.264 with a
+        // complete decoder configuration and is therefore the reliable live
+        // source for the browser.
+        const streamPath = camera.rtspSd ? new URL(camera.rtspSd).pathname
+          : `${camera.rtspPath || `/${deviceId}`}/sd`.replace(/\/+/g,"/");
+        const source = new URL(streamPath, account.rtspUrl).toString();
         const streamKey = bridgeStreamKey(account.id,camera);
         const audioTranscoded=false;
         // Tuya's RTSP relay accepts only one stable reader. A second FFmpeg
