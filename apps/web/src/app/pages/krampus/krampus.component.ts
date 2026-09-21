@@ -315,10 +315,7 @@ export class KrampusComponent implements OnDestroy {
     this.http.get<RoomCamera[]>("/api/cameras").subscribe({
       next:cameras=>{
         const roomName=this.roomName().split(" · ")[0];
-        let selectedIds:string[]=[];
-        try{const stored=JSON.parse(localStorage.getItem("questcontrol.selectedCameras")||"[]");selectedIds=Array.isArray(stored)?stored:[];}catch{}
-        const selected=new Set(selectedIds);
-        const matches=cameras.filter(camera=>selected.has(camera.id)&&(camera.room_id===this.roomId()||camera.room_name===roomName||/krampus/i.test(camera.room_name||"")));
+        const matches=cameras.filter(camera=>camera.room_id===this.roomId()||camera.room_name===roomName||/krampus/i.test(camera.room_name||""));
         this.roomCameras.set(matches); this.camerasLoading.set(false);
         if(!matches.some(camera=>camera.id===this.activeCameraId())) this.activeCameraId.set(matches.find(camera=>camera.provider==="TUYA")?.id||matches[0]?.id||null);
         for(const camera of matches) this.openCamera(camera);
