@@ -3369,11 +3369,12 @@ async function syncTuyaBridgeInventory() {
           : `${camera.rtspPath || `/${deviceId}`}/hd`.replace(/\/+/g,"/");
         const source = new URL(hdPath, account.rtspUrl).toString();
         const streamKey = bridgeStreamKey(account.id,camera);
-        const audioTranscoded=bridgeCameraNeedsAudioTranscode(camera);
-        // Tuya's RTSP relay is single-session sensitive.  Feed FFmpeg from the
-        // already-connected go2rtc stream instead of opening a second RTSP
-        // connection to the relay for its audio track.
-        const sources=audioTranscoded ? [source,`ffmpeg:${streamKey}#audio=opus`] : [source];
+        const audioTranscoded=false;
+        // Tuya's RTSP relay accepts only one stable reader. A second FFmpeg
+        // source for audio intermittently steals that reader and makes every
+        // video tile black. Keep a single direct source; browser audio remains
+        // available where the camera exposes a compatible codec.
+        const sources=[source];
         await registerGo2RtcStream(streamKey,sources);
         const externalId = `bridge:${account.id}:${deviceId}`.slice(0,160);
         const name = String(camera.deviceName || camera.name || `Tuya Bridge ${deviceId.slice(-6)}`).slice(0,120);
