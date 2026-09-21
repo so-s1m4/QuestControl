@@ -3342,16 +3342,6 @@ function bridgeCameraNeedsAudioTranscode(camera) {
   return Array.isArray(skill?.audios) && skill.audios.some(audio => Number(audio?.codecType) === 101);
 }
 
-function bridgeCameraNeedsVideoTranscode(camera) {
-  let skill=camera.skill;
-  if (typeof skill === "string") {
-    try { skill=JSON.parse(skill); } catch { return false; }
-  }
-  // Chromium advertises HEVC in some WebRTC offers but cannot reliably decode
-  // the Tuya H.265 profile. Send browser-compatible H.264 instead.
-  return Array.isArray(skill?.videos) && skill.videos.some(video => Number(video?.codecType) === 4);
-}
-
 async function registerGo2RtcStream(name, sources) {
   const endpoint = new URL("/api/streams", env.GO2RTC_BASE_URL);
   endpoint.searchParams.set("name", name);
@@ -3380,22 +3370,17 @@ async function syncTuyaBridgeInventory() {
         const source = new URL(hdPath, account.rtspUrl).toString();
         const streamKey = bridgeStreamKey(account.id,camera);
         const audioTranscoded=bridgeCameraNeedsAudioTranscode(camera);
-        const videoTranscoded=bridgeCameraNeedsVideoTranscode(camera);
         // Tuya's RTSP relay is single-session sensitive.  Feed FFmpeg from the
         // already-connected go2rtc stream instead of opening a second RTSP
         // connection to the relay for its audio track.
-        // A single FFmpeg producer avoids exposing Tuya's unreliable HEVC/PCM
-        // tracks to browsers. It opens one RTSP session only when viewed.
-        const sources=videoTranscoded
-          ? [`ffmpeg:${source}#video=h264#audio=opus`]
-          : audioTranscoded ? [source,`ffmpeg:${streamKey}#audio=opus`] : [source];
+        const sources=audioTranscoded ? [source,`ffmpeg:${streamKey}#audio=opus`] : [source];
         await registerGo2RtcStream(streamKey,sources);
         const externalId = `bridge:${account.id}:${deviceId}`.slice(0,160);
         const name = String(camera.deviceName || camera.name || `Tuya Bridge ${deviceId.slice(-6)}`).slice(0,120);
         const status = state.loggedIn && (camera.online ?? camera.isOnline ?? true) ? "ONLINE" : "OFFLINE";
         const config = {
           source:"TUYA_LAN_BRIDGE", bridgeAccount:account.id, bridgeDeviceId:deviceId,
-          bridgeApiUrl:account.apiUrl, rtspSource:source, audioTranscoded, videoTranscoded,
+          bridgeApiUrl:account.apiUrl, rtspSource:source, audioTranscoded,
         };
         const existing = (await db.query(
           "SELECT id,name,status,stream_key,config FROM cameras WHERE provider='RTSP' AND external_id=$1 LIMIT 1",
