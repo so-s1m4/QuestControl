@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Turn cheap Tuya / Smart Life / iSmartLife cameras into local RTSP for Frigate and Agent DVR. No ONVIF, no firmware flash.">
+  <title>Tuya RTSP Bridge</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/logo.png">
+  <style>
+    :root {
+      --bg: #0c100c;
+      --panel: #141a14;
+      --ink: #c8e6b8;
+      --dim: #6f8a62;
+      --line: #2a3628;
+      --amber: #e2b13c;
+      --ok: #7dce6a;
+      --bad: #d36b58;
+      --hit: 44px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background:
+        repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.18) 3px),
+        var(--bg);
+      color: var(--ink);
+      font: 16px/1.4 "Segoe UI", "IBM Plex Sans", sans-serif;
+      min-height: 100vh;
+    }
+    button, select, input { font: inherit; color: inherit; }
+    button {
+      cursor: pointer;
+      border: 1px solid var(--line);
+      background: #1b231b;
+      min-height: var(--hit);
+      padding: 0 14px;
+    }
+    button:hover { border-color: var(--amber); color: var(--amber); }
+    button.pri { background: var(--amber); color: #1a1404; border-color: var(--amber); font-weight: 700; }
+    button.pri:hover { filter: brightness(1.06); color: #1a1404; }
+    button.ghost { background: transparent; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    .wrap {
+      width: min(1920px, 100%);
+      height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: 72px 1fr;
+    }
+    header.top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    header.top .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header.top .brand img {
+      width: 32px;
+      height: 32px;
+      display: block;
+    }
+    header.top h1 {
+      font-size: 22px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    header.top h1 span { color: var(--amber); }
+    .chips { display: flex; gap: 8px; }
+    .chip {
+      font: 12px/1 Consolas, "IBM Plex Mono", monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      color: var(--dim);
+    }
+    .chip.ok { color: var(--ok); border-color: #355034; }
+    .chip.wait { color: var(--amber); border-color: #5a4710; }
+    .chip.bad { color: var(--bad); border-color: #5a2e28; }
+    .shell {
+      display: grid;
+      grid-template-columns: 360px 1fr 400px;
+      min-height: 0;
+    }
+    .rail, .ops, .main { min-height: 0; overflow: auto; }
+    .rail { border-right: 1px solid var(--line); padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+    .ops { border-left: 1px solid var(--line); padding: 22px; background: #101610; }
+    .main { padding: 22px 26px; }
+    label.k { display: block; color: var(--dim); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+    select {
+      width: 100%; background: #0e140e; border: 1px solid var(--line);
+      min-height: var(--hit); padding: 0 10px;
+    }
+    .qr-wrap {
+      background: #fff; padding: 10px; aspect-ratio: 1;
+      display: grid; place-items: center;
+    }
+    .qr-wrap img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+    .qr-wrap .ph { color: #666; text-align: center; }
+    .hint { color: var(--dim); font-size: 14px; }
+    .hint strong { color: var(--ink); }
+    .user .n { font-weight: 700; }
+    .user .e { color: var(--dim); font-family: Consolas, monospace; font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px 16px 14px;
+      margin-bottom: 12px;
+    }
+    .card h3 { font-size: 18px; margin-bottom: 4px; }
+    .id { color: var(--dim); font-family: Consolas, monospace; font-size: 12px; word-break: break-all; }
+    .url { font-family: Consolas, monospace; font-size: 14px; word-break: break-all; margin: 10px 0; }
+    .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .ptz {
+      display: grid; grid-template-columns: repeat(3, 44px); gap: 6px; justify-content: end;
+    }
+    .ptz button { width: 44px; padding: 0; font-size: 16px; font-weight: 700; }
+    .sw {
+      display: flex; align-items: center; gap: 12px;
+      min-height: 48px; border-bottom: 1px solid var(--line);
+      padding: 6px 0; cursor: pointer; user-select: none;
+    }
+    .sw input { width: 20px; height: 20px; accent-color: var(--amber); }
+    .sw .t { font-weight: 600; }
+    .sw .d { color: var(--dim); font-size: 13px; }
+    .ops h2 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 8px 0 10px; }
+    .ops .stack { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 22px; }
+    .ops .stack button { width: 100%; }
+    .empty { border: 1px dashed var(--line); padding: 28px; color: var(--dim); }
+    pre {
+      background: #0e140e; border: 1px solid var(--line); padding: 12px;
+      font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; max-height: 160px; overflow: auto;
+    }
+    .log { color: var(--dim); font: 11px/1.4 Consolas, monospace; max-height: 110px; overflow: auto; margin-top: 10px; }
+    .ico { width: 16px; height: 16px; display: inline-block; vertical-align: -2px; margin-right: 6px; }
+    @media (max-width: 1400px) {
+      .shell { grid-template-columns: 300px 1fr 340px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <img src="/logo.svg" width="32" height="32" alt="">
+        <h1><span>Tuya</span> RTSP Bridge</h1>
+      </div>
+      <div class="chips">
+        <div class="chip" id="rtspChip">RTSP</div>
+        <div class="chip" id="wdChip">Watchdog</div>
+        <div class="chip" id="hlsChip">HLS</div>
+        <div class="chip" id="phaseChip">…</div>
+      </div>
+    </header>
+    <div class="shell">
+      <aside class="rail">
+        <div>
+          <label class="k" for="region">Server</label>
+          <select id="region"></select>
+        </div>
+        <div class="qr-wrap" id="qrBox"><div class="ph">No QR</div></div>
+        <p class="hint" id="hint">Smart Life: <strong>scan</strong>, then confirm.</p>
+        <div class="actions">
+          <button class="pri" id="btnQr">Create QR</button>
+          <button class="ghost" id="btnOut">Sign out</button>
+        </div>
+        <div class="user" id="userBox" hidden>
+          <div class="n" id="userName"></div>
+          <div class="e" id="userMail"></div>
+        </div>
+      </aside>
+      <section class="main">
+        <div class="row" style="margin-bottom:14px">
+          <div>
+            <label class="k" style="margin:0">Cameras · HD only</label>
+            <div id="camCount" class="id">0</div>
+          </div>
+          <div class="actions">
+            <button id="btnRefresh">Refresh cameras</button>
+          </div>
+        </div>
+        <div id="camTable"></div>
+        <div style="margin-top:18px">
+          <div class="row" style="margin-bottom:8px">
+            <label class="k" style="margin:0">Frigate YAML</label>
+            <button id="btnYaml">Copy</button>
+          </div>
+          <pre id="yamlBox"># after login</pre>
+        </div>
+        <div class="log" id="logBox"></div>
+      </section>
+      <aside class="ops">
+        <h2>Switches</h2>
+        <label class="sw"><input type="checkbox" id="fRtsp"><div><div class="t">RTSP engine</div><div class="d">:8554 for Agent / Frigate</div></div></label>
+        <label class="sw"><input type="checkbox" id="fWd"><div><div class="t">Watchdog</div><div class="d">restarts dead streams</div></div></label>
+        <label class="sw"><input type="checkbox" id="fHls"><div><div class="t">HLS / VLC</div><div class="d">expensive x264 transcode</div></div></label>
+        <label class="sw"><input type="checkbox" id="fArch"><div><div class="t">Bridge archive</div><div class="d">else Agent / Frigate</div></div></label>
+        <h2>Restart</h2>
+        <div class="stack">
+          <button id="btnRstRtsp">Restart engine (:8554)</button>
+          <button id="btnRstUi">Restart UI</button>
+          <button id="btnRstAll">Restart all</button>
+        </div>
+        <p class="hint">Agent stays on <strong>…/hd</strong>. Turn HLS on only if you need VLC.</p>
+      </aside>
+    </div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let lastQrId = "";
+    let yamlText = "";
+    let applying = false;
+
+    function chip(el, text, kind) {
+      el.textContent = text;
+      el.className = "chip" + (kind ? " " + kind : "");
+    }
+    async function api(path, body) {
+      const res = await fetch(path, body ? {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(body),
+      } : undefined);
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { msg = (await res.json()).error || msg; } catch {}
+        throw new Error(msg);
+      }
+      return res.json();
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    }
+    function render(s) {
+      const sel = $("region");
+      if (!sel.dataset.ready) {
+        sel.innerHTML = "";
+        Object.entries(s.regions || {}).forEach(([id, r]) => {
+          const o = document.createElement("option");
+          o.value = id;
+          o.textContent = r.label + " — " + r.host;
+          sel.appendChild(o);
+        });
+        sel.dataset.ready = "1";
+      }
+      if (document.activeElement !== sel) sel.value = s.region;
+
+      const phaseMap = { idle:["Ready",""], waiting:["Waiting scan","wait"], logged_in:["Signed in","ok"], error:["Error","bad"] };
+      const [pt, pk] = phaseMap[s.phase] || [s.phase, ""];
+      chip($("phaseChip"), pt, pk);
+      chip($("rtspChip"), s.rtsp && s.rtsp.running ? "RTSP :" + s.rtsp.port : "RTSP off", s.rtsp && s.rtsp.running ? "ok" : "");
+      chip($("wdChip"), s.watchdogRunning ? "Watchdog on" : "Watchdog off", s.watchdogRunning ? "ok" : "");
+      chip($("hlsChip"), s.hlsRunning ? "HLS on" : "HLS off", s.hlsRunning ? "wait" : "");
+
+      $("hint").innerHTML = s.message
+        ? (s.pollCount ? (s.message + " · Poll " + s.pollCount) : s.message)
+        : "Smart Life: <strong>scan</strong>, then confirm.";
+
+      const box = $("qrBox");
+      if (s.hasQr) {
+        if (s.qrId !== lastQrId) {
+          box.innerHTML = `<img alt="Login-QR" src="/api/qr.png?id=${encodeURIComponent(s.qrId)}">`;
+          lastQrId = s.qrId;
+        }
+      } else if (s.phase !== "waiting") {
+        box.innerHTML = `<div class="ph">${s.loggedIn ? "Session active" : "No QR"}</div>`;
+        lastQrId = "";
+      }
+
+      $("userBox").hidden = !s.user;
+      if (s.user) {
+        $("userName").textContent = s.user.nickname || "Account";
+        $("userMail").textContent = s.user.email || s.user.uid;
+      }
+
+      $("camCount").textContent = (s.cameras||[]).length + " · " + s.lanIp + ":" + s.rtsp.port;
+
+      const flags = s.flags || {};
+      if (!applying) {
+        $("fRtsp").checked = !!flags.rtsp;
+        $("fWd").checked = !!flags.watchdog;
+        $("fHls").checked = !!flags.hls;
+        $("fArch").checked = !!flags.archive;
+      }
+
+      if (!(s.cameras||[]).length) {
+        $("camTable").innerHTML = `<div class="empty">${s.loggedIn ? ((s.discovery && s.discovery.note) || "No cameras.") : "HD links appear after you scan."}</div>`;
+      } else {
+        $("camTable").innerHTML = s.cameras.map(c => `
+          <article class="card">
+            <div class="row">
+              <div>
+                <h3>${escapeHtml(c.deviceName)}</h3>
+                <div class="id">${escapeHtml(c.deviceId)}</div>
+                <div class="url">${escapeHtml(c.rtspHd)}</div>
+                <button data-copy="${encodeURIComponent(c.rtspHd)}">Copy HD</button>
+              </div>
+              <div class="ptz">
+                <div></div>
+                <button class="ptz-btn" data-ptz="${c.deviceId}" data-dir="up">↑</button>
+                <div></div>
+                <button class="ptz-btn" data-ptz="${c.deviceId}" data-dir="left">←</button>
+                <button class="ptz-btn" data-ptz="${c.deviceId}" data-dir="stop">■</button>
+                <button class="ptz-btn" data-ptz="${c.deviceId}" data-dir="right">→</button>
+                <div></div>
+                <button class="ptz-btn" data-ptz="${c.deviceId}" data-dir="down">↓</button>
+                <div></div>
+              </div>
+            </div>
+          </article>`).join("");
+        $("camTable").querySelectorAll("[data-copy]").forEach(b => {
+          b.onclick = () => {
+            const t = b.textContent;
+            navigator.clipboard.writeText(decodeURIComponent(b.dataset.copy));
+            b.textContent = "ok";
+            setTimeout(() => b.textContent = t, 800);
+          };
+        });
+        $("camTable").querySelectorAll(".ptz-btn").forEach(b => {
+          const send = async (dir) => {
+            try {
+              await api("/api/ptz/move", { deviceId: b.dataset.ptz, direction: dir });
+            } catch (e) { console.error(e); }
+          };
+          if (b.dataset.dir === "stop") { b.onclick = () => send("stop"); return; }
+          let held = false;
+          const start = (ev) => { ev.preventDefault(); held = true; send(b.dataset.dir); };
+          const end = () => { if (!held) return; held = false; send("stop"); };
+          b.onpointerdown = start;
+          b.onpointerup = end;
+          b.onpointerleave = end;
+          b.onpointercancel = end;
+        });
+      }
+
+      let y = "# no cameras yet";
+      if ((s.cameras||[]).length) {
+        y = "mqtt:\n  enabled: false\n\ncameras:\n";
+        s.cameras.forEach(c => {
+          y += `  ${c.frigateId}:\n    ffmpeg:\n      inputs:\n        - path: ${c.rtspHd}\n          roles: [detect, record]\n`;
+        });
+      }
+      yamlText = y;
+      $("yamlBox").textContent = y;
+      $("logBox").textContent = [s.lastPoll, ...((s.rtsp && s.rtsp.log) || [])].filter(Boolean).join("\n");
+      $("btnRefresh").disabled = !s.loggedIn;
+    }
+
+    async function setFlags(partial) {
+      applying = true;
+      try {
+        render(await api("/api/flags", {
+          rtsp: $("fRtsp").checked,
+          watchdog: $("fWd").checked,
+          hls: $("fHls").checked,
+          archive: $("fArch").checked,
+          ...partial,
+        }));
+      } catch (e) {
+        chip($("phaseChip"), e.message, "bad");
+      } finally {
+        applying = false;
+      }
+    }
+
+    ["fRtsp","fWd","fHls","fArch"].forEach(id => {
+      $(id).onchange = () => setFlags();
+    });
+    $("btnQr").onclick = async () => {
+      lastQrId = "";
+      render(await api("/api/qr/start", { region: $("region").value }));
+    };
+    $("btnOut").onclick = async () => {
+      lastQrId = "";
+      render(await api("/api/logout", {}));
+    };
+    $("btnRefresh").onclick = async () => render(await api("/api/cameras/refresh", {}));
+    $("btnYaml").onclick = () => navigator.clipboard.writeText(yamlText);
+    $("btnRstRtsp").onclick = async () => render(await api("/api/restart/rtsp", {}));
+    $("btnRstUi").onclick = async () => { await api("/api/restart/ui", {}); };
+    $("btnRstAll").onclick = async () => { await api("/api/restart/all", {}); };
+
+    async function tick() {
+      try { render(await api("/api/state")); }
+      catch (e) { chip($("phaseChip"), e.message, "bad"); }
+    }
+    tick();
+    setInterval(tick, 1500);
+  </script>
+</body>
+</html>

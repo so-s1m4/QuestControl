@@ -59,6 +59,22 @@ const env = z.object({
   TUYA_BRIDGE_ACCOUNT_2_API_URL: z.string().url().optional(),
   TUYA_BRIDGE_ACCOUNT_2_RTSP_URL: z.string().url().optional(),
   TUYA_BRIDGE_ACCOUNT_2_ENABLED: z.enum(["true","false"]).default("false").transform(value=>value==="true"),
+  TUYA_BRIDGE_ACCOUNTS_JSON: z.string().default("[]").transform((value, ctx) => {
+    try {
+      return z.array(z.object({
+        id: z.string().regex(/^[A-Za-z0-9_-]+$/),
+        apiUrl: z.string().url(),
+        rtspUrl: z.string().url(),
+        enabled: z.boolean().default(true),
+      })).parse(JSON.parse(value));
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `TUYA_BRIDGE_ACCOUNTS_JSON must be a JSON array of bridge definitions: ${error.message}`,
+      });
+      return z.NEVER;
+    }
+  }),
   GO2RTC_BASE_URL: z.string().url().default("http://127.0.0.1:1984"),
   AI_SERVICE_URL: z.string().url().default("http://127.0.0.1:8088"),
   TIME_TO_GROW_BASE_URL: z.string().url().default("https://api.time-to-grow.com"),
@@ -3315,10 +3331,19 @@ async function syncTuyaCameraInventory() {
   }
 }
 
-const tuyaBridgeAccounts = [
+const configuredTuyaBridgeAccounts = [
   { id:"account-1", enabled:true, apiUrl:env.TUYA_BRIDGE_ACCOUNT_1_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_1_RTSP_URL },
   { id:"account-2", enabled:env.TUYA_BRIDGE_ACCOUNT_2_ENABLED, apiUrl:env.TUYA_BRIDGE_ACCOUNT_2_API_URL, rtspUrl:env.TUYA_BRIDGE_ACCOUNT_2_RTSP_URL },
+  ...env.TUYA_BRIDGE_ACCOUNTS_JSON,
 ].filter(account => account.enabled && account.apiUrl && account.rtspUrl);
+
+const duplicateTuyaBridgeAccount = configuredTuyaBridgeAccounts.find((account, index, accounts) =>
+  accounts.findIndex(candidate => candidate.id === account.id) !== index
+);
+if (duplicateTuyaBridgeAccount) {
+  throw new Error(`Duplicate Tuya bridge account id: ${duplicateTuyaBridgeAccount.id}`);
+}
+const tuyaBridgeAccounts = configuredTuyaBridgeAccounts;
 
 const bridgeStreamKey = (accountId, camera) => {
   const identity=camera.deviceId ? `${camera.frigateId || camera.deviceName || "camera"}_${camera.deviceId}`

@@ -1,0 +1,11 @@
+streams:
+  lsc_ptz:
+    - rtsp://host.docker.internal:8554/LSC_PTZ_Camera/hd
+
+api:
+  listen: ":1984"
+
+webrtc:
+  listen: ":8555"
+  candidates:
+    - 192.168.31.73:8555
