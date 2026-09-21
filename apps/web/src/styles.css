@@ -401,6 +401,27 @@ html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(.time-table article,.booking-list>div,.movement,.roster-row) {
   border-color: #252525 !important;
 }
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-list > div:not(.empty) {
+  background: #0d0d0d !important;
+  color: #ededeb !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-list time {
+  color: #d7d7d2 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-list p b {
+  color: #f3f3f0 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-list p small {
+  color: #92928e !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-list > div > span {
+  background: #302817 !important;
+  color: #e8bd70 !important;
+}
+html.dark-theme body.management-shell main:not(.checkin-page) > section .booking-list > div > span.confirmed {
+  background: #173126 !important;
+  color: #7bd7aa !important;
+}
 html.dark-theme body.management-shell main:not(.checkin-page) > section :is(
   .quick-adjust,.calendar-head,.calendar-grid,.calendar-day,.weekdays,.queue-toolbar,
   .sample-list,.sample-card,.sample-actions-bar,.camera-table article,.archived article,
