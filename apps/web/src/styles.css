@@ -872,9 +872,8 @@ html.dark-theme body.management-shell .shares-panel :is(.share-summary article,.
 }
 html.dark-theme body.management-shell .shares-panel .share-list { scrollbar-color: #4a4a4a #151515; }
 html.dark-theme body.management-shell .shares-panel .share-list.has-items {
+  min-height: 0 !important;
   display: block !important;
-  min-height: 160px !important;
-  height: auto !important;
 }
 html.dark-theme body.management-shell .shares-panel :is(.share-main p,.share-main small,.share-list-hint,header p) { color: #92928e !important; }
 html.dark-theme body.management-shell .shares-panel .revoke-button {
