@@ -29,12 +29,12 @@ import { ActivityIntelligenceEngine } from "./activity-intelligence-engine.js";
 import { CameraVisionController } from "./camera-vision-controller.js";
 import { CameraAIAgent } from "./camera-ai-agent.js";
 import { runMigrations } from "./migrator.js";
+import { CheckinOutbox, matchesSubmittedParticipant } from "./checkin-outbox.js";
+import { findPaginatedCheckinRecord, checkinVisitFromBooking, resolveCheckinBooking } from "./checkin-reservations.js";
 import { startAiWorkerSyncSupervisor } from "./ai-worker-supervisor.js";
 import {
-  checkinTokenMatches,
   createCheckinToken,
   createExtraGuestAuthorization,
-  isCheckinToken,
   readCheckinToken,
   readExtraGuestAuthorization,
 } from "./checkin-links.js";
@@ -1801,16 +1801,12 @@ const checkinParticipantInput = z.object({
   extraAuthorization: z.string().max(300).optional().default(""),
 });
 
-const timeToGrowAppVisitsPath = async (clubId, filtering) => {
+const timeToGrowAppVisitsPath = async (clubId, filtering, page = 1) => {
   const config=await timeToGrowConfig();
   const query = new URLSearchParams({ filtering: JSON.stringify(filtering) });
-  if (filtering.upcoming) query.set("pagination", JSON.stringify({ page: 1, size: 30 }));
+  query.set("pagination", JSON.stringify({ page, size: 100 }));
   return `${timeToGrowPath(config.paths.appVisits,clubId)}?${query}`;
 };
-
-const timeToGrowDataRows = (payload) => Array.isArray(payload?.data)
-  ? payload.data
-  : (payload?.data && typeof payload.data === "object" ? [payload.data] : []);
 
 const firstText = (...values) => values.find(value => typeof value === "string" && value.trim())?.trim() || null;
 const firstNumber = (...values) => {
@@ -1893,69 +1889,80 @@ const checkinDocumentTranslations = (value) => Object.fromEntries(["de","en"].fl
   }
 }));
 
-const configuredCheckinLocations = async () => {
-  const config=await timeToGrowConfig();
-  return [{location:"st-poelten",clubId:config.defaultClubId},{location:"vienna",clubId:config.viennaClubId}].filter(item=>item.clubId);
-};
-
-async function resolveCheckinToken(token) {
-  if (!isCheckinToken(token)) return null;
-  const signed = readCheckinToken(token,env.JWT_ACCESS_SECRET);
-  if (signed) {
-    const response = await timeToGrowAppFetch(await timeToGrowAppVisitsPath(signed.clubId,{ upcoming:true }));
-    if (!response.ok) {
-      const error = new Error("Time to Grow visits request failed");
-      error.code = "TIME_TO_GROW_REQUEST_FAILED";
-      throw error;
-    }
-    const visits = timeToGrowDataRows(await response.json());
-    const visit = visits.find(item => String(item?.booking_id || item?.booking?.id || "") === signed.bookingId);
-    if (!visit) return null;
-    const config=await timeToGrowConfig();
-    const viennaClubIds = new Set([config.viennaClubId].filter(Boolean));
-    return { location:viennaClubIds.has(signed.clubId) ? "vienna" : "st-poelten",clubId:signed.clubId,visit };
-  }
-  const results = await Promise.all((await configuredCheckinLocations()).map(async ({ location,clubId }) => {
-    const response = await timeToGrowAppFetch(await timeToGrowAppVisitsPath(clubId, { upcoming:true }));
-    if (!response.ok) {
-      const error = new Error("Time to Grow visits request failed");
-      error.code = "TIME_TO_GROW_REQUEST_FAILED";
-      throw error;
-    }
-    const visits = timeToGrowDataRows(await response.json());
-    const visit = visits.find(item => {
-      const bookingId = String(item?.booking_id || item?.booking?.id || "");
-      return timeToGrowId.safeParse(bookingId).success
-        && checkinTokenMatches(token, env.JWT_ACCESS_SECRET, clubId, bookingId);
-    });
-    return visit ? { location,clubId,visit } : null;
-  }));
-  return results.find(Boolean) || null;
+async function rememberCheckinReservation(clubId, bookingId, snapshot) {
+  const {documents,...bookingSnapshot}=snapshot;
+  await db.query(`
+    INSERT INTO checkin_reservations(club_id,booking_id,encrypted_snapshot,encrypted_documents)
+    VALUES($1,$2,$3,$4)
+    ON CONFLICT(club_id,booking_id) DO UPDATE SET
+      encrypted_snapshot=excluded.encrypted_snapshot,
+      encrypted_documents=COALESCE(excluded.encrypted_documents,checkin_reservations.encrypted_documents),
+      updated_at=now()
+  `,[clubId,bookingId,encryptSetting(bookingSnapshot),documents?encryptSetting(documents):null]);
 }
 
-async function checkinReservationFromToken(token) {
+async function findCheckinRecord(clubId, matches, admin = false, filtering = {}) {
+  const config=await timeToGrowConfig();
+  return findPaginatedCheckinRecord(async page => {
+    const path=admin
+      ? `${timeToGrowPath(config.paths.bookings,clubId)}?${new URLSearchParams({
+          filtering:JSON.stringify({view_mode:"bookings",...filtering}),pagination:JSON.stringify({page,size:100}),
+        })}`
+      : await timeToGrowAppVisitsPath(clubId,{},page);
+    const response=await (admin?timeToGrowFetch(path):timeToGrowAppFetch(path));
+    if(!response.ok) {
+      const error=new Error("Time to Grow booking request failed");
+      error.code="TIME_TO_GROW_REQUEST_FAILED";
+      throw error;
+    }
+    return response.json();
+  },matches);
+}
+
+async function resolveCheckinToken(token) {
+  return resolveCheckinBooking(token,{
+    secret:env.JWT_ACCESS_SECRET,
+    config:await timeToGrowConfig(),
+    async readSnapshots(signed) {
+      const rows=(await db.query(signed
+        ? "SELECT * FROM checkin_reservations WHERE club_id=$1 AND booking_id=$2"
+        : "SELECT * FROM checkin_reservations",
+        signed?[signed.clubId,signed.bookingId]:[],
+      )).rows;
+      return rows.map(row=>({clubId:row.club_id,bookingId:row.booking_id,snapshot:{
+        ...decryptSetting(row.encrypted_snapshot),documents:decryptSetting(row.encrypted_documents),
+      }}));
+    },
+    findRecord:findCheckinRecord,
+  });
+}
+
+async function checkinReservationFromToken(token,{refreshDocuments=true}={}) {
   const resolved = await resolveCheckinToken(token);
   if (!resolved) return null;
   const { location,clubId,visit } = resolved;
-  const visitId = String(visit.id || "");
   const bookingId = String(visit.booking_id || visit.booking?.id || "");
-  if (!timeToGrowId.safeParse(visitId).success || !timeToGrowId.safeParse(bookingId).success) return null;
+  const visitId = String(visit.id || bookingId);
+  if (!timeToGrowId.safeParse(bookingId).success) return null;
   const date = visitDate(visit);
-  const [bookings,clubResponse] = await Promise.all([
-    date ? fetchTimeToGrowBookings(clubId,date) : [],
-    timeToGrowConfig().then(config=>timeToGrowAppFetch(timeToGrowPath(config.paths.appClub,clubId))),
-  ]);
-  if (!clubResponse.ok) {
-    const error = new Error("Time to Grow club request failed");
-    error.code = "TIME_TO_GROW_REQUEST_FAILED";
-    throw error;
+  let booking=resolved.booking;
+  // A saved booking is sufficient even before/after the upstream visit window.
+  // Fetch only when visit data does not include its guest count.
+  if(!booking&&!firstCount(visit.size,visit.guests,visit.players_count,visit.booking_size,visit.number_of_players,visit.booking?.size)) {
+    booking=await findCheckinRecord(clubId,item=>item.id===bookingId,true,date?{start_date:date}:{});
   }
-  const club = (await clubResponse.json().catch(() => null))?.data;
-  const documents = {
-    waiver:checkinDocumentTranslations(club?.documents?.info_url_translations),
-    privacy:checkinDocumentTranslations(club?.documents?.privacy_url_translations),
-  };
-  const booking = bookings.find(item => item.id === bookingId);
+  let documents=resolved.documents;
+  try {
+    if(refreshDocuments||!documents) {
+      const config=await timeToGrowConfig();
+      const clubResponse=await timeToGrowAppFetch(timeToGrowPath(config.paths.appClub,clubId));
+      if(!clubResponse.ok) throw Object.assign(new Error("Time to Grow club request failed"),{code:"TIME_TO_GROW_REQUEST_FAILED"});
+      const club=(await clubResponse.json())?.data;
+      documents={waiver:checkinDocumentTranslations(club?.documents?.info_url_translations),privacy:checkinDocumentTranslations(club?.documents?.privacy_url_translations)};
+    }
+  } catch(error) {
+    if(!documents) throw error;
+  }
   const guests = booking?.size ?? firstCount(
     visit.size, visit.guests, visit.players_count, visit.booking_size,
     visit.number_of_players, visit.booking?.size, visit.booking?.players_count,
@@ -1965,15 +1972,34 @@ async function checkinReservationFromToken(token) {
     error.code = "TIME_TO_GROW_BOOKING_SIZE_UNAVAILABLE";
     throw error;
   }
+  await rememberCheckinReservation(clubId,bookingId,{visit,booking,documents});
   return {
-    location,
-    clubId,
-    visit,
-    booking,
-    documents,
-    reservation:{ visitId,bookingId,time:visitTime(visit),room:visitLabel(visit),name:visitCustomer(visit),guests },
+    location,clubId,visit,booking,documents,
+    reservation:{visitId,bookingId,time:visitTime(visit),room:visitLabel(visit),name:visitCustomer(visit),guests},
   };
 }
+
+const checkinOutbox=new CheckinOutbox({
+  db,encrypt:encryptSetting,decrypt:decryptSetting,
+  async findParticipant({clubId,bookingId,bookingDate,input}) {
+    if(!bookingDate) throw Object.assign(new Error("Booking date is unavailable"),{code:"TIME_TO_GROW_BOOKING_DATE_UNAVAILABLE"});
+    const booking=await findCheckinRecord(clubId,item=>item.id===bookingId,true,{start_date:bookingDate});
+    if(!booking) throw Object.assign(new Error("Booking is not available for reconciliation"),{code:"TIME_TO_GROW_BOOKING_UNAVAILABLE"});
+    return (booking.players||[]).find(player=>matchesSubmittedParticipant(player,input))||null;
+  },
+  async sendParticipant({clubId,bookingId,input}) {
+    const config=await timeToGrowConfig();
+    return timeToGrowAppFetch(timeToGrowPath(config.paths.appBookingMembers,clubId),{
+      method:"POST",
+      body:JSON.stringify({
+        booking_id:bookingId,first_name:input.firstName,last_name:input.lastName,
+        email:input.email,phone:input.phone,birthday:input.birthday,gender:input.gender,
+        allow_marketing_materials:input.allowMarketingMaterials,
+        accept_waiver:input.acceptWaiver,accept_privacy_policy:input.acceptPrivacyPolicy,
+      }),
+    });
+  },
+});
 
 const checkinGuestLimit = (token,reservation,extraAuthorization) => {
   const grant = readExtraGuestAuthorization(extraAuthorization,env.JWT_ACCESS_SECRET,token);
@@ -2042,9 +2068,8 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
     return res.status(400).json({ error: "INVALID_INPUT" });
   }
   const input = parsed.data;
-  let submissionKey=null;
   try {
-    const resolved = await checkinReservationFromToken(req.params.token);
+    const resolved = await checkinReservationFromToken(req.params.token,{refreshDocuments:false});
     if (!resolved) {
       await recordCheckinFailure(req,signedToken?.bookingId,{code:"CHECKIN_LINK_INVALID",participantNumber:input.participantNumber||null});
       return res.status(404).json({ error:"CHECKIN_LINK_INVALID" });
@@ -2057,63 +2082,23 @@ app.post("/reception/checkin/:token/participants", rateLimit({ windowMs: 60_000,
       await recordCheckinFailure(req,reservation.bookingId,{code:"EXTRA_GUEST_AUTHORIZATION_REQUIRED",participantNumber,totalGuests,clubId});
       return res.status(403).json({error:"EXTRA_GUEST_AUTHORIZATION_REQUIRED"});
     }
-    const tokenHash=crypto.createHash("sha256").update(req.params.token,"utf8").digest("hex");
-    // Participant numbers belong to a browser session: every phone that opens
-    // the QR code starts at participant 1.  Deduplicating by that number made
-    // simultaneous self check-ins from different devices block each other.
-    // Claim the submitted form instead, so a retry of the same person remains
-    // idempotent without treating other guests as duplicates.
-    const submissionFingerprint=crypto.createHash("sha256").update(JSON.stringify([
-      input.firstName.trim().toLocaleLowerCase("en"),
-      input.lastName.trim().toLocaleLowerCase("en"),
-      input.email.trim().toLocaleLowerCase("en"),
-      input.phone.trim(),
-      input.birthday,
-      input.gender,
-    ])).digest("hex");
-    submissionKey=`checkin-submission:v2:${tokenHash}:${submissionFingerprint}`;
-    const claimed=await redis.set(submissionKey,req.requestId,"EX",48*60*60,"NX");
-    if(claimed!=="OK") {
-      await recordCheckinFailure(req,reservation.bookingId,{code:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED",participantNumber,totalGuests,clubId});
-      return res.status(409).json({error:"CHECKIN_PARTICIPANT_ALREADY_SUBMITTED"});
+    // Save durably before attempting the external write. Browser retries and
+    // submissions from multiple devices share the same booking/person key.
+    const submission=await checkinOutbox.enqueue(clubId,reservation.bookingId,input,visitDate(resolved.visit));
+    let result=submission.completed_at?{completed:true,participantId:submission.participant_id}:null;
+    if(!submission.completed_at) {
+      try { result=await checkinOutbox.process(submission.id); }
+      catch(error) { console.error("Check-in saved; immediate delivery failed",{submissionId:submission.id,code:error?.code||error?.name}); }
     }
-
-    const config=await timeToGrowConfig();
-    const response = await timeToGrowAppFetch(
-      timeToGrowPath(config.paths.appBookingMembers,clubId),
-      {
-        method: "POST",
-        body: JSON.stringify({
-          booking_id: reservation.bookingId,
-          first_name: input.firstName,
-          last_name: input.lastName,
-          email: input.email,
-          phone: input.phone,
-          birthday: input.birthday,
-          gender: input.gender,
-          allow_marketing_materials: input.allowMarketingMaterials,
-          accept_waiver: input.acceptWaiver,
-          accept_privacy_policy: input.acceptPrivacyPolicy,
-        }),
-      },
-    );
-    if (!response.ok) {
-      await redis.del(submissionKey);
-      const status = response.status === 409 || response.status === 422 ? response.status : 502;
-      await recordCheckinFailure(req,reservation.bookingId,{code:"TIME_TO_GROW_SUBMISSION_FAILED",participantNumber,totalGuests,clubId,upstreamStatus:response.status});
-      return res.status(status).json({ error: "TIME_TO_GROW_SUBMISSION_FAILED" });
-    }
-    const payload = await response.json().catch(() => null);
-    void sendTelegramImportantLog("checkinCompleted", "Гость прошёл check-in", [
+    void sendTelegramImportantLog("checkinCompleted", result?.completed?"Гость прошёл check-in":"Анкета check-in сохранена для автоматической отправки", [
       ["Гость", `${input.firstName} ${input.lastName}`.trim()],
       ["Бронь", reservation.name],
       ["Локация", resolved.location],
       ["Время", reservation.time],
       ["Прогресс", `${participantNumber}/${totalGuests}`],
     ]);
-    res.status(201).json({ success: true, participantId: payload?.data?.id || null });
+    res.status(result?.completed?201:202).json({success:true,synced:Boolean(result?.completed),participantId:result?.participantId||null,submissionId:submission.id});
   } catch (error) {
-    if(submissionKey) await redis.del(submissionKey).catch(()=>{});
     const status = error?.code === "TIME_TO_GROW_NOT_CONFIGURED" ? 503 : 502;
     const code = error?.name === "TimeoutError" ? "TIME_TO_GROW_TIMEOUT" : (error?.code || "TIME_TO_GROW_INVALID_RESPONSE");
     await recordCheckinFailure(req,signedToken?.bookingId,{code,participantNumber:input.participantNumber||null,totalGuests:input.totalGuests||null,upstreamStatus:error?.upstreamStatus||null});
@@ -2396,6 +2381,13 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       }).passthrough()).optional(),
     }).passthrough()).parse(normalizedBookings);
 
+    if(bookings.length) {
+      await Promise.all(bookings.map(booking=>rememberCheckinReservation(clubId,booking.id,{
+        visit:checkinVisitFromBooking(booking),
+        booking:{id:booking.id,size:booking.size,start:booking.start},
+      })));
+    }
+
     const playerAgeAtBooking = (birthday, bookingDate) => {
       if (!birthday) return { age: null, birthdayDaysAgo: null };
       const born = new Date(`${birthday}T00:00:00Z`);
@@ -2437,6 +2429,12 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
       [clubId,bookings.map(booking=>booking.id)]
     )).rows : [];
     const confirmationsById=new Map(confirmationRows.map(row=>[row.external_booking_id,row.confirmed]));
+    const pendingCheckins=bookings.length?(await db.query(`
+      SELECT booking_id,count(*)::integer AS pending FROM checkin_submissions
+      WHERE club_id=$1 AND booking_id=ANY($2::text[]) AND completed_at IS NULL
+      GROUP BY booking_id
+    `,[clubId,bookings.map(booking=>booking.id)])).rows:[];
+    const pendingCheckinsByBooking=new Map(pendingCheckins.map(row=>[row.booking_id,row.pending]));
     const checkinFailureRows=bookings.length ? (await db.query(`
       SELECT entity_id,request_id,after_state,created_at
       FROM audit_logs
@@ -2489,6 +2487,7 @@ app.get("/time-to-grow/bookings", auth, permit("bookings:read"), async (req, res
         paymentStatusDisplay: booking.order.payment_status_display,
         checkedIn: booking.check_in_status?.checked_in ?? 0,
         checkInTotal: booking.check_in_status?.total ?? booking.size,
+        checkInPending: pendingCheckinsByBooking.get(booking.id)||0,
         checkInPath: `/reception/checkin/${createCheckinToken(env.JWT_ACCESS_SECRET,clubId,booking.id)}`,
         checkInErrors: checkinFailuresByBooking.get(booking.id)||[],
         checkedInPlayers: (booking.players || []).map(player => {
@@ -6636,6 +6635,9 @@ const aiWorkerSupervisor = startAiWorkerSyncSupervisor({ db, localVisionService 
 server.listen(env.PORT, "0.0.0.0", () => {
   console.log(`QuestControl API listening on ${env.PORT}`);
   void telegramBot.start();
+  const flushCheckins=()=>checkinOutbox.runOnce().catch(error=>console.error("Check-in outbox scheduler failed",{code:error?.code||error?.name}));
+  setTimeout(()=>void flushCheckins(),5_000).unref();
+  setInterval(()=>void flushCheckins(),60_000).unref();
   setInterval(() => void runTelegramNotifications(), 60_000).unref();
   setTimeout(() => void runTelegramNotifications(), 5_000).unref();
 

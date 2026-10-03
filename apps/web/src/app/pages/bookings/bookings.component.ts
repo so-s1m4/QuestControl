@@ -73,6 +73,7 @@ type ExternalBooking = {
   paymentStatusDisplay: string;
   checkedIn: number;
   checkInTotal: number;
+  checkInPending?: number;
   checkInPath: string;
   checkInErrors: CheckInError[];
   checkedInPlayers: CheckedInPlayer[];
@@ -329,6 +330,9 @@ type SessionInventoryItem={id:string;name:string;category:string;unit:string;qua
                         >{{ b.checkedIn }}/{{ b.checkInTotal }}</span
                       >
                     </h4>
+                    @if (b.checkInPending) {
+                      <p>{{ b.checkInPending }} анкет сохранено · ожидают автоматической отправки</p>
+                    }
                     <div class="players">
                       @for (player of b.checkedInPlayers; track player.id) {
                         <div class="player">

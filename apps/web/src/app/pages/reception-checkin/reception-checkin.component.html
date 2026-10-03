@@ -33,6 +33,6 @@
         <aside class="details-side"><div class="online"><span>{{t().online}}</span>@if(qrDataUrl()){<div class="qr"><img [src]="qrDataUrl()" alt="Online check-in QR code"></div>}<p>{{t().scan}}</p></div><div class="group"><h3>{{t().group}}</h3>@for(participant of participants();track $index){<div class="person" [class.active]="$index===participantIndex()"><span>{{participant.submitted?'✓':$index+1}}</span><div><strong>{{participant.firstName||t().participant+' '+($index+1)}}</strong><small>{{participant.submitted?t().progress:($index+1)+' / '+guestCount()}}</small></div></div>}</div></aside>
       </div>
     }
-    @if(step()==='done'){<div class="card success"><div class="card-number">04</div><div class="success-mark">✓</div><h2>{{t().success}}</h2><p>{{submittedCount()}} {{t().participant.toLowerCase()}} · {{t().successNote}}</p></div>}
+    @if(step()==='done'){<div class="card success"><div class="card-number">04</div><div class="success-mark">✓</div><h2>{{t().success}}</h2><p>{{submittedCount()}} {{t().participant.toLowerCase()}} · {{hasQueuedParticipants()?t().queuedNote:t().successNote}}</p></div>}
   </section>
 </main>
